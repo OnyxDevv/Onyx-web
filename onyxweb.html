@@ -1,0 +1,432 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>OnyxHub</title>
+    
+ 
+    <link rel="icon" type="image/png" href="https://raw.githubusercontent.com/AnyDevPA/AstraHub-Web/refs/heads/main/RAIKA%20(2000%20x%201000%20px)%20(1).png">
+    
+    <link href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500;700&family=Space+Grotesk:wght@400;600;700;900&display=swap" rel="stylesheet">
+    
+    <style>
+        :root {
+            var(--bg-base): #030305;
+            --bg-panel: #0a0a10;
+            --accent-primary: #a829ea; /* Morado brillante que reemplaza al azul */
+            --accent-secondary: #8a2be2; /* Morado oscuro de apoyo */
+            --text-main: #f8fafc;
+            --text-muted: #94a3b8;
+            --border-color: #1e1e2d;
+            --success: #10b981;
+            --danger: #ef4444;
+        }
+        
+        * { box-sizing: border-box; margin: 0; padding: 0; user-select: none; -webkit-user-select: none; }
+        input, textarea, code, .bypass-input, #result-box, #result-box * { user-select: text; -webkit-user-select: text; }
+        
+        body {
+            background-color: #030305; 
+            color: var(--text-main); 
+            font-family: 'Space Grotesk', sans-serif;
+            overflow-x: hidden; 
+            display: flex; 
+            flex-direction: column; 
+            min-height: 100vh;
+            touch-action: pan-x pan-y; /* Esta es la línea nueva */
+        }
+
+        /* --- EFECTO DE FONDO CYBER PREMIUM --- */
+        
+        /* 1. Cuadrícula sutil de fondo */
+        body::before {
+            content: "";
+            position: fixed;
+            top: 0; left: 0; width: 100vw; height: 100vh;
+            background-image: 
+                linear-gradient(rgba(255, 255, 255, 0.02) 1px, transparent 1px),
+                linear-gradient(90deg, rgba(255, 255, 255, 0.02) 1px, transparent 1px);
+            background-size: 40px 40px;
+            z-index: -2;
+            pointer-events: none;
+        }
+
+        /* 2. Brillo animado (Glow) centrado */
+        body::after {
+            content: "";
+            position: fixed;
+            top: 0; left: 0; width: 100vw; height: 100vh;
+            background: radial-gradient(circle at 50% 30%, rgba(138, 43, 226, 0.12), transparent 60%);
+            z-index: -1;
+            pointer-events: none;
+            animation: pulseGlow 8s infinite alternate ease-in-out;
+        }
+
+        /* Animación para que el brillo respire */
+        @keyframes pulseGlow {
+            0% { transform: scale(1); opacity: 0.6; }
+            100% { transform: scale(1.3); opacity: 1; }
+        }
+
+        /* --- TODO EL MISMO CSS QUE TENÍAS SE MANTIENE AQUÍ EXACTAMENTE IGUAL --- */
+        /* (Para no hacer la respuesta infinita, pon todo el CSS del diseño Cyber-Minimalista aquí) */
+        
+        /* Pegar CSS completo del diseño aquí... */
+        /* ----- NAVBAR FLOTANTE ----- */
+        .top-navbar {
+            display: flex; justify-content: space-between; align-items: center;
+            padding: 0 30px; height: 75px;
+            background: #030305;
+            border-bottom: 1px solid var(--border-color);
+            position: fixed; width: 100%; top: 0; z-index: 1000;
+        }
+        
+        .brand {
+            font-weight: 900; font-size: 1.6em; letter-spacing: 2px;
+            cursor: pointer; color: #fff; text-transform: uppercase;
+            display: flex; align-items: center; gap: 10px;
+        }
+        /* --- IMAGEN DEL TOPBAR --- */
+        .brand-logo-img {
+            height: 45px; /* Aumentado a 45px para que destaque al estar solo */
+            width: auto;
+            object-fit: contain;
+        }
+
+        /* --- IMÁGENES CENTRALES DEL HERO --- */
+        .hero-images-container {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 20px; /* Aumenté un poco el espacio para que respiren mejor */
+            margin-bottom: 25px;
+        }
+
+        .hero-logo-main {
+            height: 150px; /* ¡Mucho más grande! (antes 90px) */
+            width: auto;
+            object-fit: contain;
+        }
+
+        .hero-text-main {
+            height: 90px; /* Texto más grande para equilibrar (antes 60px) */
+            width: auto;
+            object-fit: contain;
+        }
+
+        .nav-links { display: flex; align-items: center; gap: 30px; font-weight: 600; font-size: 0.9em; }
+        .nav-link { color: var(--text-muted); text-decoration: none; transition: 0.3s; cursor: pointer; letter-spacing: 1px;}
+        .nav-link:hover, .nav-link.active { color: var(--text-main); }
+        .nav-link-admin { display: none; }
+        .nav-link-admin.visible { display: block; color: var(--accent-secondary); }
+        
+        .btn-outline {
+            background: transparent; color: var(--text-main); padding: 10px 20px; 
+            text-decoration: none; font-weight: 700; border: 1px solid var(--border-color);
+            cursor: pointer; transition: 0.2s; font-family: 'Fira Code', monospace; font-size: 0.85em;
+            border-radius: 4px;
+        }
+        .btn-outline:hover { border-color: var(--accent-primary); background: rgba(79, 70, 229, 0.1); }
+
+        .main-panel { margin-top: 100px; padding: 40px 5vw; flex: 1; max-width: 1200px; margin-left: auto; margin-right: auto; width: 100%; }
+        .page-section { display: none; animation: fadeIn 0.4s ease forwards; }
+        .page-section.active { display: block; }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(15px); } to { opacity: 1; transform: translateY(0); } }
+
+        .hero-center { text-align: center; margin-top: 10px; margin-bottom: 80px; display: flex; flex-direction: column; align-items: center; }
+        .status-badge {
+            display: inline-flex; align-items: center; gap: 8px;
+            background: var(--bg-panel); border: 1px solid var(--border-color);
+            padding: 6px 15px; border-radius: 50px; font-family: 'Fira Code', monospace;
+            font-size: 0.8em; font-weight: 600; color: var(--text-muted); margin-bottom: 30px;
+        }
+        .hero-title { font-size: 4.5em; font-weight: 900; line-height: 1.1; margin-bottom: 20px; text-transform: lowercase; letter-spacing: -1px; }
+        .text-gradient { background: linear-gradient(to right, var(--accent-primary), var(--accent-secondary)); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+        .hero-subtitle { color: var(--text-muted); font-size: 1.1em; max-width: 600px; line-height: 1.6; margin-bottom: 40px; }
+
+        .terminal-box { width: 100%; max-width: 650px; background: #000; border: 1px solid var(--border-color); border-radius: 8px; overflow: hidden; box-shadow: 0 20px 40px rgba(0,0,0,0.5); text-align: left; margin-bottom: 40px; }
+        .terminal-header { background: var(--bg-panel); padding: 12px 15px; border-bottom: 1px solid var(--border-color); display: flex; justify-content: space-between; align-items: center; }
+        .terminal-title { font-family: 'Fira Code', monospace; font-size: 0.8em; color: var(--text-muted); }
+        .terminal-body { padding: 25px; display: flex; justify-content: space-between; align-items: center; gap: 20px; }
+        .terminal-code { font-family: 'Fira Code', monospace; color: var(--text-main); font-size: 0.9em; word-break: break-all; }
+        .btn-copy { background: var(--accent-primary); color: #fff; border: none; padding: 10px 18px; font-family: 'Space Grotesk', sans-serif; font-weight: 700; border-radius: 4px; cursor: pointer; transition: 0.2s; white-space: nowrap; }
+        .btn-copy:hover { background: var(--accent-secondary); }
+
+        .system-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 20px; margin-bottom: 80px; width: 100%; }
+        /* --- ESTILOS LIQUID GLASS Y FLOTACIÓN --- */
+        .stat-card { 
+            background: rgba(10, 10, 16, 0.35); /* Fondo semitransparente */
+            backdrop-filter: blur(12px); /* Efecto Liquid Glass */
+            -webkit-backdrop-filter: blur(12px);
+            border: 1px solid rgba(255, 255, 255, 0.08); /* Borde sutil brillante */
+            padding: 30px; 
+            border-radius: 12px; /* Más curveado para que parezca cristal */
+            display: flex; flex-direction: column; align-items: flex-start; 
+            box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.3);
+            animation: floating 4s ease-in-out infinite;
+        }
+
+        /* Desfase para que no floten todos exactamente al mismo tiempo (se ve más natural) */
+        .stat-card:nth-child(1) { animation-delay: 0s; }
+        .stat-card:nth-child(2) { animation-delay: 0.5s; }
+        .stat-card:nth-child(3) { animation-delay: 1s; }
+
+        .stat-label { font-family: 'Fira Code', monospace; font-size: 0.8em; color: var(--text-muted); text-transform: uppercase; margin-bottom: 15px; }
+        .stat-value { font-size: 2.5em; font-weight: 900; color: #fff; line-height: 1; }
+        .ping-dot { width: 10px; height: 10px; background-color: var(--success); border-radius: 50%; box-shadow: 0 0 10px var(--success); }
+        .ping-dot.offline { background-color: var(--danger); box-shadow: 0 0 10px var(--danger); }
+
+        .section-header { font-size: 2em; font-weight: 900; margin-bottom: 30px; text-transform: uppercase; }
+        .cards-wrapper { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 25px; margin-bottom: 60px; }
+        
+        .item-card { 
+            background: rgba(10, 10, 16, 0.35); 
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            border: 1px solid rgba(255, 255, 255, 0.08); 
+            border-top: 3px solid var(--accent-primary); 
+            padding: 35px 30px; 
+            border-radius: 12px; 
+            transition: transform 0.3s, box-shadow 0.3s; 
+            box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.3);
+            animation: floating 5s ease-in-out infinite; 
+        }
+        
+        /* Desfase para las tarjetas de executors */
+        .item-card:nth-child(1) { animation-delay: 0.2s; }
+        .item-card:nth-child(2) { animation-delay: 0.7s; }
+
+        .item-card:hover { 
+            animation-play-state: paused; /* Pausa el flote al pasar el mouse */
+            transform: translateY(-10px); 
+            box-shadow: 0 15px 35px rgba(168, 41, 234, 0.15); /* Sombra morada al pasar el mouse */
+        }
+        .item-title { font-size: 1.4em; font-weight: 800; margin-bottom: 15px; color: #fff;}
+        .item-desc { color: var(--text-muted); font-size: 0.95em; line-height: 1.6; margin-bottom: 25px;}
+        .btn-action { display: inline-block; width: 100%; padding: 12px; font-weight: 700; text-align: center; text-decoration: none; cursor: pointer; border: none; border-radius: 4px; background: #fff; color: #000; font-family: 'Space Grotesk', sans-serif; transition: 0.2s; }
+        .btn-action:hover { background: var(--text-muted); }
+        .btn-primary { background: var(--accent-primary); color: #fff; }
+        .btn-primary:hover { background: var(--accent-secondary); color: #fff; }
+
+        .input-group { background: var(--bg-panel); padding: 40px; border: 1px solid var(--border-color); border-radius: 8px; margin-bottom: 40px; }
+        .form-control { width: 100%; padding: 15px 20px; background: #030305; border: 1px solid var(--border-color); color: #fff; font-family: 'Fira Code', monospace; font-size: 0.9em; outline: none; margin-bottom: 20px; transition: 0.2s; border-radius: 4px; }
+        .form-control:focus { border-color: var(--accent-primary); }
+        .textarea-control { resize: vertical; min-height: 150px; }
+        #result-box { margin-top: 20px; padding: 20px; background: #030305; border: 1px dashed var(--accent-primary); display: none; word-wrap: break-word; text-align: center; border-radius: 4px; }
+        .clean-link { color: var(--accent-secondary); font-weight: bold; text-decoration: none; display: block; margin-top: 10px; font-size: 1.1em; }
+        .clean-link:hover { text-decoration: underline; color: #fff; }
+
+        .footer { text-align: center; padding: 40px 20px; border-top: 1px solid var(--border-color); margin-top: auto; display: flex; flex-direction: column; align-items: center; gap: 20px; background: var(--bg-panel); }
+        .footer-nav { display: flex; gap: 30px; font-weight: 600; font-size: 0.9em; }
+        .footer-nav a { color: var(--text-muted); text-decoration: none; cursor: pointer; transition: 0.2s; }
+        .footer-nav a:hover { color: var(--text-main); }
+        .copyright { color: #475569; font-size: 0.85em; font-family: 'Fira Code', monospace; }
+
+        .modal-overlay { position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; background: rgba(0,0,0,0.8); backdrop-filter: blur(5px); z-index: 9999; display: flex; justify-content: center; align-items: center; opacity: 0; visibility: hidden; transition: 0.3s; }
+        .modal-overlay.active { opacity: 1; visibility: visible; }
+        .modal-box { padding: 40px; background: var(--bg-panel); border: 1px solid var(--border-color); border-radius: 8px; text-align: center; width: 90%; max-width: 400px; box-shadow: 0 25px 50px rgba(0,0,0,0.5); }
+         
+
+
+        /* --- ANIMACIÓN DE FLOTACIÓN --- */
+        @keyframes floating {
+            0% { transform: translateY(0px); }
+            50% { transform: translateY(-8px); } /* Sube 8 pixeles a la mitad de la animación */
+            100% { transform: translateY(0px); }
+        }
+
+        @media (max-width: 768px) {
+            .hero-title { font-size: 3.5em; }
+            .terminal-body { flex-direction: column; align-items: flex-start; }
+            .btn-copy { width: 100%; }
+            .main-panel { padding: 40px 20px; }
+            
+            /* --- ARREGLOS PARA CELULAR --- */
+            
+            /* 1. Ajustar Navbar para que no se oculten las pestañas */
+            .top-navbar { padding: 0 15px; }
+            .nav-links { 
+                display: flex; 
+                gap: 15px; /* Espacio más chico entre opciones */
+                font-size: 0.85em; 
+            }
+            .btn-outline { padding: 8px 12px; font-size: 0.75em; } /* Botón de panel más chico */
+
+            /* 2. Achicar los logos centrales */
+            .hero-logo-main { 
+                height: 90px; /* Tamaño adaptado para móvil */
+            }
+            .hero-text-main { 
+                height: 55px; /* Tamaño adaptado para móvil */
+            }
+        }
+    </style>
+</head>
+<body>
+
+    <header class="top-navbar">
+        <div class="brand" id="brand-title">
+            <img src="https://raw.githubusercontent.com/AnyDevPA/AstraHub-Web/refs/heads/main/RAIKA%20(2000%20x%201000%20px)%20(1).png" alt="Logo" class="brand-logo-img" onclick="activarPanelOculto()" style="cursor: pointer;">
+        </div>
+        <div class="nav-links">
+            <a onclick="cambiarPagina('inicio')" class="nav-link active">Menu</a>
+            <a onclick="cambiarPagina('bypass')" class="nav-link">Bypass</a>
+            <a onclick="cambiarPagina('admin')" class="nav-link nav-link-admin" id="link-admin">Admin</a>
+        </div>
+       
+    </header>
+
+    <div class="main-panel">
+        
+        <!-- PÁGINA: INICIO -->
+        <section id="page-inicio" class="page-section active">
+            
+            <div class="hero-center">
+                <div class="status-badge">
+                    <div class="ping-dot" id="ping-indicator"></div> ONLINE
+                </div>
+                
+                <div class="hero-images-container">
+                    <img src="https://raw.githubusercontent.com/AnyDevPA/AstraHub-Web/refs/heads/main/RAIKA%20(2000%20x%201000%20px)%20(1).png" alt="Raika Logo" class="hero-logo-main">
+                    <img src="https://raw.githubusercontent.com/AnyDevPA/AstraHub-Web/refs/heads/main/OnyxHub.png" alt="OnyxHub Text" class="hero-text-main">
+                </div>
+
+                <p class="hero-subtitle">
+                    <br>Soporte para MM2 & DUELS.
+                </p>
+                
+                <div class="terminal-box">
+                    <div class="terminal-header">
+                        <span class="terminal-title">onyx_loader.lua</span>
+                        <span class="terminal-title" style="color: var(--accent-primary);">[ Read Only ]</span>
+                    </div>
+                    <div class="terminal-body">
+                        <code class="terminal-code" id="scriptCodeMain">loadstring(game:HttpGet("https://onyx-scripts.com/onyxhub"))()</code>
+                        <button class="btn-copy" onclick="copiarTexto('scriptCodeMain', this, 'Copiar Script')">Copiar Script</button>
+                    </div>
+                </div>
+
+                <img src="https://i.imgur.com/h5kuEHa.jpeg" alt="Onyx Interface" style="width: 100%; max-width: 700px; border-radius: 8px; border: 1px solid var(--border-color); box-shadow: 0 15px 35px rgba(0,0,0,0.6);">
+            </div>
+
+            <!-- SYSTEM DASHBOARD -->
+            <div class="system-grid">
+                <div class="stat-card">
+                    <span class="stat-label">Usuarios Ejecutando</span>
+                    <span class="stat-value" id="users-count">...</span>
+                </div>
+
+                <div class="stat-card">
+                    <span class="stat-label">Comunidad</span>
+                    <a href="https://discord.gg/F94HdUU3Y" target="_blank" class="stat-value" style="text-decoration: none; display: flex; align-items: center; gap: 12px; cursor: pointer; color: #fff;">
+                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 127.14 96.36" width="38" height="38" fill="#fff">
+                            <path d="M107.7,8.07A105.15,105.15,0,0,0,81.47,0a72.06,72.06,0,0,0-3.36,6.83A97.68,97.68,0,0,0,49,6.83,72.37,72.37,0,0,0,45.64,0,105.89,105.89,0,0,0,19.39,8.09C2.79,32.65-1.71,56.6.54,80.21h0A105.73,105.73,0,0,0,32.71,96.36,77.7,77.7,0,0,0,39.6,85.25a68.42,68.42,0,0,1-10.85-5.18c.91-.66,1.8-1.34,2.66-2a75.57,75.57,0,0,0,64.32,0c.87.71,1.76,1.39,2.66,2a68.68,68.68,0,0,1-10.87,5.19,77,77,0,0,0,6.89,11.1A105.25,105.25,0,0,0,126.6,80.22h0C129.24,52.84,122.09,29.11,107.7,8.07ZM42.45,65.69C36.18,65.69,31,60,31,53s5-12.74,11.43-12.74S54,46,53.89,53,48.84,65.69,42.45,65.69Zm42.24,0C78.41,65.69,73.31,60,73.31,53s5-12.74,11.43-12.74S96.2,46,96.09,53,91.08,65.69,84.69,65.69Z"/>
+                        </svg>
+                        DISCORD
+                    </a>
+                </div>
+
+
+                <div class="stat-card">
+                    <span class="stat-label">Estado del Bypass</span>
+                    <span class="stat-value">Activo</span>
+                </div>
+            </div>
+
+            <h2 class="section-header">Executors Recomendados</h2>
+            <div class="cards-wrapper">
+                <div class="item-card">
+                    <h4 class="item-title">Delta Android</h4>
+                    <a href="https://www.mediafire.com/file/e2lcp29dcop7h2s/Delta-2.729.840.apk/file" target="_blank" class="btn-action">Descargar APK</a>
+                </div>
+                <div class="item-card">
+                    <h4 class="item-title">Delta iOS</h4>
+                    <a href="https://www.mediafire.com/file/hdq67wadwixakqe/Delta-2.729.838.ipa/file" target="_blank" class="btn-action">Descargar IPA</a>
+                </div>
+            </div>
+        </section>
+
+        <!-- PÁGINA: BYPASS -->
+        <section id="page-bypass" class="page-section">
+            <h2 class="section-header">Bypass <span class="text-gradient">Tool</span></h2>
+            <p style="color: var(--text-muted); margin-bottom: 40px; font-size: 1.1em; max-width: 600px;">
+               Admitimos una amplia variedad de sitios web, incluidos Linkvertise, Admaven, Paster.so, Work.ink y más.
+            </p>
+            
+            <div class="input-group">
+                <input type="url" id="linkInput" class="form-control" placeholder="Pega aquí el enlace que quieres saltar..." autocomplete="off">
+                <div style="display:flex; gap: 15px;">
+                    <button class="btn-action" style="flex: 1;" onclick="pegarPortapapeles()">Pegar Link</button>
+                    <button class="btn-action btn-primary" id="bypassBtn" style="flex: 2; border: none;" onclick="procesarBypass()">Desbloquear</button>
+                </div>
+                <div id="result-box"></div>
+            </div>
+        </section>
+
+        <!-- PÁGINA: ADMIN -->
+        <section id="page-admin" class="page-section">
+            <h2 class="section-header">Control de <span class="text-gradient">Scripts</span></h2>
+            <p style="color: var(--text-muted); margin-bottom: 40px;">Sube nuevos scripts o actualiza OnyxHub directamente en la base de datos.</p>
+            
+            <div class="input-group">
+                <form id="form-admin" onsubmit="publicarScript(event)">
+                    <input type="text" id="admin-titulo" class="form-control" placeholder="Nombre del Script (Ej: OnyxHub Main)" required>
+                    
+                    <div style="display: flex; gap: 15px; flex-wrap: wrap;">
+                        <input type="text" id="admin-tag" class="form-control" placeholder="Categoría (Ej: Multi-Juego)" required style="flex: 1; min-width: 48%;">
+                        <input type="text" id="admin-juegos" class="form-control" placeholder="Juegos (Ej: MM2, DUELS)" required style="flex: 1; min-width: 48%;">
+                    </div>
+
+                    <label style="color: var(--text-main); font-weight: 600; cursor: pointer; display: flex; align-items: center; gap: 12px; margin-bottom: 20px; font-family: 'Fira Code', monospace; font-size: 0.9em;">
+                        <input type="checkbox" id="admin-es-principal" style="width: 16px; height: 16px; accent-color: var(--accent-primary); cursor: pointer;">
+                        Marcar como Script Principal
+                    </label>
+                    
+                    <input type="text" id="admin-creador" class="form-control" placeholder="Creador" required>
+                    
+                    <textarea id="admin-desc" class="form-control textarea-control" placeholder="Descripción breve del script..." required></textarea>
+                    <textarea id="admin-codigo" class="form-control textarea-control" placeholder="Pega el código loadstring() o source aquí..." required></textarea>
+                    
+                    <button type="submit" id="btn-publicar" class="btn-action btn-primary" style="border: none;">Guardar en DB</button>
+                </form>
+            </div>
+        </section>
+
+    </div>
+
+
+    <footer class="footer">
+        <div class="footer-nav">
+            <a onclick="cambiarPagina('inicio')">Menu Script</a>
+            <a onclick="cambiarPagina('bypass')">Bypass</a>
+            
+        </div>
+        <div class="copyright">OnyxHub © 2026.</div>
+    </footer>
+
+    <script src="main.js"></script>
+
+
+<script>
+        let contadorClics = 0;
+        let temporizadorClics;
+
+        function activarPanelOculto() {
+            contadorClics++; // Suma 1 cada vez que haces clic
+            clearTimeout(temporizadorClics); // Reinicia el temporizador
+            
+            if (contadorClics === 5) {
+                mostrarPromptAdmin(); // Llama a tu función original para abrir el panel
+                contadorClics = 0; // Reinicia el contador
+            }
+            
+            // Si pasa más de 1 segundo sin hacer clic, la cuenta vuelve a cero
+            // (esto evita que se abra por accidente si hacen clics sueltos a lo largo del tiempo)
+            temporizadorClics = setTimeout(() => {
+                contadorClics = 0;
+            }, 1000);
+        }
+    </script>
+</body>
+</html>

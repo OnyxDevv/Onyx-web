@@ -1,0 +1,48 @@
+-- OnyxHub V2 - Loader Seguro
+local HttpService = game:GetService("HttpService")
+local RbxAnalytics = game:GetService("RbxAnalyticsService")
+local Players = game:GetService("Players")
+
+local player = Players.LocalPlayer
+while not player do task.wait() player = Players.LocalPlayer end
+
+local miHWID = RbxAnalytics:GetClientId()
+local miNombre = player.Name
+
+-- Identificar si están en MM2, MMV o Duels
+local gameType = "DESCONOCIDO"
+if game.PlaceId == 142823291 or game.PlaceId == 74369636333825 then
+    gameType = "MM2"
+elseif game.PlaceId == 116817810725116 or game.PlaceId == 135856908115931 then
+    gameType = "DUELS"
+end
+
+local req = (syn and syn.request) or (http and http.request) or http_request or request
+if req then
+    local response = req({
+        Url = "https://hub.onyx-scripts.com/api/v2/get_hub",
+        Method = "POST",
+        Headers = {
+            ["Content-Type"] = "application/json",
+            ["User-Agent"] = "Roblox/AstraHub"
+        },
+        Body = HttpService:JSONEncode({
+            auth = "OnyxHub!",
+            hwid = miHWID,
+            user = miNombre,
+            game = gameType
+        })
+    })
+
+    if response.StatusCode == 200 then
+        local data = HttpService:JSONDecode(response.Body)
+        if data.success then
+            local func, err = loadstring(data.code)
+            if func then func() else warn("Error al cargar:", err) end
+        end
+    else
+        player:Kick("\nOnyx Security\nAcceso Denegado o IP Baneada.")
+    end
+else
+    player:Kick("Tu Inyector no soporta peticiones HTTP seguras.")
+end

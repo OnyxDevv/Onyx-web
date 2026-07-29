@@ -20,20 +20,20 @@ end
 local req = (syn and syn.request) or (http and http.request) or http_request or request
 if req then
     local response = req({
-    Url = "https://hub.onyx-scripts.com/api/v2/get_hub",
-    Method = "POST",
-    Headers = {
-        ["Content-Type"] = "application/json",
-        ["User-Agent"] = "Roblox/AstraHub"
-    },
-    Body = HttpService:JSONEncode({
-        auth = "OnyxHub!",
-        hwid = miHWID,
-        user = miNombre,
-        game = gameType,
-        placeId = tostring(game.PlaceId) -- 🔥 ESTA ES LA LÍNEA NUEVA
-    })
-
+        Url = "https://hub.onyx-scripts.com/api/v2/get_hub",
+        Method = "POST",
+        Headers = {
+            ["Content-Type"] = "application/json",
+            ["User-Agent"] = "Roblox/AstraHub"
+        },
+        Body = HttpService:JSONEncode({
+            auth = "OnyxHub!",
+            hwid = miHWID,
+            user = miNombre,
+            game = gameType,
+            placeId = tostring(game.PlaceId) -- 🔥 ESTA ES LA LÍNEA NUEVA
+        })
+    }) -- 🔥 AQUÍ TE FALTABA CERRAR LA PETICIÓN req
 
     if response.StatusCode == 200 then
         local data = HttpService:JSONDecode(response.Body)

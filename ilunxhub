@@ -2428,13 +2428,18 @@ runtime.Track(RunService.RenderStepped:Connect(function(deltaTime)
 
     -- 1. Actualizar Círculo FOV
     if fovVisiblePreference then
-        if FOVCircle.Position ~= centroVector then FOVCircle.Position = centroVector end
-        if FOVCircle.Radius ~= fovRadius then FOVCircle.Radius = fovRadius end
-        if not FOVCircle.Visible then FOVCircle.Visible = true end
-        local targetFovColor = (silentAimFovEnabled and aimHookState.Target) and fovTargetColor or fovIdleColor
-        if FOVCircle.Color ~= targetFovColor then FOVCircle.Color = targetFovColor end
+        FOVCircle.Position = centroVector
+        FOVCircle.Radius = fovRadius
+        FOVCircle.Visible = true
+        
+        -- 🔥 FIX: Se pone verde incondicionalmente si hay un objetivo fijado (sin bugs de caché)
+        if aimHookState.Target then
+            FOVCircle.Color = Color3.fromRGB(0, 255, 0)
+        else
+            FOVCircle.Color = Color3.fromRGB(255, 255, 255)
+        end
     else
-        if FOVCircle.Visible then FOVCircle.Visible = false end
+        FOVCircle.Visible = false
     end
 
     -- 2. Líneas: usa el estado de lobby cacheado por el Heartbeat maestro.

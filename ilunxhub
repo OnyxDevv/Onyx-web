@@ -1823,7 +1823,8 @@ runtime.Track(RunService.Heartbeat:Connect(function(deltaTime)
                                         if silentAimFovEnabled then
                                             local hrpPos2D, onScreen = camera:WorldToViewportPoint(part.Position)
                                             if onScreen then
-                                                local dx, dy = pos2D.X - centerX, pos2D.Y - centerY
+                                                -- Cambiamos pos2D por hrpPos2D
+                                                local dx, dy = hrpPos2D.X - centerX, hrpPos2D.Y - centerY 
                                                 candidateDistance = dx * dx + dy * dy
                                                 if candidateDistance <= fovSq and candidateDistance < shortestDistToCenter then pasaFiltro = true end
                                             end

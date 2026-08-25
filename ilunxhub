@@ -1444,7 +1444,7 @@ runtime.Track(RunService.Heartbeat:Connect(function(deltaTime)
     end
 
     -- ==========================================
-    -- 1. HITBOX (0.15s)
+    -- 1. HITBOX (0.15s) - VERSIÓN INDETECTABLE (BLOQUE FALSO)
     -- ==========================================
     if hitboxEnabled then
         mState.hbAct = true
@@ -1458,16 +1458,40 @@ runtime.Track(RunService.Heartbeat:Connect(function(deltaTime)
                 local targetSize = Vector3_new(hitboxSize, hitboxSize, hitboxSize)
                 mState.igHB[1] = myChar
                 
-                -- 🔥 OPTIMIZADO: Cero lag de memoria al usar la lista pre-cargada
                 for i = 1, #listaJugadores do
                     local v = listaJugadores[i]
                     local targetChar = v ~= player and v.Character or nil
                     local hrp = targetChar and ffc(targetChar, "HumanoidRootPart")
                     local targetHum = targetChar and ffc(targetChar, "Humanoid")
+                    
                     if hrp and targetHum and targetHum.Health > 0 and isEnemy(v) then
-                        if hrp.Size ~= targetSize then hrp.Size = targetSize end
-                        if hrp.CanCollide ~= false then hrp.CanCollide = false end
+                        -- 1. BUSCAMOS O CREAMOS EL BLOQUE FALSO
+                        local fakeHitbox = targetChar:FindFirstChild("AstraFakeHitbox")
+                        if not fakeHitbox then
+                            fakeHitbox = Instance.new("Part")
+                            fakeHitbox.Name = "AstraFakeHitbox"
+                            fakeHitbox.Shape = Enum.PartType.Block
+                            fakeHitbox.Massless = true -- FUNDAMENTAL: Sin esto, rompes la gravedad del enemigo
+                            fakeHitbox.CanCollide = false
+                            fakeHitbox.Anchored = false
+                            
+                            -- Se emparenta al Character para que las armas registren el daño al jugador
+                            fakeHitbox.Parent = targetChar 
+                            
+                            -- Lo soldamos al HRP real para que lo siga a donde vaya
+                            local weld = Instance.new("WeldConstraint")
+                            weld.Part0 = hrp
+                            weld.Part1 = fakeHitbox
+                            weld.Parent = fakeHitbox
+                            
+                            -- Centramos el bloque falso
+                            fakeHitbox.CFrame = hrp.CFrame
+                        end
                         
+                        -- 2. ACTUALIZAMOS TAMAÑO
+                        if fakeHitbox.Size ~= targetSize then fakeHitbox.Size = targetSize end
+                        
+                        -- 3. CÁLCULO DE VISIBILIDAD (Raycast)
                         local aLaVista = false
                         if myHead then
                             local rayDirection = hrp.Position - origin
@@ -1479,29 +1503,13 @@ runtime.Track(RunService.Heartbeat:Connect(function(deltaTime)
                             end
                         end
                         
+                        -- 4. ESTÉTICA DEL BLOQUE (Reemplaza el Adornment para más FPS)
                         local targetColor = aLaVista and espColor or mState.hbBlockedColor
                         local targetTrans = hitboxInvisible and 1 or (aLaVista and 0.4 or 0.8)
                         
-                        if hrp.Transparency ~= targetTrans then hrp.Transparency = targetTrans end
-                        if hrp.Material ~= Enum.Material.ForceField then hrp.Material = Enum.Material.ForceField end
-                        if hrp.Color ~= targetColor then hrp.Color = targetColor end
-                        
-                        local box = hrp:FindFirstChild("AstraHitboxBox")
-                        if not box then 
-                            box = Instance.new("BoxHandleAdornment") 
-                            box.Name = "AstraHitboxBox" 
-                            box.Adornee = hrp 
-                            box.AlwaysOnTop = true 
-                            box.ZIndex = 5 
-                            box.Parent = hrp 
-                        end
-                        
-                        if box.Size ~= hrp.Size then box.Size = hrp.Size end
-                        if box.Color3 ~= targetColor then box.Color3 = targetColor end
-                        
-                        local targetBoxTrans = hitboxInvisible and 1 or (aLaVista and 0.2 or 0.7)
-                        if box.Transparency ~= targetBoxTrans then box.Transparency = targetBoxTrans end
-                        if box.Visible ~= not hitboxInvisible then box.Visible = not hitboxInvisible end
+                        if fakeHitbox.Transparency ~= targetTrans then fakeHitbox.Transparency = targetTrans end
+                        if fakeHitbox.Material ~= Enum.Material.ForceField then fakeHitbox.Material = Enum.Material.ForceField end
+                        if fakeHitbox.Color ~= targetColor then fakeHitbox.Color = targetColor end
                     end
                 end
             end
@@ -1509,17 +1517,20 @@ runtime.Track(RunService.Heartbeat:Connect(function(deltaTime)
     elseif mState.hbAct then
         mState.hbAct = false
         mState.tHB = 0
-        -- 🔥 OPTIMIZADO: Limpieza con la lista pre-cargada
+        -- LIMPIEZA: Destruimos los bloques falsos cuando se apaga el Hitbox
         for i = 1, #listaJugadores do
             local v = listaJugadores[i]
-            if v ~= player and v.Character and v.Character:FindFirstChild("HumanoidRootPart") then
-                local hrp = v.Character.HumanoidRootPart
-                hrp.Size = Vector3.new(2, 2, 1)
-                hrp.Transparency = 1
-                hrp.Material = Enum.Material.Plastic
-                hrp.CanCollide = true
-                local box = hrp:FindFirstChild("AstraHitboxBox")
-                if box then box:Destroy() end
+            if v ~= player and v.Character then
+                local fakeHitbox = v.Character:FindFirstChild("AstraFakeHitbox")
+                if fakeHitbox then fakeHitbox:Destroy() end
+                
+                -- Por si quedó rastro del código anterior
+                local hrp = v.Character:FindFirstChild("HumanoidRootPart")
+                if hrp then
+                    local box = hrp:FindFirstChild("AstraHitboxBox")
+                    if box then box:Destroy() end
+                    hrp.Transparency = 1
+                end
             end
         end
     end

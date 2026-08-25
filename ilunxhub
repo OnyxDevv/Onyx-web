@@ -12,6 +12,7 @@ local UserInputService = game:GetService("UserInputService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local MarketplaceService = game:GetService("MarketplaceService")
 local HttpService = game:GetService("HttpService")
+local TweenService = game:GetService("TweenService")
 local workspace = game:GetService("Workspace")
 
 -- Estilo iOS: radios consistentes para ventana, controles y overlays.
@@ -122,6 +123,11 @@ function runtime.Cleanup()
         runtime.AimState.Owner = nil
     end
 
+    if runtime.StartupGui then
+        pcall(function() runtime.StartupGui:Destroy() end)
+        runtime.StartupGui = nil
+    end
+
     if runtime.ScreenGui then
         pcall(function() runtime.ScreenGui:Destroy() end)
         runtime.ScreenGui = nil
@@ -202,6 +208,185 @@ if previousOverlay then
     previousOverlay:Destroy()
 end
 
+-- ==========================================
+-- ÚNICA ANIMACIÓN: SPLASH REAL AL EJECUTAR
+-- ==========================================
+local startupSplashState = {StartedAt = os.clock()}
+
+do
+    -- WindUI vive normalmente en CoreGui. Usamos la misma capa (o gethui)
+    -- y el DisplayOrder máximo para que el hub nunca tape el splash.
+    local splashParent = playerGui
+    pcall(function()
+        if gethui then
+            splashParent = gethui()
+        else
+            splashParent = game:GetService("CoreGui")
+        end
+    end)
+
+    local previousSplash = splashParent and splashParent:FindFirstChild("iLunXHub_Startup")
+    if previousSplash then previousSplash:Destroy() end
+
+    local startupGui = Instance.new("ScreenGui")
+    startupGui.Name = "iLunXHub_Startup"
+    startupGui.ResetOnSpawn = false
+    startupGui.IgnoreGuiInset = true
+    startupGui.DisplayOrder = 2147483647
+    startupGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+
+    pcall(function()
+        if syn and syn.protect_gui then syn.protect_gui(startupGui) end
+    end)
+
+    local parented = pcall(function() startupGui.Parent = splashParent end)
+    if not parented then startupGui.Parent = playerGui end
+    runtime.StartupGui = startupGui
+
+    local splash = Instance.new("CanvasGroup")
+    splash.Name = "Splash"
+    splash.Size = UDim2.fromScale(1, 1)
+    splash.BackgroundColor3 = Color3.fromHex("#08080A")
+    splash.BackgroundTransparency = 0.08
+    splash.GroupTransparency = 1
+    splash.Active = true
+    splash.ZIndex = 1
+    splash.Parent = startupGui
+
+    local card = Instance.new("Frame")
+    card.Name = "LoadingCard"
+    card.AnchorPoint = Vector2.new(0.5, 0.5)
+    card.Position = UDim2.new(0.5, 0, 0.5, 18)
+    card.Size = UDim2.fromOffset(300, 124)
+    card.BackgroundColor3 = Color3.fromHex("#1C1C1E")
+    card.BorderSizePixel = 0
+    card.ZIndex = 2
+    card.Parent = splash
+
+    local cardScale = Instance.new("UIScale")
+    cardScale.Scale = 0.88
+    cardScale.Parent = card
+
+    Instance.new("UICorner", card).CornerRadius = UDim.new(0, 22)
+
+    local cardStroke = Instance.new("UIStroke")
+    cardStroke.Color = Color3.fromHex("#6B7078")
+    cardStroke.Transparency = 0.4
+    cardStroke.Thickness = 1
+    cardStroke.Parent = card
+
+    local cardGradient = Instance.new("UIGradient")
+    cardGradient.Color = ColorSequence.new({
+        ColorSequenceKeypoint.new(0, Color3.fromHex("#2C2C2E")),
+        ColorSequenceKeypoint.new(1, Color3.fromHex("#151517"))
+    })
+    cardGradient.Rotation = 90
+    cardGradient.Parent = card
+
+    local brand = Instance.new("TextLabel")
+    brand.Size = UDim2.new(1, -32, 0, 34)
+    brand.Position = UDim2.fromOffset(16, 20)
+    brand.BackgroundTransparency = 1
+    brand.RichText = true
+    brand.Text = '<font color="#FFFFFF">iLun</font><font color="#D8DCE1">X</font><font color="#A7ACB3">Hub</font>'
+    brand.TextColor3 = Color3.new(1, 1, 1)
+    brand.Font = Enum.Font.GothamBold
+    brand.TextSize = 24
+    brand.ZIndex = 3
+    brand.Parent = card
+
+    local status = Instance.new("TextLabel")
+    status.Size = UDim2.new(1, -32, 0, 24)
+    status.Position = UDim2.fromOffset(16, 62)
+    status.BackgroundTransparency = 1
+    status.Text = "Cargando iLunXHub..."
+    status.TextColor3 = Color3.fromHex("#B8BDC5")
+    status.Font = Enum.Font.GothamMedium
+    status.TextSize = 13
+    status.ZIndex = 3
+    status.Parent = card
+
+    local progressTrack = Instance.new("Frame")
+    progressTrack.Size = UDim2.new(1, -48, 0, 3)
+    progressTrack.Position = UDim2.new(0, 24, 1, -22)
+    progressTrack.BackgroundColor3 = Color3.fromHex("#38383A")
+    progressTrack.BorderSizePixel = 0
+    progressTrack.ZIndex = 3
+    progressTrack.Parent = card
+    Instance.new("UICorner", progressTrack).CornerRadius = UDim.new(1, 0)
+
+    local progress = Instance.new("Frame")
+    progress.Size = UDim2.fromScale(0.05, 1)
+    progress.BackgroundColor3 = Color3.fromHex("#E6E9EC")
+    progress.BorderSizePixel = 0
+    progress.ZIndex = 4
+    progress.Parent = progressTrack
+    Instance.new("UICorner", progress).CornerRadius = UDim.new(1, 0)
+
+    startupSplashState.Gui = startupGui
+    startupSplashState.Group = splash
+    startupSplashState.Card = card
+    startupSplashState.Status = status
+
+    -- Forzamos un frame real antes de iniciar los tweens. Sin este yield,
+    -- un loader rápido puede construir y ocultar todo sin dibujar el splash.
+    RunService.RenderStepped:Wait()
+
+    TweenService:Create(
+        splash,
+        TweenInfo.new(0.26, Enum.EasingStyle.Quart, Enum.EasingDirection.Out),
+        {GroupTransparency = 0}
+    ):Play()
+    TweenService:Create(
+        card,
+        TweenInfo.new(0.32, Enum.EasingStyle.Quart, Enum.EasingDirection.Out),
+        {Position = UDim2.fromScale(0.5, 0.5)}
+    ):Play()
+    TweenService:Create(
+        cardScale,
+        TweenInfo.new(0.32, Enum.EasingStyle.Back, Enum.EasingDirection.Out),
+        {Scale = 1}
+    ):Play()
+    TweenService:Create(
+        progress,
+        TweenInfo.new(1.05, Enum.EasingStyle.Quint, Enum.EasingDirection.Out),
+        {Size = UDim2.fromScale(1, 1)}
+    ):Play()
+
+    -- Garantiza que la entrada se vea completa antes de construir WindUI.
+    task.wait(0.34)
+end
+
+function startupSplashState.Finish(message)
+    local startupGui = startupSplashState.Gui
+    local splash = startupSplashState.Group
+    if not startupGui or not startupGui.Parent or not splash or not splash.Parent then return end
+
+    if message and startupSplashState.Status then
+        startupSplashState.Status.Text = message
+        task.wait(0.65)
+    else
+        local remaining = 1.2 - (os.clock() - startupSplashState.StartedAt)
+        if remaining > 0 then task.wait(remaining) end
+    end
+
+    RunService.RenderStepped:Wait()
+    local fadeOut = TweenService:Create(
+        splash,
+        TweenInfo.new(0.22, Enum.EasingStyle.Quad, Enum.EasingDirection.In),
+        {GroupTransparency = 1}
+    )
+    fadeOut:Play()
+    fadeOut.Completed:Wait()
+
+    if startupGui.Parent then startupGui:Destroy() end
+    runtime.StartupGui = nil
+    startupSplashState.Gui = nil
+    startupSplashState.Group = nil
+    startupSplashState.Card = nil
+    startupSplashState.Status = nil
+end
+
 local screenGui = Instance.new("ScreenGui")
 screenGui.Name = "iLunXHub_Overlays"
 screenGui.ResetOnSpawn = false
@@ -273,7 +458,7 @@ end
 -- INICIALIZACIÓN WINDUI (CON CACHÉ 24HRS)
 -- ==========================================
 local WindUI
-local _version = "1.6.66_ILUNX_04_MAXPERF"
+local _version = "1.6.66_ILUNX_05_STARTUP"
 local uiFileName = "iLunXHubUI_Cache_v" .. _version .. ".txt"
 local timeFileName = "iLunXHubUI_Cache_v" .. _version .. "_Time.txt"
 
@@ -308,6 +493,7 @@ if ok and result then
     WindUI = result 
 else 
     warn("Error al cargar WindUI. Revisa el link de GitHub o tu conexión.") 
+    startupSplashState.Finish("No se pudo cargar iLunXHub")
     return 
 end
 
@@ -329,8 +515,7 @@ local Window = WindUI:CreateWindow({
     Transparent = false,
     NewElements = false,
     ReduceMotion = true,
-    EntryAnimation = true,
-    EntryAnimationDuration = 0.28,
+    EntryAnimation = false,
     HideSearchBar = true,
     OpenButton = {
         Title = "Abrir iLunXHub",
@@ -4375,3 +4560,7 @@ task.spawn(function()
     task.wait(1)
     refreshConfigs()
 end)
+
+-- El splash sólo existe durante esta ejecución inicial. Abrir y cerrar el hub
+-- después de este punto permanece completamente instantáneo.
+startupSplashState.Finish()

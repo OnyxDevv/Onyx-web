@@ -1144,7 +1144,24 @@ end
 return z
 end
 
+local instantTweenMethods={}
+local instantTweenMeta={__index=instantTweenMethods}
+
+function instantTweenMethods.Play(u)
+if u.Cancelled then return end
+for v,x in next,u.Goals do
+u.Object[v]=x
+end
+end
+
+function instantTweenMethods.Cancel(u)
+u.Cancelled=true
+end
+
 function r.Tween(u,v,x,...)
+if p and p.ReduceMotion then
+return setmetatable({Object=u,Goals=x,Cancelled=false},instantTweenMeta)
+end
 return f:Create(u,TweenInfo.new(v,...),x)
 end
 
@@ -12336,20 +12353,11 @@ ImageTransparency="TabIconTransparencyActive",
 end
 ao.Tabs[aq].Selected=true
 
-task.spawn(function()
 for ar,as in next,ao.Containers do
-as.AnchorPoint=Vector2.new(0,0.05)
 as.Visible=false
 end
 ao.Containers[aq].Visible=true
-local ar=game:GetService"TweenService"
-
-local as=TweenInfo.new(0.15,Enum.EasingStyle.Quart,Enum.EasingDirection.Out)
-local at=ar:Create(ao.Containers[aq],as,{
-AnchorPoint=Vector2.new(0,0),
-})
-at:Play()
-end)
+ao.Containers[aq].AnchorPoint=Vector2.new(0,0)
 
 ao.OnChangeFunc(aq)
 end
@@ -13150,6 +13158,9 @@ NewElements=av.NewElements or false,
 IgnoreAlerts=av.IgnoreAlerts or false,
 HidePanelBackground=av.HidePanelBackground or false,
 AutoScale=av.AutoScale~=false,
+ReduceMotion=av.ReduceMotion==true,
+EntryAnimation=av.EntryAnimation~=false,
+EntryAnimationDuration=av.EntryAnimationDuration or 0.28,
 OpenButton=av.OpenButton,
 DragFrameSize=160,
 
@@ -14450,15 +14461,36 @@ an.SafeCallback(aw.OnOpenCallback)
 end)
 end
 
-task.wait(0.06)
+task.wait()
 aw.Closed=false
 
+if aw.ReduceMotion and aw.EntryAnimation then
+aw.UIElements.Main.Size=UDim2.new(
+aw.Size.X.Scale*0.94,
+math.floor(aw.Size.X.Offset*0.94),
+aw.Size.Y.Scale*0.94,
+math.floor(aw.Size.Y.Offset*0.94)
+)
+aw.UIElements.Main.Position=UDim2.new(
+aw.Position.X.Scale,
+aw.Position.X.Offset,
+aw.Position.Y.Scale,
+aw.Position.Y.Offset+10
+)
+aw.UIElements.Main.Visible=true
+aw.UIElements.Main.Main.Visible=true
+
+game:GetService("TweenService"):Create(
+aw.UIElements.Main,
+TweenInfo.new(aw.EntryAnimationDuration,Enum.EasingStyle.Quart,Enum.EasingDirection.Out),
+{Size=aw.Size,Position=aw.Position}
+):Play()
+else
 aw.UIElements.Main.Size=UDim2.new(aw.Size.X.Scale,aw.Size.X.Offset,0,100)
-
 ap(aw.UIElements.Main,0,{
-
 Size=aw.Size,
 },Enum.EasingStyle.Quint,Enum.EasingDirection.Out):Play()
+end
 
 if aw.UIElements.BackgroundGradient then
 ap(aw.UIElements.BackgroundGradient,0.2,{
@@ -15355,6 +15387,7 @@ LocalizationModule=a.load'e',
 NotificationModule=a.load'f',
 Themes=nil,
 Transparent=false,
+ReduceMotion=false,
 
 TransparencyValue=0.15,
 
@@ -15760,6 +15793,8 @@ repeat
 task.wait()
 until b
 end
+
+aa.ReduceMotion=aA.ReduceMotion==true
 
 local h=aB(aA)
 

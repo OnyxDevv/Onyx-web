@@ -1444,7 +1444,7 @@ runtime.Track(RunService.Heartbeat:Connect(function(deltaTime)
     end
 
     -- ==========================================
-    -- 1. HITBOX (0.15s) - VERSIÓN INDETECTABLE (BLOQUE FALSO)
+    -- 1. HITBOX (0.15s) - FIX VISUAL + WELD
     -- ==========================================
     if hitboxEnabled then
         mState.hbAct = true
@@ -1465,30 +1465,35 @@ runtime.Track(RunService.Heartbeat:Connect(function(deltaTime)
                     local targetHum = targetChar and ffc(targetChar, "Humanoid")
                     
                     if hrp and targetHum and targetHum.Health > 0 and isEnemy(v) then
-                        -- 1. BUSCAMOS O CREAMOS EL BLOQUE FALSO
+                        -- 1. CREAMOS EL BLOQUE FALSO (Si no existe)
                         local fakeHitbox = targetChar:FindFirstChild("AstraFakeHitbox")
                         if not fakeHitbox then
                             fakeHitbox = Instance.new("Part")
                             fakeHitbox.Name = "AstraFakeHitbox"
                             fakeHitbox.Shape = Enum.PartType.Block
-                            fakeHitbox.Massless = true -- FUNDAMENTAL: Sin esto, rompes la gravedad del enemigo
+                            fakeHitbox.Size = targetSize
+                            fakeHitbox.CFrame = hrp.CFrame -- 🔥 POSICIONAR ANTES DEL WELD (FIX)
+                            fakeHitbox.Massless = true
                             fakeHitbox.CanCollide = false
                             fakeHitbox.Anchored = false
-                            
-                            -- Se emparenta al Character para que las armas registren el daño al jugador
+                            fakeHitbox.Transparency = 1 -- El bloque físico no se ve
                             fakeHitbox.Parent = targetChar 
                             
-                            -- Lo soldamos al HRP real para que lo siga a donde vaya
                             local weld = Instance.new("WeldConstraint")
                             weld.Part0 = hrp
                             weld.Part1 = fakeHitbox
                             weld.Parent = fakeHitbox
                             
-                            -- Centramos el bloque falso
-                            fakeHitbox.CFrame = hrp.CFrame
+                            -- Le regresamos tu Adornment para que se vea a través de las paredes
+                            local box = Instance.new("BoxHandleAdornment") 
+                            box.Name = "AstraHitboxBox" 
+                            box.Adornee = fakeHitbox 
+                            box.AlwaysOnTop = true 
+                            box.ZIndex = 5 
+                            box.Parent = fakeHitbox 
                         end
                         
-                        -- 2. ACTUALIZAMOS TAMAÑO
+                        -- 2. ACTUALIZAMOS TAMAÑO FÍSICO
                         if fakeHitbox.Size ~= targetSize then fakeHitbox.Size = targetSize end
                         
                         -- 3. CÁLCULO DE VISIBILIDAD (Raycast)
@@ -1503,13 +1508,17 @@ runtime.Track(RunService.Heartbeat:Connect(function(deltaTime)
                             end
                         end
                         
-                        -- 4. ESTÉTICA DEL BLOQUE (Reemplaza el Adornment para más FPS)
+                        -- 4. ACTUALIZAMOS LO VISUAL (El BoxHandleAdornment)
                         local targetColor = aLaVista and espColor or mState.hbBlockedColor
-                        local targetTrans = hitboxInvisible and 1 or (aLaVista and 0.4 or 0.8)
+                        local targetBoxTrans = hitboxInvisible and 1 or (aLaVista and 0.2 or 0.7)
                         
-                        if fakeHitbox.Transparency ~= targetTrans then fakeHitbox.Transparency = targetTrans end
-                        if fakeHitbox.Material ~= Enum.Material.ForceField then fakeHitbox.Material = Enum.Material.ForceField end
-                        if fakeHitbox.Color ~= targetColor then fakeHitbox.Color = targetColor end
+                        local box = fakeHitbox:FindFirstChild("AstraHitboxBox")
+                        if box then
+                            if box.Size ~= fakeHitbox.Size then box.Size = fakeHitbox.Size end
+                            if box.Color3 ~= targetColor then box.Color3 = targetColor end
+                            if box.Transparency ~= targetBoxTrans then box.Transparency = targetBoxTrans end
+                            if box.Visible ~= not hitboxInvisible then box.Visible = not hitboxInvisible end
+                        end
                     end
                 end
             end
@@ -1524,7 +1533,7 @@ runtime.Track(RunService.Heartbeat:Connect(function(deltaTime)
                 local fakeHitbox = v.Character:FindFirstChild("AstraFakeHitbox")
                 if fakeHitbox then fakeHitbox:Destroy() end
                 
-                -- Por si quedó rastro del código anterior
+                -- Limpieza por si quedó basura del script anterior
                 local hrp = v.Character:FindFirstChild("HumanoidRootPart")
                 if hrp then
                     local box = hrp:FindFirstChild("AstraHitboxBox")

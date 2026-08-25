@@ -2099,19 +2099,29 @@ Tabs.KillAll:Toggle({
                                                     end
                                                 end
 
-                                                -- Se queda pegado hasta matarlo
+                                                -- Preparamos la animación del Smooth TP para evitar detecciones
+                                                local info = TweenInfo.new(0.2, Enum.EasingStyle.Linear)
+
+                                                -- Te deslizas hacia la espalda del enemigo
                                                 while runtime.Alive and killAllEnabled and p and p.Parent and enemyHum and enemyHum.Parent and enemyHum.Health > 0 and failSafe < 300 do
                                                     
                                                     myHum.PlatformStand = true 
-                                                    myHrp.CFrame = enemyHrp.CFrame * CFrame.new(0, -4, 0) * CFrame.Angles(math.rad(90), 0, 0)
                                                     myHrp.AssemblyLinearVelocity = Vector3.zero 
                                                     
-                                                    -- Solo activamos el click si ya tenemos el arma
+                                                    -- Calculamos el destino (espalda del enemigo)
+                                                    local destino = enemyHrp.CFrame * CFrame.new(0, 0, 3) 
+                                                    
+                                                    -- Ejecutamos el deslizamiento
+                                                    local tween = TweenService:Create(myHrp, info, {CFrame = destino})
+                                                    tween:Play()
+                                                    
+                                                    -- Das el navajazo mientras llegas
                                                     if arma then
                                                         arma:Activate()
                                                     end
                                                     
-                                                    task.wait(0.01)
+                                                    -- Importante: Aumentamos el wait a 0.1 para que el Tween fluya y no se trabe el cliente
+                                                    task.wait(0.1)
                                                     failSafe = failSafe + 1
                                                 end
 
@@ -2383,7 +2393,8 @@ local FOVCircle = runtime.TrackDrawing(Drawing.new("Circle"))
 FOVCircle.Filled = false
 FOVCircle.Color = Color3.fromRGB(255, 255, 255)
 FOVCircle.Visible = false
-FOVCircle.Thickness = 1
+FOVCircle.Thickness = 2 -- Le subimos el grosor para que resalte (ponle 3 si lo quieres más grueso)
+FOVCircle.NumSides = 100 -- Esto obliga al ejecutor a dibujarlo 100% circular alv
 
 local tracerLines = {}
 local tracersLimpios = true

@@ -40,13 +40,13 @@ getnamecallmethod = getnamecallmethod
 checkcaller = checkcaller
 typeof = typeof
 
--- 🔥 RUTAS DIRECTAS DE MEMORIA (EVITA EL LAG DEL MANGLE NAMED INDEXES)
-local ws_Raycast = workspace.Raycast
+-- 🔥 RUTAS DIRECTAS DE MEMORIA BLINDADAS
+local function ws_Raycast(ws, origin, dir, params) return ws:Raycast(origin, dir, params) end
 local Filter_Exclude = Enum.RaycastFilterType.Exclude
 
 -- NUEVO CACHÉ PARA EVITAR LAG DE MOONVEIL
-local ffc = game.FindFirstChild
-local ffcClass = game.FindFirstChildOfClass
+local function ffc(obj, name) return obj and obj:FindFirstChild(name) end
+local function ffcClass(obj, className) return obj and obj:FindFirstChildOfClass(className) end
 local getPlayers = Players.GetPlayers
 local getChildren = Players.GetChildren
 -- ==========================================
@@ -1355,14 +1355,13 @@ if not aimHookState then
                 if self == workspace then
                     if method == "Raycast" then
                         local origin, direction, p3 = ...
-                        -- 🔥 FIX: Usamos la cámara guardada, no workspace.CurrentCamera
-                        if typeof(direction) == "Vector3" and direction.Magnitude > 5 and (origin - camera.CFrame.Position).Magnitude > 1 then
+                        if typeof(direction) == "Vector3" and direction.Magnitude > 5 and (origin - workspace.CurrentCamera.CFrame.Position).Magnitude > 1 then
                             local newDir = (target.Position - origin).Unit * 5000
                             return oldNamecall(self, origin, newDir, p3)
                         end
                     elseif method == "FindPartOnRay" or method == "FindPartOnRayWithIgnoreList" then
                         local ray, p2, p3, p4 = ...
-                        if typeof(ray) == "Ray" and ray.Direction.Magnitude > 5 and (ray.Origin - camera.CFrame.Position).Magnitude > 1 then
+                        if typeof(ray) == "Ray" and ray.Direction.Magnitude > 5 and (ray.Origin - workspace.CurrentCamera.CFrame.Position).Magnitude > 1 then
                             local newRay = Ray.new(ray.Origin, (target.Position - ray.Origin).Unit * 5000)
                             return oldNamecall(self, newRay, p2, p3, p4)
                         end

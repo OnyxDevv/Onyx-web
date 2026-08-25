@@ -4017,19 +4017,19 @@ local ilunxSilver=aa:Gradient({
 },{Rotation=24})
 
 local ilunxBackground=aa:Gradient({
-["0"]={Color=Color3.fromHex"#020202",Transparency=0},
-["52"]={Color=Color3.fromHex"#0B0C0E",Transparency=0},
-["100"]={Color=Color3.fromHex"#040405",Transparency=0},
+["0"]={Color=Color3.fromHex"#000000",Transparency=0},
+["52"]={Color=Color3.fromHex"#0B0B0D",Transparency=0},
+["100"]={Color=Color3.fromHex"#050506",Transparency=0},
 },{Rotation=125})
 
 local ilunxSurface=aa:Gradient({
-["0"]={Color=Color3.fromHex"#191B1E",Transparency=0},
-["100"]={Color=Color3.fromHex"#0D0E10",Transparency=0},
+["0"]={Color=Color3.fromHex"#2C2C2E",Transparency=0},
+["100"]={Color=Color3.fromHex"#1C1C1E",Transparency=0},
 },{Rotation=90})
 
 local ilunxHover=aa:Gradient({
-["0"]={Color=Color3.fromHex"#292C31",Transparency=0},
-["100"]={Color=Color3.fromHex"#17191C",Transparency=0},
+["0"]={Color=Color3.fromHex"#3A3A3C",Transparency=0},
+["100"]={Color=Color3.fromHex"#2C2C2E",Transparency=0},
 },{Rotation=90})
 
 return{
@@ -4040,9 +4040,9 @@ Accent=ilunxSurface,
 Dialog=ilunxSurface,
 Outline=ilunxSilver,
 Text=Color3.fromHex"#F7F8F9",
-Placeholder=Color3.fromHex"#858B93",
+Placeholder=Color3.fromHex"#8E8E93",
 Background=ilunxBackground,
-Button=Color3.fromHex"#555B63",
+Button=Color3.fromHex"#3A3A3C",
 Icon=ilunxSilver,
 Toggle=ilunxSilver,
 ToggleBar=Color3.fromHex"#090A0B",
@@ -4054,7 +4054,7 @@ Primary=ilunxSilver,
 
 WindowShadow=Color3.fromHex"#000000",
 WindowTopbarTitle=Color3.fromHex"#FFFFFF",
-WindowTopbarAuthor=Color3.fromHex"#A4A9B0",
+WindowTopbarAuthor=Color3.fromHex"#8E8E93",
 WindowTopbarIcon=ilunxSilver,
 WindowTopbarButtonIcon=Color3.fromHex"#E4E7EA",
 
@@ -4080,29 +4080,29 @@ ElementBackground=ilunxSurface,
 ElementBackgroundTransparency=0.05,
 ElementBackgroundHover=ilunxHover,
 ElementTitle=Color3.fromHex"#F5F6F7",
-ElementDesc=Color3.fromHex"#A4A9B0",
+ElementDesc=Color3.fromHex"#AEAEB2",
 ElementIcon=ilunxSilver,
 
 SectionBox=Color3.fromHex"#D9DDE1",
 SectionBoxTransparency=0.94,
 SectionBoxBorder=ilunxSilver,
 SectionBoxBorderTransparency=0.72,
-SectionBoxBackground=Color3.fromHex"#111214",
+SectionBoxBackground=Color3.fromHex"#1C1C1E",
 SectionBoxBackgroundTransparency=0.04,
 
 DropdownTabBorder=ilunxSilver,
 DropdownTabBackground=ilunxSurface,
-DropdownBackground=Color3.fromHex"#090A0B",
-LabelBackground=Color3.fromHex"#15171A",
+DropdownBackground=Color3.fromHex"#1C1C1E",
+LabelBackground=Color3.fromHex"#2C2C2E",
 LabelBackgroundTransparency=0.08,
 
-Notification=Color3.fromHex"#08090A",
+Notification=Color3.fromHex"#1C1C1E",
 Notification2=ilunxSilver,
 Notification2Transparency=0.90,
 NotificationBorder=ilunxSilver,
 NotificationBorderTransparency=0.55,
 NotificationDuration=ilunxSilver,
-Tooltip=Color3.fromHex"#0A0B0D",
+Tooltip=Color3.fromHex"#2C2C2E",
 TooltipSecondary=ilunxSilver,
 },
 
@@ -13140,7 +13140,7 @@ TopBarButtonIconSize=av.TopBarButtonIconSize,
 
 ToggleKey=av.ToggleKey,
 ElementsRadius=av.ElementsRadius,
-Radius=av.Radius or 16,
+Radius=av.Radius or 20,
 Transparent=av.Transparent or false,
 HideSearchBar=av.HideSearchBar~=false,
 ScrollBarEnabled=av.ScrollBarEnabled or false,
@@ -13154,7 +13154,7 @@ OpenButton=av.OpenButton,
 DragFrameSize=160,
 
 Position=UDim2.new(0.5,0,0.5,0),
-UICorner=16,
+UICorner=20,
 UIPadding=14,
 UIElements={},
 CanDropdown=true,
@@ -13195,7 +13195,7 @@ aw.TopBarButtonIconSize=aw.TopBarButtonIconSize or(aw.Topbar.ButtonsType=="Mac"a
 
 aw.ElementConfig={
 UIPadding=(aw.NewElements and 10 or 13),
-UICorner=aw.ElementsRadius or(aw.NewElements and 23 or 16),
+UICorner=aw.ElementsRadius or(aw.NewElements and 23 or 14),
 }
 
 local ax=aw.Size or UDim2.new(0,580,0,460)

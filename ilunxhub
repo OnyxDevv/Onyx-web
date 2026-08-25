@@ -1799,7 +1799,7 @@ runtime.Track(RunService.Heartbeat:Connect(function(deltaTime)
                                 local enemyDelta = enemyHrp and (enemyHrp.Position - myPos) or nil
                                 if enemyHum and enemyHum.Health > 0 and enemyDelta and enemyDelta:Dot(enemyDelta) <= 640000 then
                                     if silentAimFovEnabled then
-                                        local hrpPos2D, onScreen = cam_WTVP(camera, enemyHrp.Position)
+                                        local hrpPos2D, onScreen = camera:WorldToViewportPoint(enemyHrp.Position)
                                         local dx, dy = hrpPos2D.X - centerX, hrpPos2D.Y - centerY
                                         if not onScreen or (dx * dx + dy * dy) > broadFovSq then continue end
                                     end
@@ -2471,7 +2471,7 @@ runtime.Track(RunService.RenderStepped:Connect(function(deltaTime)
                 if hum and hum.Health > 0 then
                     local distanceDelta = myPos - hrp.Position
                     if distanceDelta:Dot(distanceDelta) <= MAX_ESP_DISTANCE_SQ then
-                        local hrpPos, onScreen = cam_WTVP(camera, hrp.Position)
+                        local hrpPos, onScreen = camera:WorldToViewportPoint(hrp.Position)
                         if onScreen then
                             if not tLine then
                                 tLine = runtime.TrackDrawing(Drawing.new("Line"))

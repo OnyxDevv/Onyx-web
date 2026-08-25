@@ -1350,13 +1350,14 @@ if not aimHookState then
     oldNamecall = hookmetamethod(game, "__namecall", function(self, ...)
         local target = aimHookState.Target
         if not checkcaller() and target then
-            if target.Parent then
+            if target.Parent and target:IsDescendantOf(workspace) then
                 local method = getnamecallmethod()
                 if self == workspace then
                     if method == "Raycast" then
                         local origin, direction, p3 = ...
                         if typeof(direction) == "Vector3" then
-                            local cameraDelta = origin - camera.CFrame.Position
+                            local currentCam = workspace.CurrentCamera -- 🔥 FIX: Cámara en tiempo real
+                            local cameraDelta = origin - currentCam.CFrame.Position
                             if direction:Dot(direction) > 25 and cameraDelta:Dot(cameraDelta) > 1 then
                                 local newDir = (target.Position - origin).Unit * 5000
                                 return oldNamecall(self, origin, newDir, p3)
@@ -1365,7 +1366,8 @@ if not aimHookState then
                     elseif method == "FindPartOnRay" or method == "FindPartOnRayWithIgnoreList" then
                         local ray, p2, p3, p4 = ...
                         if typeof(ray) == "Ray" then
-                            local cameraDelta = ray.Origin - camera.CFrame.Position
+                            local currentCam = workspace.CurrentCamera -- 🔥 FIX: Cámara en tiempo real
+                            local cameraDelta = ray.Origin - currentCam.CFrame.Position
                             if ray.Direction:Dot(ray.Direction) > 25 and cameraDelta:Dot(cameraDelta) > 1 then
                                 local newRay = Ray.new(ray.Origin, (target.Position - ray.Origin).Unit * 5000)
                                 return oldNamecall(self, newRay, p2, p3, p4)
@@ -1383,7 +1385,7 @@ if not aimHookState then
     local oldIndex
     oldIndex = hookmetamethod(game, "__index", function(t, k)
         local target = aimHookState.Target
-        if not checkcaller() and t == aimHookState.Mouse and target then
+        if not checkcaller() and t == aimHookState.Mouse and target and target.Parent then
             if k == "Hit" or k == "hit" then return target.CFrame
             elseif k == "Target" or k == "target" then return target end
         end
@@ -1442,7 +1444,7 @@ local enLobby = false
 local timerLobby = 0
 
 runtime.Track(RunService.Heartbeat:Connect(function(deltaTime)
-    -- 🔥 OPTIMIZACIÓN: Solo checa si estamos en el lobby 1 vez por segundo, no en cada frame
+    local camera = workspace.CurrentCamera -- 🔥 FIX: Siempre la cámara actual
     timerLobby = timerLobby + deltaTime
     if timerLobby >= 1 then
         timerLobby = 0
@@ -2416,7 +2418,10 @@ runtime.Track(RunService.RenderStepped:Connect(function(deltaTime)
     if tracerAccumulator < TRACER_INTERVAL then return end
     tracerAccumulator = 0
 
+    local camera = workspace.CurrentCamera -- 🔥 FIX: Añadir esto aquí
+    
     if not fovVisiblePreference and not espLinesEnabled then 
+    -- ...
         if FOVCircle.Visible then FOVCircle.Visible = false end
         hideTracersOnce()
         return 

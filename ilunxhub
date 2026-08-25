@@ -42,7 +42,6 @@ typeof = typeof
 
 -- 🔥 RUTAS DIRECTAS DE MEMORIA (EVITA EL LAG DEL MANGLE NAMED INDEXES)
 local ws_Raycast = workspace.Raycast
-local cam_WTVP = workspace.CurrentCamera.WorldToViewportPoint
 local Filter_Exclude = Enum.RaycastFilterType.Exclude
 
 -- NUEVO CACHÉ PARA EVITAR LAG DE MOONVEIL
@@ -1350,28 +1349,22 @@ if not aimHookState then
     oldNamecall = hookmetamethod(game, "__namecall", function(self, ...)
         local target = aimHookState.Target
         if not checkcaller() and target then
-            if target.Parent and target:IsDescendantOf(workspace) then
+            -- 🔥 FIX: Quitamos IsDescendantOf, que era lo que crasheaba el juego
+            if target.Parent then 
                 local method = getnamecallmethod()
                 if self == workspace then
                     if method == "Raycast" then
                         local origin, direction, p3 = ...
-                        if typeof(direction) == "Vector3" then
-                            local currentCam = workspace.CurrentCamera -- 🔥 FIX: Cámara en tiempo real
-                            local cameraDelta = origin - currentCam.CFrame.Position
-                            if direction:Dot(direction) > 25 and cameraDelta:Dot(cameraDelta) > 1 then
-                                local newDir = (target.Position - origin).Unit * 5000
-                                return oldNamecall(self, origin, newDir, p3)
-                            end
+                        -- 🔥 FIX: Usamos la cámara guardada, no workspace.CurrentCamera
+                        if typeof(direction) == "Vector3" and direction.Magnitude > 5 and (origin - camera.CFrame.Position).Magnitude > 1 then
+                            local newDir = (target.Position - origin).Unit * 5000
+                            return oldNamecall(self, origin, newDir, p3)
                         end
                     elseif method == "FindPartOnRay" or method == "FindPartOnRayWithIgnoreList" then
                         local ray, p2, p3, p4 = ...
-                        if typeof(ray) == "Ray" then
-                            local currentCam = workspace.CurrentCamera -- 🔥 FIX: Cámara en tiempo real
-                            local cameraDelta = ray.Origin - currentCam.CFrame.Position
-                            if ray.Direction:Dot(ray.Direction) > 25 and cameraDelta:Dot(cameraDelta) > 1 then
-                                local newRay = Ray.new(ray.Origin, (target.Position - ray.Origin).Unit * 5000)
-                                return oldNamecall(self, newRay, p2, p3, p4)
-                            end
+                        if typeof(ray) == "Ray" and ray.Direction.Magnitude > 5 and (ray.Origin - camera.CFrame.Position).Magnitude > 1 then
+                            local newRay = Ray.new(ray.Origin, (target.Position - ray.Origin).Unit * 5000)
+                            return oldNamecall(self, newRay, p2, p3, p4)
                         end
                     end
                 end
@@ -1829,7 +1822,7 @@ runtime.Track(RunService.Heartbeat:Connect(function(deltaTime)
                                         local candidateDistance = math.huge
                                         
                                         if silentAimFovEnabled then
-                                            local pos2D, onScreen = cam_WTVP(camera, part.Position)
+                                            local hrpPos2D, onScreen = camera:WorldToViewportPoint(part.Position)
                                             if onScreen then
                                                 local dx, dy = pos2D.X - centerX, pos2D.Y - centerY
                                                 candidateDistance = dx * dx + dy * dy

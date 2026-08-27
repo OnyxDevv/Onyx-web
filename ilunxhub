@@ -2267,7 +2267,6 @@ UIElements.SliFOVSize = Tabs.Aim:Slider({
 -- KILL ALL OP (SUBTERRÁNEO + HITBOX 10)
 -- ==========================================
 
-
 Tabs.KillAll:Section({Title = "Kill all OP (Remote + TP)"})
 
 -- Función maestra que detecta si el enemigo YA puede recibir daño
@@ -2289,14 +2288,14 @@ local killAllEnabled = false
 
 Tabs.KillAll:Toggle({ 
     Title = "Activar Kill All",
-    Desc = "TP Ping-Pong + Remote Kill Event",
+    Desc = "TP Ping-Pong + Remote Kill Event (Indetectable)",
     Value = false,
     Callback = function(Value)
         killAllEnabled = Value
         if Value then
             showBottomMessage("Kill All: ACTIVADO")
             
-            -- Buscamos el RemoteEvent secreto que descubrió el espía
+            -- Buscamos el RemoteEvent secreto que descubrimos
             local killRemote = nil
             for _, v in pairs(ReplicatedStorage:GetDescendants()) do
                 if v:IsA("RemoteEvent") and v.Name == "Kill" then
@@ -2305,7 +2304,11 @@ Tabs.KillAll:Toggle({
                 end
             end
             
-            if killRemote then showBottomMessage("Evento 'Kill' localizado.") else showBottomMessage("No se encontró el evento 'Kill', usando solo físicas.") end
+            if killRemote then 
+                showBottomMessage("Evento 'Kill' inyectado correctamente.") 
+            else 
+                showBottomMessage("No se encontró el evento 'Kill', usando físicas.") 
+            end
 
             task.spawn(function()
                 while runtime.Alive and killAllEnabled do
@@ -2326,7 +2329,6 @@ Tabs.KillAll:Toggle({
                             local posicionOriginal = myHrp.CFrame
                             
                             -- 🔥 EL SECRETO: ANCLAR EL PERSONAJE 🔥
-                            -- Al anclarlo, el Anti-Cheat deja de registrar picos de velocidad durante el TP
                             myHrp.Anchored = true 
                             myHrp.CFrame = posicionOriginal * CFrame.Angles(math.rad(90), 0, 0)
                             task.wait(0.1)
@@ -2364,27 +2366,25 @@ Tabs.KillAll:Toggle({
                                                     end
                                                 end
 
-                                                -- 🔥 AC BYPASS: TP PING-PONG (ANCLADO) 🔥
+                                                -- 🔥 AC BYPASS: TP PING-PONG (ANCLADO) + REMOTE EVENT 🔥
                                                 while runtime.Alive and killAllEnabled and p and p.Parent and enemyHum and enemyHum.Parent and enemyHum.Health > 0 and failSafe < 30 do
                                                     
                                                     -- 1. TP al enemigo por debajo, acostado
                                                     myHrp.CFrame = enemyHrp.CFrame * CFrame.new(0, -3.8, 0) * CFrame.Angles(math.rad(90), 0, 0)
                                                     
+                                                    -- Activamos el arma visualmente
                                                     if arma then
                                                         arma:Activate()
                                                     end
                                                     
+                                                    -- 2. 🔥 EL GOLPE MORTAL INVISIBLE 🔥
                                                     if killRemote then
-                                                        -- Intentamos los argumentos más comunes para los remotes de kill
-                                                        pcall(function() killRemote:FireServer(p.Character) end)
                                                         pcall(function() killRemote:FireServer(enemyHum) end)
-                                                        pcall(function() killRemote:FireServer(enemyHrp) end)
-                                                        pcall(function() killRemote:FireServer(p) end)
                                                     end
                                                     
                                                     task.wait(0.02)
                                                     
-                                                    -- 2. REGRESO INSTANTÁNEO A LA BASE (ACOSTADO)
+                                                    -- 3. REGRESO INSTANTÁNEO A LA BASE (ACOSTADO)
                                                     if myHrp then
                                                         myHrp.CFrame = posicionOriginal * CFrame.Angles(math.rad(90), 0, 0)
                                                     end

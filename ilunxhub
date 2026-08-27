@@ -2263,29 +2263,6 @@ UIElements.SliFOVSize = Tabs.Aim:Slider({
 
 
 
--- ==========================================
--- KILL ALL OP (SUBTERRÁNEO + HITBOX 10)
--- ==========================================
-
-Tabs.KillAll:Section({Title = "Kill all OP (Remote + TP)"})
-
--- Función maestra que detecta si el enemigo YA puede recibir daño
-function esVulnerable(char)
-    if not char then return false end
-    if char:FindFirstChildOfClass("ForceField") then return false end
-    
-    local hrp = char:FindFirstChild("HumanoidRootPart")
-    if hrp and hrp.Anchored then return false end
-    
-    local hum = char:FindFirstChild("Humanoid")
-    if hum and hum.WalkSpeed == 0 then return false end
-    
-    return true
-end
-
-local killAllRango = 600 
-local killAllEnabled = false
-
 Tabs.KillAll:Toggle({ 
     Title = "Activar Kill All",
     Desc = "TP Ping-Pong + Remote Kill Event (Indetectable)",
@@ -2295,21 +2272,6 @@ Tabs.KillAll:Toggle({
         if Value then
             showBottomMessage("Kill All: ACTIVADO")
             
-            -- Buscamos el RemoteEvent secreto que descubrimos
-            local killRemote = nil
-            for _, v in pairs(ReplicatedStorage:GetDescendants()) do
-                if v:IsA("RemoteEvent") and v.Name == "Kill" then
-                    killRemote = v
-                    break
-                end
-            end
-            
-            if killRemote then 
-                showBottomMessage("Evento 'Kill' inyectado correctamente.") 
-            else 
-                showBottomMessage("No se encontró el evento 'Kill', usando físicas.") 
-            end
-
             task.spawn(function()
                 while runtime.Alive and killAllEnabled do
                     local myChar = player.Character
@@ -2366,6 +2328,16 @@ Tabs.KillAll:Toggle({
                                                     end
                                                 end
 
+                                                -- 🔥 BUSCADOR DE REMOTE EN TIEMPO REAL 🔥
+                                                local killRemote = nil
+                                                if arma then
+                                                    killRemote = arma:FindFirstChild("Kill", true)
+                                                end
+                                                -- Si no está en el arma, lo busca en tu personaje por si lo esconden ahí
+                                                if not killRemote then
+                                                    killRemote = myChar:FindFirstChild("Kill", true)
+                                                end
+
                                                 -- 🔥 AC BYPASS: TP PING-PONG (ANCLADO) + REMOTE EVENT 🔥
                                                 while runtime.Alive and killAllEnabled and p and p.Parent and enemyHum and enemyHum.Parent and enemyHum.Health > 0 and failSafe < 30 do
                                                     
@@ -2380,16 +2352,19 @@ Tabs.KillAll:Toggle({
                                                     -- 2. 🔥 EL GOLPE MORTAL INVISIBLE 🔥
                                                     if killRemote then
                                                         pcall(function() killRemote:FireServer(enemyHum) end)
+                                                    else
+                                                        -- Si por alguna rarísima razón no lo encuentra, usa el cuchillo normal
+                                                        task.wait(0.01)
                                                     end
                                                     
-                                                    task.wait(0.02)
+                                                    task.wait(0.03) -- Le damos un milisegundo al server para registrar el TP
                                                     
                                                     -- 3. REGRESO INSTANTÁNEO A LA BASE (ACOSTADO)
                                                     if myHrp then
                                                         myHrp.CFrame = posicionOriginal * CFrame.Angles(math.rad(90), 0, 0)
                                                     end
                                                     
-                                                    task.wait(0.04) 
+                                                    task.wait(0.05) 
                                                     failSafe = failSafe + 1
                                                 end
                                                 

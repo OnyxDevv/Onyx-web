@@ -914,8 +914,13 @@ Tabs.Inicio:Paragraph({
 })
 
 Tabs.Inicio:Paragraph({ 
+    Title = "Kill All funcional",
+    Desc = "Deteccion por Anti-Cheat arreglado."
+})
+
+Tabs.Inicio:Paragraph({ 
     Title = "Funciones Detectables Actuales",
-    Desc = "Speed Hack\nKill All\nNoclip Atravesar Paredes\nModo Fantasma"
+    Desc = "Speed Hack\nNoclip Atravesar Paredes\nModo Fantasma"
 })
 
 

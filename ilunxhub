@@ -2616,99 +2616,653 @@ end
 
 
 -- ==========================================
--- TOGGLE PRINCIPAL
+-- KILL ALL OP - iLunXHub
+-- FIX: HIT ADAPTATIVO + REMOTE BURST + SIN ESPASMOS
+-- ==========================================
+
+Tabs.KillAll:Section({
+    Title = "Kill all OP (Método YisusHub)"
+})
+
+local killAllRango = 600
+local killAllEnabled = false
+local killAllBaseCFrame = nil
+
+-- ==========================================
+-- AJUSTES
+-- ==========================================
+
+local KILL_ATTACK_INTERVAL = 0.035
+local KILL_DEACTIVATE_DELAY = 0.012
+local KILL_MAX_ATTACK_TIME = 4
+
+-- Cantidad de FireServer por ciclo.
+-- 2 suele ser suficiente para pruebas.
+local REMOTE_BURST = 2
+
+-- Si durante este tiempo no baja vida,
+-- cambia ligeramente el punto de contacto.
+local NO_DAMAGE_SWITCH_TIME = 0.18
+
+-- Posiciones alrededor/debajo del enemigo.
+-- Mucho más cerca que el -4 original.
+local KILL_OFFSETS = {
+    CFrame.new(0, -1.25, 0),
+    CFrame.new(0.55, -1.15, 0),
+    CFrame.new(-0.55, -1.15, 0),
+    CFrame.new(0, -0.95, 0.45),
+    CFrame.new(0, -0.95, -0.45)
+}
+
+
+-- ==========================================
+-- VULNERABILIDAD
+-- ==========================================
+
+local function esVulnerableKillAll(char)
+    if not char then
+        return false
+    end
+
+    if char:FindFirstChildOfClass("ForceField") then
+        return false
+    end
+
+    local hrp = char:FindFirstChild("HumanoidRootPart")
+    local hum = char:FindFirstChildOfClass("Humanoid")
+
+    if not hrp or not hum then
+        return false
+    end
+
+    if hrp.Anchored then
+        return false
+    end
+
+    if hum.Health <= 0 then
+        return false
+    end
+
+    if hum.WalkSpeed == 0 then
+        return false
+    end
+
+    return true
+end
+
+
+-- ==========================================
+-- DETECTOR DE CUCHILLO
+-- ==========================================
+
+local KNIFE_KEYWORDS = {
+    "knife",
+    "cuchillo",
+    "blade",
+    "dagger",
+    "kunai"
+}
+
+local function esCuchilloKillAll(tool)
+    if not tool or not tool:IsA("Tool") then
+        return false
+    end
+
+    -- Prioridad: estructura interna del arma
+    if tool:FindFirstChild("Kill", true)
+        or tool:FindFirstChild("KnifeClient", true)
+        or tool:FindFirstChild("KnifeServer", true)
+        or tool:FindFirstChild("Throw", true)
+    then
+        return true
+    end
+
+    local name = string.lower(tool.Name)
+
+    for i = 1, #KNIFE_KEYWORDS do
+        if string.find(name, KNIFE_KEYWORDS[i], 1, true) then
+            return true
+        end
+    end
+
+    return false
+end
+
+
+local function obtenerCuchilloKillAll(char, hum)
+    if not char or not hum then
+        return nil
+    end
+
+    -- Primero ver si ya está equipado
+    for _, tool in ipairs(char:GetChildren()) do
+        if esCuchilloKillAll(tool) then
+            return tool
+        end
+    end
+
+    local backpack = player:FindFirstChild("Backpack")
+
+    if not backpack then
+        return nil
+    end
+
+    -- Quitar cualquier Tool que no sea cuchillo
+    local currentTool = char:FindFirstChildOfClass("Tool")
+
+    if currentTool and not esCuchilloKillAll(currentTool) then
+        pcall(function()
+            hum:UnequipTools()
+        end)
+
+        task.wait()
+    end
+
+    -- Buscar cuchillo
+    for _, tool in ipairs(backpack:GetChildren()) do
+        if esCuchilloKillAll(tool) then
+
+            pcall(function()
+                hum:EquipTool(tool)
+            end)
+
+            -- Esperar a que Roblox confirme equipamiento
+            local equipTimeout = os.clock() + 0.35
+
+            while killAllEnabled
+                and tool.Parent ~= char
+                and os.clock() < equipTimeout
+            do
+                task.wait()
+            end
+
+            if tool.Parent == char then
+                return tool
+            end
+        end
+    end
+
+    return nil
+end
+
+
+-- ==========================================
+-- HITBOX AUXILIAR
+-- ==========================================
+
+local function prepararHitboxKillAll(enemyChar, enemyHrp)
+    if not enemyChar or not enemyHrp then
+        return
+    end
+
+    local fakeHitbox = enemyChar:FindFirstChild("iLunXKillHitbox")
+
+    if fakeHitbox
+        and fakeHitbox:IsA("BasePart")
+        and fakeHitbox:GetAttribute("EsAstraHitbox")
+    then
+        fakeHitbox.Size = Vector3.new(7, 7, 7)
+        return
+    end
+
+    fakeHitbox = Instance.new("Part")
+
+    fakeHitbox.Name = "iLunXKillHitbox"
+    fakeHitbox:SetAttribute("EsAstraHitbox", true)
+
+    fakeHitbox.Shape = Enum.PartType.Block
+    fakeHitbox.Size = Vector3.new(7, 7, 7)
+
+    fakeHitbox.Transparency = 1
+
+    fakeHitbox.CanCollide = false
+    fakeHitbox.CanTouch = true
+    fakeHitbox.CanQuery = true
+
+    fakeHitbox.Massless = true
+    fakeHitbox.Anchored = false
+
+    fakeHitbox.CFrame = enemyHrp.CFrame
+    fakeHitbox.Parent = enemyChar
+
+    local weld = Instance.new("WeldConstraint")
+
+    weld.Part0 = enemyHrp
+    weld.Part1 = fakeHitbox
+    weld.Parent = fakeHitbox
+end
+
+
+-- ==========================================
+-- ATAQUE A UN ENEMIGO
+-- ==========================================
+
+local function atacarJugadorKillAll(
+    targetPlayer,
+    myChar,
+    myHum,
+    myHrp
+)
+
+    if not targetPlayer
+        or targetPlayer == player
+        or not targetPlayer.Character
+    then
+        return false
+    end
+
+    local enemyChar = targetPlayer.Character
+
+    local enemyHum =
+        enemyChar:FindFirstChildOfClass("Humanoid")
+
+    local enemyHrp =
+        enemyChar:FindFirstChild("HumanoidRootPart")
+
+    if not enemyHum
+        or not enemyHrp
+        or enemyHum.Health <= 0
+        or not esVulnerableKillAll(enemyChar)
+    then
+        return false
+    end
+
+    -- ======================================
+    -- RANGO
+    -- ======================================
+
+    local referenceCF =
+        killAllBaseCFrame
+        or myHrp.CFrame
+
+    if (
+        referenceCF.Position
+        - enemyHrp.Position
+    ).Magnitude > killAllRango then
+
+        return false
+    end
+
+
+    -- ======================================
+    -- HITBOX AUXILIAR
+    -- ======================================
+
+    prepararHitboxKillAll(
+        enemyChar,
+        enemyHrp
+    )
+
+
+    -- ======================================
+    -- CUCHILLO
+    -- ======================================
+
+    local arma =
+        obtenerCuchilloKillAll(
+            myChar,
+            myHum
+        )
+
+    if not arma then
+        return false
+    end
+
+
+    local killRemote =
+        arma:FindFirstChild(
+            "Kill",
+            true
+        )
+
+
+    -- ======================================
+    -- ESTADO ADAPTATIVO
+    -- ======================================
+
+    local startedAt = os.clock()
+
+    local offsetIndex = 1
+
+    local lastHealth =
+        enemyHum.Health
+
+    local noDamageSince =
+        os.clock()
+
+
+    -- ======================================
+    -- LOOP DE ATAQUE
+    -- ======================================
+
+    while runtime.Alive
+        and killAllEnabled
+        and myChar.Parent
+        and myHum.Health > 0
+        and enemyChar.Parent
+        and enemyHum.Parent
+        and enemyHum.Health > 0
+        and enemyHrp.Parent
+        and (
+            os.clock()
+            - startedAt
+        ) < KILL_MAX_ATTACK_TIME
+    do
+
+        -- ==================================
+        -- POSICIÓN
+        -- ==================================
+
+        local offset =
+            KILL_OFFSETS[
+                offsetIndex
+            ]
+
+        myHrp.CFrame =
+            enemyHrp.CFrame
+            * offset
+            * CFrame.Angles(
+                math.rad(90),
+                0,
+                0
+            )
+
+        myHrp.AssemblyLinearVelocity =
+            Vector3.zero
+
+        myHrp.AssemblyAngularVelocity =
+            Vector3.zero
+
+
+        -- ==================================
+        -- REMOTE BURST
+        -- ==================================
+
+        if killRemote
+            and killRemote.Parent
+        then
+
+            for _ = 1, REMOTE_BURST do
+
+                pcall(function()
+                    killRemote:FireServer(
+                        enemyHum
+                    )
+                end)
+
+            end
+        end
+
+
+        -- ==================================
+        -- ACTIVATE / DEACTIVATE
+        -- ==================================
+
+        if arma
+            and arma.Parent == myChar
+        then
+
+            pcall(function()
+                arma:Activate()
+            end)
+
+            local currentWeapon =
+                arma
+
+            task.delay(
+                KILL_DEACTIVATE_DELAY,
+                function()
+
+                    if currentWeapon
+                        and currentWeapon.Parent
+                        == myChar
+                    then
+
+                        pcall(function()
+                            currentWeapon:
+                                Deactivate()
+                        end)
+
+                    end
+
+                end
+            )
+        end
+
+
+        -- ==================================
+        -- CADENCIA
+        -- ==================================
+
+        task.wait(
+            KILL_ATTACK_INTERVAL
+        )
+
+
+        -- ==================================
+        -- DETECTOR DE DAÑO
+        -- ==================================
+
+        if enemyHum.Health < lastHealth then
+
+            -- Hubo daño.
+            -- Conservamos este ángulo.
+
+            lastHealth =
+                enemyHum.Health
+
+            noDamageSince =
+                os.clock()
+
+        elseif (
+            os.clock()
+            - noDamageSince
+        ) >= NO_DAMAGE_SWITCH_TIME
+        then
+
+            -- No registró daño:
+            -- cambiamos el punto
+            -- de contacto.
+
+            offsetIndex += 1
+
+            if offsetIndex
+                > #KILL_OFFSETS
+            then
+
+                offsetIndex = 1
+
+            end
+
+            noDamageSince =
+                os.clock()
+
+        end
+    end
+
+
+    -- ======================================
+    -- SOLTAR ARMA
+    -- ======================================
+
+    pcall(function()
+
+        if arma
+            and arma.Parent == myChar
+        then
+
+            arma:Deactivate()
+
+        end
+
+    end)
+
+
+    -- Solo confirmar kill REAL
+    return (
+        enemyHum
+        and enemyHum.Health <= 0
+    )
+end
+
+
+-- ==========================================
+-- TOGGLE
 -- ==========================================
 
 Tabs.KillAll:Toggle({
+
     Title = "Activar Kill All",
-    Desc = "Se pega al enemigo hasta matarlo + Base Acostada",
+
+    Desc =
+        "Se pega al enemigo hasta matarlo + Base Acostada",
+
     Value = false,
 
     Callback = function(Value)
+
         killAllEnabled = Value
 
-        if Value then
-            -- ======================================
-            -- GUARDAR BASE UNA SOLA VEZ
-            --
-            -- Este es el fix del espasmo:
-            -- ya NO guardamos nuevamente un CFrame
-            -- que previamente estaba rotado 90°.
-            -- ======================================
 
-            local startChar = player.Character
+        -- ==================================
+        -- ACTIVAR
+        -- ==================================
+
+        if Value then
+
+            local startChar =
+                player.Character
+
             local startHrp =
                 startChar
-                and startChar:FindFirstChild("HumanoidRootPart")
+                and startChar:
+                    FindFirstChild(
+                        "HumanoidRootPart"
+                    )
 
+
+            -- Guardar UNA sola base.
+            -- Evita acumular 90°.
             if startHrp then
-                killAllBaseCFrame = startHrp.CFrame
+
+                killAllBaseCFrame =
+                    startHrp.CFrame
+
             else
-                killAllBaseCFrame = nil
+
+                killAllBaseCFrame =
+                    nil
+
             end
+
 
             showBottomMessage(
                 "Kill All: ACTIVADO (Modo Express)"
             )
 
+
             task.spawn(function()
 
-                while runtime.Alive and killAllEnabled do
+                while runtime.Alive
+                    and killAllEnabled
+                do
 
-                    local myChar = player.Character
-                    local backpack = player:FindFirstChild("Backpack")
+                    -- =========================
+                    -- PERSONAJE LOCAL
+                    -- =========================
+
+                    local myChar =
+                        player.Character
+
+                    local backpack =
+                        player:
+                            FindFirstChild(
+                                "Backpack"
+                            )
+
 
                     if not myChar
                         or not backpack
                     then
-                        task.wait(0.25)
+
+                        task.wait(0.2)
                         continue
+
                     end
 
+
                     local myHrp =
-                        myChar:FindFirstChild("HumanoidRootPart")
+                        myChar:
+                            FindFirstChild(
+                                "HumanoidRootPart"
+                            )
 
                     local myHum =
-                        myChar:FindFirstChildOfClass("Humanoid")
+                        myChar:
+                            FindFirstChildOfClass(
+                                "Humanoid"
+                            )
+
 
                     if not myHrp
                         or not myHum
                         or myHum.Health <= 0
                     then
-                        task.wait(0.25)
+
+                        task.wait(0.2)
                         continue
+
                     end
 
-                    -- Si reapareciste mientras seguía activo,
-                    -- actualizamos la base.
+
                     if not killAllBaseCFrame then
-                        killAllBaseCFrame = myHrp.CFrame
+
+                        killAllBaseCFrame =
+                            myHrp.CFrame
+
                     end
+
 
                     if estaEnLobby()
-                        or not esVulnerableKillAll(myChar)
+                        or not esVulnerableKillAll(
+                            myChar
+                        )
                     then
-                        task.wait(0.25)
+
+                        task.wait(0.2)
                         continue
+
                     end
 
-                    local matoAlguien = false
 
-                    -- ======================================
+                    -- =========================
                     -- BARRIDO
-                    -- ======================================
+                    -- =========================
 
-                    for _, targetPlayer in ipairs(
-                        Players:GetPlayers()
-                    ) do
+                    local matoAlguien =
+                        false
+
+
+                    for _, targetPlayer
+                        in ipairs(
+                            Players:GetPlayers()
+                        )
+                    do
+
                         if not killAllEnabled
                             or not runtime.Alive
                         then
+
                             break
+
                         end
 
-                        if targetPlayer ~= player
-                            and isEnemy(targetPlayer)
+
+                        if targetPlayer
+                                ~= player
+                            and isEnemy(
+                                targetPlayer
+                            )
                         then
 
                             local murio =
@@ -2719,35 +3273,44 @@ Tabs.KillAll:Toggle({
                                     myHrp
                                 )
 
+
                             if murio then
-                                matoAlguien = true
+
+                                matoAlguien =
+                                    true
+
                             end
+
                         end
+
                     end
 
-                    -- ======================================
-                    -- SOLTAR CUCHILLO
-                    -- ======================================
+
+                    -- =========================
+                    -- DESACTIVAR TOOL
+                    -- =========================
 
                     pcall(function()
+
                         local armaActual =
-                            myChar:FindFirstChildOfClass("Tool")
+                            myChar:
+                                FindFirstChildOfClass(
+                                    "Tool"
+                                )
 
                         if armaActual then
-                            armaActual:Deactivate()
+
+                            armaActual:
+                                Deactivate()
+
                         end
+
                     end)
 
-                    -- ======================================
-                    -- VOLVER A BASE
-                    --
-                    -- IMPORTANTE:
-                    -- solo movemos el CFrame cuando el
-                    -- barrido REALMENTE mató a alguien.
-                    --
-                    -- Si ya están todos muertos, el siguiente
-                    -- ciclo NO vuelve a rotarte otros 90°.
-                    -- ======================================
+
+                    -- =========================
+                    -- REGRESO A BASE
+                    -- =========================
 
                     if killAllEnabled
                         and matoAlguien
@@ -2770,36 +3333,51 @@ Tabs.KillAll:Toggle({
                         myHrp.AssemblyAngularVelocity =
                             Vector3.zero
 
-                        task.wait(0.35)
+                        task.wait(0.30)
+
                     else
-                        -- Cuando no hay nadie que matar,
-                        -- simplemente esperamos.
-                        -- NO tocamos el CFrame.
-                        task.wait(0.15)
+
+                        -- Ya no vuelve a meter
+                        -- otra rotación de 90°.
+                        task.wait(0.12)
+
                     end
+
                 end
+
             end)
 
+
+        -- ==================================
+        -- DESACTIVAR
+        -- ==================================
+
         else
+
             showBottomMessage(
                 "Kill All: DESACTIVADO"
             )
 
-            -- ======================================
-            -- VOLVER A PARARSE EN EL MISMO LUGAR
-            -- ======================================
 
             pcall(function()
-                local char = player.Character
+
+                local char =
+                    player.Character
+
                 local hrp =
                     char
-                    and char:FindFirstChild(
-                        "HumanoidRootPart"
-                    )
+                    and char:
+                        FindFirstChild(
+                            "HumanoidRootPart"
+                        )
+
 
                 if hrp then
+
                     local _, rotY, _ =
-                        hrp.CFrame:ToEulerAnglesXYZ()
+                        hrp.CFrame:
+                            ToEulerAnglesXYZ()
+
 
                     hrp.AssemblyLinearVelocity =
                         Vector3.zero
@@ -2807,21 +3385,29 @@ Tabs.KillAll:Toggle({
                     hrp.AssemblyAngularVelocity =
                         Vector3.zero
 
+
                     hrp.CFrame =
-                        CFrame.new(hrp.Position)
+                        CFrame.new(
+                            hrp.Position
+                        )
                         * CFrame.Angles(
                             0,
                             rotY,
                             0
                         )
+
                 end
+
             end)
 
-            killAllBaseCFrame = nil
+
+            killAllBaseCFrame =
+                nil
+
         end
+
     end
 })
-
 
 -- ====================
 -- HITBOX EXPANDER OPTIMIZADO (LAZY LOADING)

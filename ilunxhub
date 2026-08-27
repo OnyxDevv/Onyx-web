@@ -2281,66 +2281,52 @@ UIElements.SliFOVSize = Tabs.Aim:Slider({
 
 
 -- ==========================================
--- KILL ALL OP - iLunXHub
--- AlexDev
+-- iLunXHub | KILL ALL SINGLE HIT
+-- Creator: AlexDev
 --
--- FIX:
--- + Hitbox 10x10x10
--- + Predicción de salto/movimiento
--- + Seguimiento rápido
--- + Target Torso / UpperTorso
--- + Activate / Deactivate correcto
--- + Sin acumulación de rotación
+-- MÉTODO:
+-- 1. Espera protección
+-- 2. Espera vulnerabilidad ESTABLE
+-- 3. Equipa cuchillo
+-- 4. TP UNA SOLA VEZ
+-- 5. Espera que Roblox procese posición
+-- 6. UN SOLO cuchillazo
+-- 7. Confirma daño/muerte
+-- 8. Regresa a base
 -- ==========================================
 
 Tabs.KillAll:Section({
-    Title = "Kill all OP (Método YisusHub)"
+    Title = "Kill all OP (Single Hit)"
 })
 
-local killAllRango = 600
 local killAllEnabled = false
 local killAllBaseCFrame = nil
 
--- ==========================================
--- CONFIGURACIÓN
--- ==========================================
+local KILL_RANGE = 600
 
-local KILL_ATTACK_INTERVAL = 0.022
-local KILL_DEACTIVATE_DELAY = 0.010
-local KILL_MAX_ATTACK_TIME = 5
+-- Tiempo que el enemigo debe permanecer
+-- sin protección antes de atacarlo.
+local VULNERABLE_STABLE_TIME = 0.25
 
--- Predicción del movimiento enemigo.
-local BASE_PREDICTION_TIME = 0.040
-local JUMP_PREDICTION_TIME = 0.055
+-- Cuánto esperar máximo a que se quite
+-- la protección de ronda.
+local VULNERABLE_TIMEOUT = 12
 
--- Limita predicción horizontal exagerada.
-local MAX_HORIZONTAL_PREDICTION = 2.25
+-- Offset estando acostado debajo del enemigo.
+local ATTACK_OFFSET = CFrame.new(0, -2.75, 0)
 
--- Hitbox auxiliar
-local KILL_HITBOX_SIZE = Vector3.new(10, 10, 10)
+-- Tiempo para comprobar si el golpe registró.
+local HIT_CONFIRM_TIME = 0.40
 
--- Remote por actualización.
-local REMOTE_BURST = 2
+-- Si un golpe no registra, no insistimos
+-- inmediatamente contra ese mismo jugador.
+local FAILED_RETRY_DELAY = 0.30
 
--- ==========================================
--- OFFSETS SEGÚN MOVIMIENTO
--- ==========================================
-
-local OFFSET_NORMAL = -2.75
-
--- Cuando sube nos acercamos verticalmente
--- para acompañar el salto.
-local OFFSET_JUMPING = -2.05
-
--- Cuando cae.
-local OFFSET_FALLING = -2.30
-
--- Cerca del punto más alto del salto.
-local OFFSET_APEX = -2.15
+local failedTargets = {}
 
 
 -- ==========================================
--- HELPERS
+-- FREEZE ROOT
 -- ==========================================
 
 local function freezeKillRoot(hrp)
@@ -2353,27 +2339,48 @@ local function freezeKillRoot(hrp)
 end
 
 
-local function esVulnerableKillAll(char)
-    if not char then
+-- ==========================================
+-- VULNERABILIDAD
+-- ==========================================
+
+local function estaRealmenteVulnerableKillAll(char)
+    if not char or not char.Parent then
         return false
     end
 
-    if char:FindFirstChildOfClass("ForceField") then
-        return false
-    end
+    local hum =
+        char:FindFirstChildOfClass("Humanoid")
 
-    local hrp = char:FindFirstChild("HumanoidRootPart")
-    local hum = char:FindFirstChildOfClass("Humanoid")
+    local hrp =
+        char:FindFirstChild("HumanoidRootPart")
 
-    if not hrp or not hum then
-        return false
-    end
-
-    if hrp.Anchored then
+    if not hum or not hrp then
         return false
     end
 
     if hum.Health <= 0 then
+        return false
+    end
+
+    -- Protección clásica
+    if char:FindFirstChildOfClass("ForceField") then
+        return false
+    end
+
+    -- Durante ciertos estados de ronda
+    if hrp.Anchored then
+        return false
+    end
+
+    if hum.WalkSpeed <= 0 then
+        return false
+    end
+
+    -- Otros estados obvios donde todavía
+    -- no queremos intentar pegar.
+    local state = hum:GetState()
+
+    if state == Enum.HumanoidStateType.Dead then
         return false
     end
 
@@ -2382,28 +2389,57 @@ end
 
 
 -- ==========================================
--- TARGET REAL DEL PERSONAJE
+-- ESPERAR A QUE DE VERDAD ESTÉ LISTO
 -- ==========================================
 
-local function obtenerParteObjetivoKillAll(char)
-    if not char then
-        return nil
+local function esperarVulnerabilidadKillAll(char)
+    local startedAt = os.clock()
+    local stableSince = nil
+
+    while runtime.Alive
+        and killAllEnabled
+        and char
+        and char.Parent
+    do
+        local hum =
+            char:FindFirstChildOfClass("Humanoid")
+
+        if not hum or hum.Health <= 0 then
+            return false
+        end
+
+        if estaRealmenteVulnerableKillAll(char) then
+
+            if not stableSince then
+                stableSince = os.clock()
+            end
+
+            if (
+                os.clock()
+                - stableSince
+            ) >= VULNERABLE_STABLE_TIME
+            then
+                return true
+            end
+
+        else
+            -- Si reaparece cualquier protección,
+            -- reiniciamos el contador.
+            stableSince = nil
+        end
+
+        if (
+            os.clock()
+            - startedAt
+        ) >= VULNERABLE_TIMEOUT
+        then
+            return false
+        end
+
+        task.wait(0.03)
     end
 
-    -- Primero torso real.
-    local upperTorso = char:FindFirstChild("UpperTorso")
-
-    if upperTorso and upperTorso:IsA("BasePart") then
-        return upperTorso
-    end
-
-    local torso = char:FindFirstChild("Torso")
-
-    if torso and torso:IsA("BasePart") then
-        return torso
-    end
-
-    return char:FindFirstChild("HumanoidRootPart")
+    return false
 end
 
 
@@ -2411,7 +2447,7 @@ end
 -- DETECTOR DE CUCHILLO
 -- ==========================================
 
-local KNIFE_KEYWORDS = {
+local KNIFE_WORDS = {
     "knife",
     "cuchillo",
     "blade",
@@ -2419,26 +2455,28 @@ local KNIFE_KEYWORDS = {
     "kunai"
 }
 
-
 local function esCuchilloKillAll(tool)
     if not tool or not tool:IsA("Tool") then
         return false
     end
 
-    if tool:FindFirstChild("Kill", true)
-        or tool:FindFirstChild("KnifeClient", true)
+    -- La estructura interna tiene prioridad
+    -- sobre el nombre.
+    if tool:FindFirstChild("KnifeClient", true)
         or tool:FindFirstChild("KnifeServer", true)
         or tool:FindFirstChild("Throw", true)
+        or tool:FindFirstChild("Kill", true)
     then
         return true
     end
 
-    local nombre = string.lower(tool.Name)
+    local name =
+        string.lower(tool.Name)
 
-    for i = 1, #KNIFE_KEYWORDS do
+    for i = 1, #KNIFE_WORDS do
         if string.find(
-            nombre,
-            KNIFE_KEYWORDS[i],
+            name,
+            KNIFE_WORDS[i],
             1,
             true
         ) then
@@ -2449,6 +2487,10 @@ local function esCuchilloKillAll(tool)
     return false
 end
 
+
+-- ==========================================
+-- EQUIPAR CUCHILLO
+-- ==========================================
 
 local function obtenerCuchilloKillAll(char, hum)
     if not char or not hum then
@@ -2462,23 +2504,25 @@ local function obtenerCuchilloKillAll(char, hum)
         end
     end
 
-    local backpack = player:FindFirstChild("Backpack")
+    local backpack =
+        player:FindFirstChild("Backpack")
 
     if not backpack then
         return nil
     end
 
-    -- Quitar herramienta que no sea cuchillo
-    local currentTool = char:FindFirstChildOfClass("Tool")
+    -- Quitar cualquier otra herramienta
+    local equipped =
+        char:FindFirstChildOfClass("Tool")
 
-    if currentTool
-        and not esCuchilloKillAll(currentTool)
+    if equipped
+        and not esCuchilloKillAll(equipped)
     then
         pcall(function()
             hum:UnequipTools()
         end)
 
-        task.wait()
+        RunService.Heartbeat:Wait()
     end
 
     -- Buscar cuchillo
@@ -2489,14 +2533,15 @@ local function obtenerCuchilloKillAll(char, hum)
                 hum:EquipTool(tool)
             end)
 
-            local timeout = os.clock() + 0.30
+            local equipDeadline =
+                os.clock() + 0.40
 
             while runtime.Alive
                 and killAllEnabled
                 and tool.Parent ~= char
-                and os.clock() < timeout
+                and os.clock() < equipDeadline
             do
-                task.wait()
+                RunService.Heartbeat:Wait()
             end
 
             if tool.Parent == char then
@@ -2510,241 +2555,34 @@ end
 
 
 -- ==========================================
--- HITBOX AUXILIAR 10x10x10
+-- REGRESAR A BASE
 -- ==========================================
 
-local function prepararHitboxKillAll(
-    enemyChar,
-    enemyHrp
-)
-    if not enemyChar or not enemyHrp then
-        return nil
-    end
-
-    local hitbox =
-        enemyChar:FindFirstChild(
-            "iLunXKillHitbox"
-        )
-
-    if hitbox
-        and hitbox:IsA("BasePart")
-        and hitbox:GetAttribute("EsAstraHitbox")
-    then
-
-        hitbox.Size = KILL_HITBOX_SIZE
-        hitbox.CFrame = enemyHrp.CFrame
-
-        return hitbox
-    end
-
-
-    hitbox = Instance.new("Part")
-
-    hitbox.Name = "iLunXKillHitbox"
-
-    hitbox:SetAttribute(
-        "EsAstraHitbox",
-        true
-    )
-
-    hitbox.Shape = Enum.PartType.Block
-    hitbox.Size = KILL_HITBOX_SIZE
-
-    hitbox.Transparency = 1
-
-    hitbox.CanCollide = false
-    hitbox.CanTouch = true
-    hitbox.CanQuery = true
-
-    hitbox.Massless = true
-    hitbox.Anchored = false
-
-    hitbox.CFrame =
-        enemyHrp.CFrame
-
-    hitbox.Parent =
-        enemyChar
-
-
-    local weld =
-        Instance.new("WeldConstraint")
-
-    weld.Part0 =
-        enemyHrp
-
-    weld.Part1 =
-        hitbox
-
-    weld.Parent =
-        hitbox
-
-    return hitbox
-end
-
-
--- ==========================================
--- PREDICCIÓN DE POSICIÓN
--- ==========================================
-
-local function calcularPosicionPredicha(
-    enemyHrp,
-    enemyHum
-)
-    local velocity =
-        enemyHrp.AssemblyLinearVelocity
-
-    local velocityY =
-        velocity.Y
-
-
-    -- ======================================
-    -- DETECTAR ESTADO
-    -- ======================================
-
-    local humState =
-        enemyHum:GetState()
-
-    local jumping =
-        humState == Enum.HumanoidStateType.Jumping
-
-    local freefall =
-        humState == Enum.HumanoidStateType.Freefall
-
-
-    -- ======================================
-    -- PREDICTION TIME
-    -- ======================================
-
-    local predictionTime =
-        BASE_PREDICTION_TIME
-
-    if jumping
-        or freefall
-        or math.abs(velocityY) > 4
-    then
-        predictionTime =
-            JUMP_PREDICTION_TIME
-    end
-
-
-    -- ======================================
-    -- PREDICCIÓN INICIAL
-    -- ======================================
-
-    local prediction =
-        velocity * predictionTime
-
-
-    -- ======================================
-    -- LIMITAR HORIZONTAL
-    -- ======================================
-
-    local horizontal =
-        Vector3.new(
-            prediction.X,
-            0,
-            prediction.Z
-        )
-
-    if horizontal.Magnitude >
-        MAX_HORIZONTAL_PREDICTION
-    then
-
-        horizontal =
-            horizontal.Unit
-            * MAX_HORIZONTAL_PREDICTION
-    end
-
-
-    prediction =
-        Vector3.new(
-            horizontal.X,
-            prediction.Y,
-            horizontal.Z
-        )
-
-
-    return
-        enemyHrp.Position + prediction,
-        velocityY,
-        humState
-end
-
-
--- ==========================================
--- OFFSET DINÁMICO
--- ==========================================
-
-local function obtenerOffsetVertical(
-    velocityY,
-    humState
-)
-    -- Subiendo rápido
-    if velocityY > 7 then
-        return OFFSET_JUMPING
-    end
-
-    -- Cayendo
-    if velocityY < -7 then
-        return OFFSET_FALLING
-    end
-
-    -- Cerca del punto máximo
-    if humState == Enum.HumanoidStateType.Freefall
-        and math.abs(velocityY) <= 7
-    then
-        return OFFSET_APEX
-    end
-
-    return OFFSET_NORMAL
-end
-
-
--- ==========================================
--- ACTIVATE / DEACTIVATE
--- ==========================================
-
-local function pulsarCuchilloKillAll(
-    arma,
-    myChar
-)
-    if not arma
-        or arma.Parent ~= myChar
+local function regresarBaseKillAll(hrp)
+    if not hrp
+        or not hrp.Parent
+        or not killAllBaseCFrame
     then
         return
     end
 
-    pcall(function()
-        arma:Activate()
-    end)
+    hrp.CFrame =
+        killAllBaseCFrame
+        * CFrame.Angles(
+            math.rad(90),
+            0,
+            0
+        )
 
-    local currentWeapon =
-        arma
-
-    task.delay(
-        KILL_DEACTIVATE_DELAY,
-        function()
-
-            if currentWeapon
-                and currentWeapon.Parent
-                == myChar
-            then
-
-                pcall(function()
-                    currentWeapon:Deactivate()
-                end)
-
-            end
-        end
-    )
+    freezeKillRoot(hrp)
 end
 
 
 -- ==========================================
--- ATAQUE INDIVIDUAL
+-- UN SOLO ATAQUE
 -- ==========================================
 
-local function atacarJugadorKillAll(
+local function atacarUnaVezKillAll(
     targetPlayer,
     myChar,
     myHum,
@@ -2757,27 +2595,87 @@ local function atacarJugadorKillAll(
         return false
     end
 
-
     local enemyChar =
         targetPlayer.Character
 
     local enemyHum =
-        enemyChar:
-            FindFirstChildOfClass(
-                "Humanoid"
-            )
+        enemyChar:FindFirstChildOfClass("Humanoid")
 
     local enemyHrp =
-        enemyChar:
-            FindFirstChild(
-                "HumanoidRootPart"
-            )
-
+        enemyChar:FindFirstChild("HumanoidRootPart")
 
     if not enemyHum
         or not enemyHrp
         or enemyHum.Health <= 0
-        or not esVulnerableKillAll(
+    then
+        return false
+    end
+
+
+    -- ======================================
+    -- EVITAR REINTENTOS ABSURDAMENTE RÁPIDOS
+    -- ======================================
+
+    local retryAt =
+        failedTargets[targetPlayer]
+
+    if retryAt
+        and os.clock() < retryAt
+    then
+        return false
+    end
+
+
+    -- ======================================
+    -- RANGO DESDE LA POSICIÓN ORIGINAL
+    -- ======================================
+
+    local baseCF =
+        killAllBaseCFrame
+        or myHrp.CFrame
+
+    if (
+        baseCF.Position
+        - enemyHrp.Position
+    ).Magnitude > KILL_RANGE
+    then
+        return false
+    end
+
+
+    -- ======================================
+    -- ESPERAR PROTECCIÓN
+    --
+    -- NO hacemos TP hasta que haya estado
+    -- vulnerable durante un rato estable.
+    -- ======================================
+
+    local vulnerable =
+        esperarVulnerabilidadKillAll(
+            enemyChar
+        )
+
+    if not vulnerable then
+        return false
+    end
+
+
+    -- Volvemos a comprobar porque pudo cambiar
+    -- mientras esperábamos.
+    enemyHum =
+        enemyChar:FindFirstChildOfClass(
+            "Humanoid"
+        )
+
+    enemyHrp =
+        enemyChar:FindFirstChild(
+            "HumanoidRootPart"
+        )
+
+    if not enemyHum
+        or not enemyHrp
+        or enemyHum.Health <= 0
+        or not estaRealmenteVulnerableKillAll(
             enemyChar
         )
     then
@@ -2786,34 +2684,7 @@ local function atacarJugadorKillAll(
 
 
     -- ======================================
-    -- COMPROBAR RANGO
-    -- ======================================
-
-    local referenceCF =
-        killAllBaseCFrame
-        or myHrp.CFrame
-
-    if (
-        referenceCF.Position
-        - enemyHrp.Position
-    ).Magnitude > killAllRango
-    then
-        return false
-    end
-
-
-    -- ======================================
-    -- HITBOX GRANDE
-    -- ======================================
-
-    prepararHitboxKillAll(
-        enemyChar,
-        enemyHrp
-    )
-
-
-    -- ======================================
-    -- CUCHILLO
+    -- EQUIPAR CUCHILLO ANTES DEL TP
     -- ======================================
 
     local arma =
@@ -2827,223 +2698,151 @@ local function atacarJugadorKillAll(
     end
 
 
-    local killRemote =
-        arma:FindFirstChild(
-            "Kill",
-            true
-        )
-
-
     -- ======================================
-    -- ATAQUE
+    -- VIDA ANTES DEL GOLPE
     -- ======================================
 
-    local startedAt =
-        os.clock()
-
-    local lastHealth =
+    local vidaAntes =
         enemyHum.Health
 
 
-    while runtime.Alive
-        and killAllEnabled
+    -- ======================================
+    -- TP UNA SOLA VEZ
+    -- ======================================
 
-        and myChar.Parent
-        and myHum.Health > 0
+    myHrp.CFrame =
+        enemyHrp.CFrame
+        * ATTACK_OFFSET
+        * CFrame.Angles(
+            math.rad(90),
+            0,
+            0
+        )
 
-        and enemyChar.Parent
-        and enemyHum.Parent
-        and enemyHum.Health > 0
-
-        and enemyHrp.Parent
-
-        and (
-            os.clock()
-            - startedAt
-        ) < KILL_MAX_ATTACK_TIME
-    do
-
-        -- ==================================
-        -- ACTUALIZAR TARGET REAL
-        -- ==================================
-
-        local targetPart =
-            obtenerParteObjetivoKillAll(
-                enemyChar
-            )
-
-        if not targetPart then
-            break
-        end
+    freezeKillRoot(myHrp)
 
 
-        -- ==================================
-        -- PREDICCIÓN DE MOVIMIENTO
-        -- ==================================
+    -- ======================================
+    -- IMPORTANTE:
+    -- ESPERAMOS DOS HEARTBEATS REALES.
+    --
+    -- El personaje YA está con el enemigo
+    -- antes de ejecutar el cuchillazo.
+    -- ======================================
 
-        local predictedPosition,
-            velocityY,
-            humState =
-            calcularPosicionPredicha(
-                enemyHrp,
-                enemyHum
-            )
-
-
-        -- ==================================
-        -- USAR TORSO PARA CORREGIR ALTURA
-        -- ==================================
-
-        if targetPart ~= enemyHrp then
-
-            local torsoDifference =
-                targetPart.Position.Y
-                - enemyHrp.Position.Y
-
-            predictedPosition =
-                predictedPosition
-                + Vector3.new(
-                    0,
-                    torsoDifference * 0.45,
-                    0
-                )
-        end
+    RunService.Heartbeat:Wait()
+    RunService.Heartbeat:Wait()
 
 
-        -- ==================================
-        -- OFFSET DINÁMICO
-        -- ==================================
+    -- Si durante esos frames volvió la protección,
+    -- abortamos sin pegar.
+    if not killAllEnabled
+        or not enemyChar.Parent
+        or not enemyHum.Parent
+        or enemyHum.Health <= 0
+        or not estaRealmenteVulnerableKillAll(
+            enemyChar
+        )
+    then
 
-        local yOffset =
-            obtenerOffsetVertical(
-                velocityY,
-                humState
-            )
-
-
-        -- ==================================
-        -- CONSERVAR ROTACIÓN DEL ENEMIGO
-        -- ==================================
-
-        local targetRotation =
-            enemyHrp.CFrame.Rotation
-
-
-        local predictedCF =
-            CFrame.new(
-                predictedPosition
-            )
-            * targetRotation
-
-
-        -- ==================================
-        -- SEGUIRLO
-        -- ==================================
-
-        myHrp.CFrame =
-            predictedCF
-            * CFrame.new(
-                0,
-                yOffset,
-                0
-            )
-            * CFrame.Angles(
-                math.rad(90),
-                0,
-                0
-            )
-
-
-        freezeKillRoot(
+        regresarBaseKillAll(
             myHrp
         )
 
-
-        -- ==================================
-        -- REMOTE
-        -- ==================================
-
-        if killRemote
-            and killRemote.Parent
-        then
-
-            for _ = 1, REMOTE_BURST do
-
-                pcall(function()
-
-                    killRemote:
-                        FireServer(
-                            enemyHum
-                        )
-
-                end)
-
-            end
-
-        end
-
-
-        -- ==================================
-        -- TOOL
-        -- ==================================
-
-        pulsarCuchilloKillAll(
-            arma,
-            myChar
-        )
-
-
-        -- ==================================
-        -- SEGUIMIENTO MUY RÁPIDO
-        -- ==================================
-
-        task.wait(
-            KILL_ATTACK_INTERVAL
-        )
-
-
-        -- ==================================
-        -- CONFIRMAR DAÑO
-        -- ==================================
-
-        if enemyHum.Health <
-            lastHealth
-        then
-
-            lastHealth =
-                enemyHum.Health
-
-        end
+        return false
     end
 
 
     -- ======================================
-    -- DESACTIVAR
+    -- UN SOLO CUCHILLAZO
     -- ======================================
 
     pcall(function()
-
-        if arma
-            and arma.Parent == myChar
-        then
-
-            arma:Deactivate()
-
-        end
-
+        arma:Activate()
     end)
 
 
-    return (
-        enemyHum
+    -- Dejamos que el Tool complete su pulsación.
+    task.wait(0.035)
+
+
+    pcall(function()
+        if arma
+            and arma.Parent == myChar
+        then
+            arma:Deactivate()
+        end
+    end)
+
+
+    -- ======================================
+    -- CONFIRMACIÓN
+    --
+    -- Ya NO hacemos spam.
+    -- Nos quedamos ahí esperando resultado.
+    -- ======================================
+
+    local confirmStart =
+        os.clock()
+
+    local pego = false
+
+
+    while runtime.Alive
+        and killAllEnabled
+        and enemyHum
         and enemyHum.Parent
-        and enemyHum.Health <= 0
+        and (
+            os.clock()
+            - confirmStart
+        ) < HIT_CONFIRM_TIME
+    do
+
+        if enemyHum.Health <= 0 then
+            pego = true
+            break
+        end
+
+        if enemyHum.Health < vidaAntes then
+            pego = true
+            break
+        end
+
+        RunService.Heartbeat:Wait()
+    end
+
+
+    -- ======================================
+    -- BASE
+    -- ======================================
+
+    regresarBaseKillAll(
+        myHrp
     )
+
+
+    -- Si no registró, no spamearlo:
+    -- dejamos una pequeña pausa y se probará
+    -- en el siguiente barrido.
+    if not pego then
+
+        failedTargets[targetPlayer] =
+            os.clock()
+            + FAILED_RETRY_DELAY
+
+    else
+
+        failedTargets[targetPlayer] =
+            nil
+    end
+
+
+    return pego
 end
 
 
 -- ==========================================
--- TOGGLE PRINCIPAL
+-- TOGGLE
 -- ==========================================
 
 Tabs.KillAll:Toggle({
@@ -3051,7 +2850,7 @@ Tabs.KillAll:Toggle({
     Title = "Activar Kill All",
 
     Desc =
-        "Tracking predictivo + Anti Jump",
+        "Single Hit · espera protección · TP único",
 
     Value = false,
 
@@ -3068,35 +2867,37 @@ Tabs.KillAll:Toggle({
 
         if Value then
 
-            local startChar =
+            local char =
                 player.Character
 
-            local startHrp =
-                startChar
-                and startChar:
-                    FindFirstChild(
-                        "HumanoidRootPart"
-                    )
+            local hrp =
+                char
+                and char:FindFirstChild(
+                    "HumanoidRootPart"
+                )
 
 
-            if startHrp then
+            if hrp then
 
-                -- Se guarda UNA sola vez.
-                -- Así no vuelve a acumular
-                -- rotaciones de 90 grados.
+                -- Guardar exactamente donde
+                -- activamos el Kill All.
                 killAllBaseCFrame =
-                    startHrp.CFrame
+                    hrp.CFrame
 
             else
 
                 killAllBaseCFrame =
                     nil
-
             end
 
 
+            table.clear(
+                failedTargets
+            )
+
+
             showBottomMessage(
-                "Kill All: ACTIVADO (Anti Jump)"
+                "Kill All: ACTIVADO (Single Hit)"
             )
 
 
@@ -3106,13 +2907,26 @@ Tabs.KillAll:Toggle({
                     and killAllEnabled
                 do
 
-
                     -- =========================
-                    -- PERSONAJE
+                    -- PERSONAJE LOCAL
                     -- =========================
 
                     local myChar =
                         player.Character
+
+                    local myHum =
+                        myChar
+                        and myChar:
+                            FindFirstChildOfClass(
+                                "Humanoid"
+                            )
+
+                    local myHrp =
+                        myChar
+                        and myChar:
+                            FindFirstChild(
+                                "HumanoidRootPart"
+                            )
 
                     local backpack =
                         player:
@@ -3122,68 +2936,39 @@ Tabs.KillAll:Toggle({
 
 
                     if not myChar
-                        or not backpack
-                    then
-
-                        task.wait(0.20)
-                        continue
-
-                    end
-
-
-                    local myHrp =
-                        myChar:
-                            FindFirstChild(
-                                "HumanoidRootPart"
-                            )
-
-                    local myHum =
-                        myChar:
-                            FindFirstChildOfClass(
-                                "Humanoid"
-                            )
-
-
-                    if not myHrp
                         or not myHum
+                        or not myHrp
+                        or not backpack
                         or myHum.Health <= 0
                     then
 
                         task.wait(0.20)
                         continue
-
                     end
 
 
                     if not killAllBaseCFrame then
-
                         killAllBaseCFrame =
                             myHrp.CFrame
-
                     end
 
 
                     -- =========================
-                    -- LOBBY
+                    -- NO ATACAR EN LOBBY
                     -- =========================
 
-                    if estaEnLobby()
-                        or not esVulnerableKillAll(
-                            myChar
-                        )
-                    then
+                    if estaEnLobby() then
 
                         task.wait(0.20)
                         continue
-
                     end
 
 
                     -- =========================
-                    -- BARRIDO
+                    -- BUSCAR ENEMIGOS
                     -- =========================
 
-                    local matoAlguien =
+                    local encontroObjetivo =
                         false
 
 
@@ -3223,35 +3008,44 @@ Tabs.KillAll:Toggle({
                             if enemyHum
                                 and enemyHrp
                                 and enemyHum.Health > 0
-                                and esVulnerableKillAll(
-                                    targetPlayer.Character
-                                )
                             then
 
-                                local distance =
+                                local distancia =
                                     (
                                         killAllBaseCFrame.Position
                                         - enemyHrp.Position
                                     ).Magnitude
 
 
-                                if distance <=
-                                    killAllRango
+                                if distancia <=
+                                    KILL_RANGE
                                 then
 
-                                    local killed =
-                                        atacarJugadorKillAll(
-                                            targetPlayer,
-                                            myChar,
-                                            myHum,
-                                            myHrp
-                                        )
+                                    encontroObjetivo =
+                                        true
 
 
-                                    if killed then
-                                        matoAlguien =
-                                            true
-                                    end
+                                    -- =================
+                                    -- UN SOLO INTENTO
+                                    -- =================
+
+                                    atacarUnaVezKillAll(
+                                        targetPlayer,
+                                        myChar,
+                                        myHum,
+                                        myHrp
+                                    )
+
+
+                                    -- Pase lo que pase,
+                                    -- siguiente enemigo
+                                    -- empieza desde base.
+                                    regresarBaseKillAll(
+                                        myHrp
+                                    )
+
+
+                                    task.wait(0.025)
                                 end
                             end
                         end
@@ -3259,56 +3053,34 @@ Tabs.KillAll:Toggle({
 
 
                     -- =========================
-                    -- DESACTIVAR ARMA
+                    -- FIN DEL BARRIDO
                     -- =========================
+
+                    regresarBaseKillAll(
+                        myHrp
+                    )
+
 
                     pcall(function()
 
-                        local currentWeapon =
+                        local currentTool =
                             myChar:
                                 FindFirstChildOfClass(
                                     "Tool"
                                 )
 
-                        if currentWeapon then
-                            currentWeapon:
+                        if currentTool then
+                            currentTool:
                                 Deactivate()
                         end
 
                     end)
 
 
-                    -- =========================
-                    -- VOLVER A BASE ACOSTADO
-                    -- =========================
-
-                    if killAllEnabled
-                        and matoAlguien
-                        and myHrp
-                        and myHrp.Parent
-                        and killAllBaseCFrame
-                    then
-
-                        myHrp.CFrame =
-                            killAllBaseCFrame
-                            * CFrame.Angles(
-                                math.rad(90),
-                                0,
-                                0
-                            )
-
-                        freezeKillRoot(
-                            myHrp
-                        )
-
-                        task.wait(0.25)
-
+                    if encontroObjetivo then
+                        task.wait(0.08)
                     else
-
-                        -- Si ya no hay enemigos,
-                        -- no agregamos más rotación.
-                        task.wait(0.12)
-
+                        task.wait(0.18)
                     end
                 end
             end)
@@ -3345,9 +3117,8 @@ Tabs.KillAll:Toggle({
                     )
 
 
-                    -- Al apagar permaneces
-                    -- donde estás actualmente,
-                    -- pero de pie.
+                    -- Al apagar, mantener ubicación
+                    -- actual y volver a pararse.
                     local _, rotY, _ =
                         hrp.CFrame:
                             ToEulerAnglesXYZ()
@@ -3362,15 +3133,16 @@ Tabs.KillAll:Toggle({
                             rotY,
                             0
                         )
-
                 end
-
             end)
 
 
             killAllBaseCFrame =
                 nil
 
+            table.clear(
+                failedTargets
+            )
         end
     end
 })

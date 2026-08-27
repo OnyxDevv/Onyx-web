@@ -2320,6 +2320,7 @@ local KillRunService = game:GetService("RunService")
 
 local killAllEnabled = false
 local killAllBaseCFrame = nil
+local killAllIdleFree = false
 local killAllBaseCharacter = nil
 
 local killAllResting = false
@@ -3031,6 +3032,59 @@ local function liberarReposoKillAll(
 
     killAllRestCharacter =
         nil
+end
+
+
+
+-- ==========================================
+-- MODO LIBRE DESPUÉS DE LIMPIAR LA RONDA
+--
+-- Kill All sigue ENCENDIDO, pero el personaje
+-- queda exactamente como si estuviera apagado:
+-- puede caminar, saltar, etc.
+-- ==========================================
+
+local function liberarMovimientoKillAll(
+    myHum,
+    myHrp
+)
+    if myHum
+        and myHum.Parent
+    then
+
+        pcall(function()
+
+            myHum.PlatformStand =
+                false
+
+            myHum.AutoRotate =
+                true
+
+            myHum:ChangeState(
+                Enum.HumanoidStateType.GettingUp
+            )
+        end)
+    end
+
+
+    if myHrp
+        and myHrp.Parent
+    then
+
+        freezeKillRoot(
+            myHrp
+        )
+    end
+
+
+    killAllResting =
+        false
+
+    killAllRestCharacter =
+        nil
+
+    killAllIdleFree =
+        true
 end
 
 
@@ -4100,6 +4154,9 @@ UIElements.TogKillAll =
             killAllWasSafe =
                 false
 
+            killAllIdleFree =
+                false
+
 
             table.clear(
                 failedTargets
@@ -4261,12 +4318,15 @@ UIElements.TogKillAll =
 
                         killAllRestCharacter =
                             nil
+
+                        killAllIdleFree =
+                            false
                     end
 
 
                     -- =========================
                     -- TARGETS
-                    -- =========================
+                    -- ========================
 
                     local encontroObjetivo =
                         false
@@ -4320,19 +4380,44 @@ UIElements.TogKillAll =
                                 )
                             then
 
+                                local distanceReference =
+                                    killAllBaseCFrame
+                                    or myHrp.CFrame
+
+
                                 local distance =
                                     (
-                                        killAllBaseCFrame.Position
+                                        distanceReference.Position
                                         - enemyHrp.Position
                                     ).Magnitude
 
 
-                                if distance
-                                    <= KILL_RANGE
-                                then
+                                if distance <= KILL_RANGE then
 
                                     encontroObjetivo =
                                         true
+
+
+                                    -- =================================
+                                    -- NUEVA RONDA / NUEVOS ENEMIGOS
+                                    --
+                                    -- Si estábamos libres porque ya
+                                    -- habíamos matado a todos,
+                                    -- NUESTRA POSICIÓN ACTUAL pasa a
+                                    -- ser la nueva base.
+                                    -- =================================
+
+                                    if killAllIdleFree then
+
+                                        killAllBaseCFrame =
+                                            myHrp.CFrame
+
+                                        killAllBaseCharacter =
+                                            myChar
+
+                                        killAllIdleFree =
+                                            false
+                                    end
 
 
                                     local retryAt =
@@ -4358,11 +4443,6 @@ UIElements.TogKillAll =
                                         )
 
 
-                                        -- Después de cada enemigo
-                                        -- atacarUnaVezKillAll YA
-                                        -- regresó y dejó reposando.
-                                        --
-                                        -- NO regresar otra vez.
                                         task.wait(
                                             0.035
                                         )
@@ -4373,33 +4453,62 @@ UIElements.TogKillAll =
                     end
 
 
-                    -- =========================
-                    -- SIN ENEMIGOS
-                    --
-                    -- Aquí antes se hacía
-                    -- PivotTo una y otra vez.
-                    --
-                    -- AHORA NO.
-                    -- =========================
+                    -- ==========================================
+                    -- POST SWEEP
+                    -- ==========================================
 
-                    if not encontroObjetivo
-                        or not intentoAtaque
-                    then
+                    if not encontroObjetivo then
 
+                        -- ======================================
+                        -- TODOS MUERTOS
+                        --
+                        -- Kill All sigue ON,
+                        -- pero NO PlatformStand,
+                        -- NO Physics,
+                        -- NO PivotTo,
+                        -- NO freeze constante.
+                        --
+                        -- Puedes caminar normalmente.
+                        -- ======================================
+
+                        if not killAllIdleFree then
+
+                            liberarMovimientoKillAll(
+                                myHum,
+                                myHrp
+                            )
+                        end
+
+
+                        task.wait(
+                            0.12
+                        )
+
+
+                    elseif not intentoAtaque then
+
+                        -- Hay algún enemigo vivo pero estamos,
+                        -- por ejemplo, esperando retry.
+                        --
+                        -- Aquí sí mantenemos la base estable.
                         reposarEnBaseKillAll(
                             myChar,
                             myHum,
                             myHrp
                         )
 
-                        task.wait(0.12)
+
+                        task.wait(
+                            0.08
+                        )
+
 
                     else
 
-                        task.wait(0.06)
+                        task.wait(
+                            0.05
+                        )
                     end
-                end
-            end)
 
 
         -- ==================================

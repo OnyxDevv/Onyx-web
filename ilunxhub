@@ -176,6 +176,7 @@ autoShootEnabled = false
 fullAimbotEnabled = false
 hitboxEnabled = false
 hitboxInvisible = false 
+hitboxTransparency = 0.6
 hitboxSize = 10
 hitboxColor = Color3.fromRGB(255, 255, 255)
 teamCheckEnabled = true
@@ -595,84 +596,236 @@ task.spawn(function()
 end)
 
 -- ==========================================
--- 🔥 SISTEMA DE NOTIFICACIONES MINIMALISTA (DERECHA Y SIN SONIDO)
+-- NOTIFICACIONES iLunX FAST: banner estilo iPhone
+-- Entra y sale rápido; la cola corta descarta avisos viejos para no atrasarse.
 -- ==========================================
+local sendNotification
+do
+local NOTIFICATION_TIMING = {
+    Enter = 0.18,
+    Hold = 0.68,
+    Exit = 0.14,
+    Gap = 0.015,
+}
+
 local NotifContainer = Instance.new("Frame")
-NotifContainer.Name = "iLunXMinimalNotifs"
-NotifContainer.Size = UDim2.new(0, 320, 0.5, 0)
--- Lo anclamos a la esquina inferior derecha
-NotifContainer.AnchorPoint = Vector2.new(1, 1) 
-NotifContainer.Position = UDim2.new(1, -20, 1, -20) 
+NotifContainer.Name = "iLunXIOSNotificationsFast"
+NotifContainer.Size = UDim2.fromScale(1, 1)
 NotifContainer.BackgroundTransparency = 1
+NotifContainer.Active = false
+NotifContainer.ZIndex = 200
 NotifContainer.Parent = screenGui
 
-local layout = Instance.new("UIListLayout", NotifContainer)
-layout.VerticalAlignment = Enum.VerticalAlignment.Bottom
-layout.HorizontalAlignment = Enum.HorizontalAlignment.Right -- Alineado a la derecha
-layout.SortOrder = Enum.SortOrder.LayoutOrder
-layout.Padding = UDim.new(0, 8) -- Separación entre notificaciones
+local notificationQueue = {}
+local notificationWorkerRunning = false
+local lastNotificationText = nil
+local lastNotificationAt = 0
+runtime.NotificationSerial = 0
+runtime.NotificationsReady = false
 
-function showBottomMessage(text)
-        -- 1. Contenedor de la notificación
-        local frame = Instance.new("Frame")
-        frame.AutomaticSize = Enum.AutomaticSize.X
-        frame.Size = UDim2.new(0, 0, 0, 34)
-        frame.BackgroundColor3 = Color3.fromHex("#1C1C1E")
-        frame.BackgroundTransparency = 0.08
-        frame.ClipsDescendants = true
-        frame.Parent = NotifContainer
+local function createIOSBanner(payload)
+    local banner = Instance.new("CanvasGroup")
+    banner.Name = "iOSBannerFast"
+    banner.AnchorPoint = Vector2.new(0.5, 0)
+    banner.Position = UDim2.new(0.5, 0, 0, -96)
+    banner.Size = UDim2.new(1, -24, 0, 78)
+    banner.BackgroundColor3 = Color3.fromHex("#1C1C1E")
+    banner.BackgroundTransparency = 0.035
+    banner.BorderSizePixel = 0
+    banner.ClipsDescendants = true
+    banner.GroupTransparency = 1
+    banner.ZIndex = 201
+    banner.Parent = NotifContainer
 
-        Instance.new("UICorner", frame).CornerRadius = UDim.new(0, IOS_STYLE.OverlayRadius)
+    local sizeConstraint = Instance.new("UISizeConstraint")
+    sizeConstraint.MinSize = Vector2.new(270, 78)
+    sizeConstraint.MaxSize = Vector2.new(390, 78)
+    sizeConstraint.Parent = banner
 
-        local backgroundGradient = Instance.new("UIGradient", frame)
-        backgroundGradient.Color = ColorSequence.new({
-            ColorSequenceKeypoint.new(0, Color3.fromHex("#2C2C2E")),
-            ColorSequenceKeypoint.new(1, Color3.fromHex("#1C1C1E"))
-        })
-        backgroundGradient.Rotation = 90
+    Instance.new("UICorner", banner).CornerRadius = UDim.new(0, 20)
 
-        local accent = Instance.new("Frame", frame)
-        accent.Size = UDim2.new(0, 2, 1, -10)
-        accent.Position = UDim2.new(0, 4, 0.5, 0)
-        accent.AnchorPoint = Vector2.new(0, 0.5)
-        accent.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
-        accent.BorderSizePixel = 0
-        accent.BackgroundTransparency = 0.1
-        Instance.new("UICorner", accent).CornerRadius = UDim.new(1, 0)
-        local accentGradient = Instance.new("UIGradient", accent)
-        accentGradient.Color = ColorSequence.new({
-            ColorSequenceKeypoint.new(0, Color3.fromHex("#FFFFFF")),
-            ColorSequenceKeypoint.new(0.6, Color3.fromHex("#9AA0A8")),
-            ColorSequenceKeypoint.new(1, Color3.fromHex("#E6E9EC"))
-        })
-        accentGradient.Rotation = 90
-        
-        -- Padding para que el texto no pegue en los bordes
-        local padding = Instance.new("UIPadding", frame)
-        padding.PaddingLeft = UDim.new(0, 16)
-        padding.PaddingRight = UDim.new(0, 12)
+    local stroke = Instance.new("UIStroke")
+    stroke.Color = Color3.fromHex("#68686B")
+    stroke.Transparency = 0.38
+    stroke.Thickness = 1
+    stroke.Parent = banner
 
-        -- Borde sutil
-        local stroke = Instance.new("UIStroke", frame)
-        stroke.Color = Color3.fromHex("#AEB4BC")
-        stroke.Thickness = 1
-        stroke.Transparency = 0.35
+    local gradient = Instance.new("UIGradient")
+    gradient.Color = ColorSequence.new({
+        ColorSequenceKeypoint.new(0, Color3.fromHex("#343437")),
+        ColorSequenceKeypoint.new(0.52, Color3.fromHex("#242426")),
+        ColorSequenceKeypoint.new(1, Color3.fromHex("#18181A"))
+    })
+    gradient.Rotation = 105
+    gradient.Parent = banner
 
-        -- 2. El texto
-        local textLabel = Instance.new("TextLabel", frame)
-        textLabel.AutomaticSize = Enum.AutomaticSize.X
-        textLabel.Size = UDim2.new(0, 0, 1, 0)
-        textLabel.BackgroundTransparency = 1
-        textLabel.Text = text
-        textLabel.TextColor3 = Color3.fromHex("#F3F4F5")
-        textLabel.Font = Enum.Font.GothamMedium
-        textLabel.TextSize = 13
-        textLabel.TextTransparency = 0
+    local icon = Instance.new("Frame")
+    icon.Size = UDim2.fromOffset(36, 36)
+    icon.Position = UDim2.fromOffset(13, 11)
+    icon.BackgroundColor3 = payload.accent
+    icon.BorderSizePixel = 0
+    icon.ZIndex = 203
+    icon.Parent = banner
+    Instance.new("UICorner", icon).CornerRadius = UDim.new(0, 10)
 
-        -- Sin tweens por notificación: una sola tarea diferida y cero objetos Tween.
-        task.delay(2.5, function()
-            if frame and frame.Parent then frame:Destroy() end
-        end)
+    local iconGradient = Instance.new("UIGradient")
+    iconGradient.Color = ColorSequence.new({
+        ColorSequenceKeypoint.new(0, Color3.new(1, 1, 1)),
+        ColorSequenceKeypoint.new(1, payload.accent)
+    })
+    iconGradient.Rotation = 135
+    iconGradient.Parent = icon
+
+    local iconText = Instance.new("TextLabel")
+    iconText.Size = UDim2.fromScale(1, 1)
+    iconText.BackgroundTransparency = 1
+    iconText.Text = payload.icon
+    iconText.TextColor3 = Color3.fromHex("#111113")
+    iconText.Font = Enum.Font.GothamBlack
+    iconText.TextSize = 18
+    iconText.ZIndex = 204
+    iconText.Parent = icon
+
+    local appLabel = Instance.new("TextLabel")
+    appLabel.Size = UDim2.new(1, -124, 0, 18)
+    appLabel.Position = UDim2.fromOffset(59, 8)
+    appLabel.BackgroundTransparency = 1
+    appLabel.Text = payload.title
+    appLabel.TextColor3 = Color3.fromHex("#F5F5F7")
+    appLabel.Font = Enum.Font.GothamBold
+    appLabel.TextSize = 12
+    appLabel.TextXAlignment = Enum.TextXAlignment.Left
+    appLabel.ZIndex = 203
+    appLabel.Parent = banner
+
+    local timeLabel = Instance.new("TextLabel")
+    timeLabel.AnchorPoint = Vector2.new(1, 0)
+    timeLabel.Size = UDim2.fromOffset(48, 18)
+    timeLabel.Position = UDim2.new(1, -13, 0, 8)
+    timeLabel.BackgroundTransparency = 1
+    timeLabel.Text = "ahora"
+    timeLabel.TextColor3 = Color3.fromHex("#A7A7AD")
+    timeLabel.Font = Enum.Font.GothamMedium
+    timeLabel.TextSize = 10
+    timeLabel.TextXAlignment = Enum.TextXAlignment.Right
+    timeLabel.ZIndex = 203
+    timeLabel.Parent = banner
+
+    local body = Instance.new("TextLabel")
+    body.Size = UDim2.new(1, -74, 0, 40)
+    body.Position = UDim2.fromOffset(59, 27)
+    body.BackgroundTransparency = 1
+    body.Text = payload.text
+    body.TextColor3 = Color3.fromHex("#EAEAEE")
+    body.Font = Enum.Font.GothamMedium
+    body.TextSize = 13
+    body.TextWrapped = true
+    body.TextXAlignment = Enum.TextXAlignment.Left
+    body.TextYAlignment = Enum.TextYAlignment.Top
+    body.ZIndex = 203
+    body.Parent = banner
+
+    return banner
+end
+
+local function runNotificationQueue()
+    if notificationWorkerRunning then return end
+    notificationWorkerRunning = true
+
+    task.spawn(function()
+        while runtime.Alive and #notificationQueue > 0 do
+            local payload = table.remove(notificationQueue, 1)
+            local banner = createIOSBanner(payload)
+
+            local enterTween = TweenService:Create(
+                banner,
+                TweenInfo.new(NOTIFICATION_TIMING.Enter, Enum.EasingStyle.Quint, Enum.EasingDirection.Out),
+                {Position = UDim2.new(0.5, 0, 0, 10), GroupTransparency = 0}
+            )
+            enterTween:Play()
+            enterTween.Completed:Wait()
+
+            task.wait(payload.duration)
+            if not runtime.Alive or not banner.Parent then break end
+
+            local exitTween = TweenService:Create(
+                banner,
+                TweenInfo.new(NOTIFICATION_TIMING.Exit, Enum.EasingStyle.Quint, Enum.EasingDirection.In),
+                {Position = UDim2.new(0.5, 0, 0, -96), GroupTransparency = 1}
+            )
+            exitTween:Play()
+            exitTween.Completed:Wait()
+            if banner.Parent then banner:Destroy() end
+            task.wait(NOTIFICATION_TIMING.Gap)
+        end
+
+        notificationWorkerRunning = false
+        if runtime.Alive and #notificationQueue > 0 then
+            runNotificationQueue()
+        end
+    end)
+end
+
+sendNotification = function(text, options)
+    options = type(options) == "table" and options or {}
+    if not runtime.Alive then return end
+    if (not runtime.NotificationsReady or runtime.SuppressNotifications) and not options.force then return end
+
+    text = tostring(text or "")
+    if text == "" then return end
+
+    -- El serial permite que los wrappers sepan que el callback ya avisó,
+    -- incluso cuando el texto repetido se descarta visualmente.
+    runtime.NotificationSerial = (runtime.NotificationSerial or 0) + 1
+
+    local now = os.clock()
+    if text == lastNotificationText and now - lastNotificationAt < 0.25 then return end
+    lastNotificationText = text
+    lastNotificationAt = now
+
+    local holdDuration = tonumber(options.duration)
+    if not holdDuration then
+        holdDuration = #text > 90 and 0.95 or (#text > 55 and 0.80 or NOTIFICATION_TIMING.Hold)
+    end
+    holdDuration = math.clamp(holdDuration, 0.40, 1.20)
+
+    local payload = {
+        text = text,
+        title = tostring(options.title or "iLunXHub"),
+        icon = tostring(options.icon or "X"),
+        accent = options.accent or Color3.fromHex("#A8C7FA"),
+        duration = holdDuration,
+        key = options.key,
+    }
+
+    -- Sustituye estados todavía pendientes del mismo control; no tiene sentido
+    -- mostrar "activado" si el usuario ya volvió a desactivarlo.
+    if payload.key then
+        for index = #notificationQueue, 1, -1 do
+            if notificationQueue[index].key == payload.key then
+                table.remove(notificationQueue, index)
+            end
+        end
+    end
+
+    if options.priority then
+        table.insert(notificationQueue, 1, payload)
+    else
+        table.insert(notificationQueue, payload)
+    end
+
+    -- Máximo cuatro pendientes: los avisos recientes aparecen pronto.
+    while #notificationQueue > 4 do
+        if options.priority then table.remove(notificationQueue, #notificationQueue)
+        else table.remove(notificationQueue, 1) end
+    end
+    runNotificationQueue()
+end
+end
+
+-- Conserva el nombre usado por las funciones existentes del script.
+function showBottomMessage(text, options)
+    sendNotification(text, options)
 end
 
 
@@ -694,6 +847,45 @@ local Tabs = {
     Config = TrollSection:Tab({Title = "Configuración", Icon = "solar:settings-bold"})
 }
 
+-- Todos los toggles avisan automáticamente. Si el callback ya manda un
+-- mensaje propio, el serial evita crear un segundo aviso duplicado.
+for _, tab in pairs(Tabs) do
+    pcall(function()
+        local originalToggle = tab.Toggle
+        if type(originalToggle) == "function" then
+            tab.Toggle = function(self, options)
+                options = options or {}
+                local originalCallback = options.Callback
+                local title = tostring(options.Title or "Función")
+                local ready = false
+
+                options.Callback = function(state, ...)
+                    local serialBefore = runtime.NotificationSerial or 0
+                    if originalCallback then originalCallback(state, ...) end
+
+                    if ready and not runtime.SuppressNotifications
+                        and (runtime.NotificationSerial or 0) == serialBefore then
+                        local enabled = state == true
+                        sendNotification(
+                            title .. (enabled and " activado" or " desactivado"),
+                            {
+                                title = "iLunXHub · Ajuste",
+                                icon = enabled and "✓" or "–",
+                                accent = enabled and Color3.fromHex("#78D98B") or Color3.fromHex("#8E8E93"),
+                                key = "toggle:" .. title,
+                            }
+                        )
+                    end
+                end
+
+                local toggle = originalToggle(self, options)
+                task.defer(function() ready = true end)
+                return toggle
+            end
+        end
+    end)
+end
+
 
 
 
@@ -707,6 +899,25 @@ Tabs.Inicio:Paragraph({
     Title = "Ejecutor",
     Desc = "" .. tostring(nombreEjecutor)
 })
+
+-- 🔥 MINI ANUNCIO AGREGADO AQUÍ 🔥
+Tabs.Inicio:Section({Title = "Novedades y Actualizaciones"})
+
+Tabs.Inicio:Paragraph({ 
+    Title = "Bienvenido a iLunXHub",
+    Desc = "OnyxHub ahora es iLunXHub"
+})
+
+Tabs.Inicio:Paragraph({ 
+    Title = "Hitbox Expander arreglado",
+    Desc = "Deteccion por Anti-Cheat arreglado."
+})
+
+Tabs.Inicio:Paragraph({ 
+    Title = "Funciones Detectables Actuales",
+    Desc = "Speed Hack\nKill All\nNoclip Atravesar Paredes\nModo Fantasma"
+})
+
 
 Tabs.Inicio:Section({Title = "Información del Servidor"})
 
@@ -1465,18 +1676,26 @@ runtime.Track(RunService.Heartbeat:Connect(function(deltaTime)
                     local targetHum = targetChar and ffc(targetChar, "Humanoid")
                     
                     if hrp and targetHum and targetHum.Health > 0 and isEnemy(v) then
-                        -- 1. CREAMOS EL BLOQUE FALSO (Si no existe)
-                        local fakeHitbox = targetChar:FindFirstChild("AstraFakeHitbox")
+                        -- 1. BUSCAMOS O CREAMOS EL BLOQUE FALSO
+                        local fakeHitbox = nil
+                        for _, p in ipairs(targetChar:GetChildren()) do
+                            if p:GetAttribute("EsAstraHitbox") then
+                                fakeHitbox = p
+                                break
+                            end
+                        end
+
                         if not fakeHitbox then
                             fakeHitbox = Instance.new("Part")
-                            fakeHitbox.Name = "AstraFakeHitbox"
+                            fakeHitbox.Name = "Torso" -- 🔥 EL TRUCO: El juego lo acepta como cuerpo válido y el cuchillo NO rebota
+                            fakeHitbox:SetAttribute("EsAstraHitbox", true)
                             fakeHitbox.Shape = Enum.PartType.Block
                             fakeHitbox.Size = targetSize
-                            fakeHitbox.CFrame = hrp.CFrame -- 🔥 POSICIONAR ANTES DEL WELD (FIX)
+                            fakeHitbox.CFrame = hrp.CFrame 
                             fakeHitbox.Massless = true
                             fakeHitbox.CanCollide = false
                             fakeHitbox.Anchored = false
-                            fakeHitbox.Transparency = 1 -- El bloque físico no se ve
+                            fakeHitbox.Transparency = 1 
                             fakeHitbox.Parent = targetChar 
                             
                             local weld = Instance.new("WeldConstraint")
@@ -1484,7 +1703,6 @@ runtime.Track(RunService.Heartbeat:Connect(function(deltaTime)
                             weld.Part1 = fakeHitbox
                             weld.Parent = fakeHitbox
                             
-                            -- Le regresamos tu Adornment para que se vea a través de las paredes
                             local box = Instance.new("BoxHandleAdornment") 
                             box.Name = "AstraHitboxBox" 
                             box.Adornee = fakeHitbox 
@@ -1508,9 +1726,12 @@ runtime.Track(RunService.Heartbeat:Connect(function(deltaTime)
                             end
                         end
                         
-                        -- 4. ACTUALIZAMOS LO VISUAL (El BoxHandleAdornment)
+                        -- 4. ACTUALIZAMOS LO VISUAL (Más transparente)
                         local targetColor = aLaVista and espColor or mState.hbBlockedColor
-                        local targetBoxTrans = hitboxInvisible and 1 or (aLaVista and 0.2 or 0.7)
+                        
+                        -- Leemos el valor del slider (si por alguna razón es nil, usamos 0.6 de respaldo)
+                        local currentTrans = hitboxTransparency or 0.6
+                        local targetBoxTrans = hitboxInvisible and 1 or currentTrans
                         
                         local box = fakeHitbox:FindFirstChild("AstraHitboxBox")
                         if box then
@@ -1518,6 +1739,21 @@ runtime.Track(RunService.Heartbeat:Connect(function(deltaTime)
                             if box.Color3 ~= targetColor then box.Color3 = targetColor end
                             if box.Transparency ~= targetBoxTrans then box.Transparency = targetBoxTrans end
                             if box.Visible ~= not hitboxInvisible then box.Visible = not hitboxInvisible end
+                        end -- 🔥 AQUÍ ESTÁ EL END QUE FALTABA
+                    elseif targetChar then
+                        -- 🔥 LIMPIEZA AUTOMÁTICA: SI MUERE O YA NO ES ENEMIGO
+                        for _, p in ipairs(targetChar:GetChildren()) do
+                            if p:GetAttribute("EsAstraHitbox") then p:Destroy() end
+                        end
+                    end
+                end
+            else
+                -- 🔥 LIMPIEZA LOBBY: BORRAMOS LAS HITBOXES QUE QUEDARON PEGADAS
+                for i = 1, #listaJugadores do
+                    local v = listaJugadores[i]
+                    if v ~= player and v.Character then
+                        for _, p in ipairs(v.Character:GetChildren()) do
+                            if p:GetAttribute("EsAstraHitbox") then p:Destroy() end
                         end
                     end
                 end
@@ -1530,8 +1766,9 @@ runtime.Track(RunService.Heartbeat:Connect(function(deltaTime)
         for i = 1, #listaJugadores do
             local v = listaJugadores[i]
             if v ~= player and v.Character then
-                local fakeHitbox = v.Character:FindFirstChild("AstraFakeHitbox")
-                if fakeHitbox then fakeHitbox:Destroy() end
+                for _, p in ipairs(v.Character:GetChildren()) do
+                    if p:GetAttribute("EsAstraHitbox") then p:Destroy() end
+                end
                 
                 -- Limpieza por si quedó basura del script anterior
                 local hrp = v.Character:FindFirstChild("HumanoidRootPart")
@@ -2029,44 +2266,51 @@ UIElements.SliFOVSize = Tabs.Aim:Slider({
 -- ==========================================
 -- KILL ALL OP (SUBTERRÁNEO + HITBOX 10)
 -- ==========================================
-Tabs.KillAll:Section({Title = "Kill all"})
+
+
+Tabs.KillAll:Section({Title = "Kill all OP (Remote + TP)"})
 
 -- Función maestra que detecta si el enemigo YA puede recibir daño
 function esVulnerable(char)
     if not char then return false end
-    
-    -- 1. Si tiene el escudo de protección de spawn (ForceField)
     if char:FindFirstChildOfClass("ForceField") then return false end
     
-    -- 2. Si el juego lo tiene anclado al piso por el contador
     local hrp = char:FindFirstChild("HumanoidRootPart")
     if hrp and hrp.Anchored then return false end
     
-    -- 3. Si el juego le congeló la velocidad
     local hum = char:FindFirstChild("Humanoid")
     if hum and hum.WalkSpeed == 0 then return false end
     
     return true
 end
 
--- 🔥 Rango fijo en 600 para que alcance en tu mapa pero no se vaya a otros
 local killAllRango = 600 
-
 local killAllEnabled = false
+
 Tabs.KillAll:Toggle({ 
-    Title = "Activar Kill All (Riesgo de ban si te reportan)",
-    Desc = "Mata a todos los enemigos con cuchillo.",
+    Title = "Activar Kill All",
+    Desc = "TP Ping-Pong + Remote Kill Event",
     Value = false,
     Callback = function(Value)
         killAllEnabled = Value
         if Value then
             showBottomMessage("Kill All: ACTIVADO")
+            
+            -- Buscamos el RemoteEvent secreto que descubrió el espía
+            local killRemote = nil
+            for _, v in pairs(ReplicatedStorage:GetDescendants()) do
+                if v:IsA("RemoteEvent") and v.Name == "Kill" then
+                    killRemote = v
+                    break
+                end
+            end
+            
+            if killRemote then showBottomMessage("Evento 'Kill' localizado.") else showBottomMessage("No se encontró el evento 'Kill', usando solo físicas.") end
+
             task.spawn(function()
                 while runtime.Alive and killAllEnabled do
                     local myChar = player.Character
                     
-                    -- 🔥 FIX DEL CUCHILLO QUE DESAPARECE: 
-                    -- Esperamos a que tu personaje y tu inventario (Backpack) carguen bien al respawnear
                     if not myChar or not myChar:FindFirstChild("HumanoidRootPart") or not player:FindFirstChild("Backpack") then
                         task.wait(0.5)
                         continue 
@@ -2077,9 +2321,16 @@ Tabs.KillAll:Toggle({
                         local myHum = myChar:FindFirstChild("Humanoid")
                         
                         if myHrp and myHum and myHum.Health > 0 then
-                            -- Guardamos la posición original UNA VEZ para tomarla como centro de la arena
+                            
+                            -- Guardamos la posición original
                             local posicionOriginal = myHrp.CFrame
                             
+                            -- 🔥 EL SECRETO: ANCLAR EL PERSONAJE 🔥
+                            -- Al anclarlo, el Anti-Cheat deja de registrar picos de velocidad durante el TP
+                            myHrp.Anchored = true 
+                            myHrp.CFrame = posicionOriginal * CFrame.Angles(math.rad(90), 0, 0)
+                            task.wait(0.1)
+
                             for _, p in ipairs(Players:GetPlayers()) do
                                 if not killAllEnabled then break end 
                                 
@@ -2089,17 +2340,11 @@ Tabs.KillAll:Toggle({
                                         local enemyHrp = p.Character:FindFirstChild("HumanoidRootPart")
 
                                         if enemyHum and enemyHum.Health > 0 and enemyHrp then
-                                            -- Verificamos si el enemigo está en tu arena (menos de 600 studs de distancia)
                                             local distanciaAlEnemigo = (posicionOriginal.Position - enemyHrp.Position).Magnitude
                                             
                                             if distanciaAlEnemigo <= killAllRango then
-                                                -- Expande la hitbox a 25 
-                                                enemyHrp.Size = Vector3.new(30, 30, 30)
-                                                enemyHrp.CanCollide = false
-                                                
                                                 local failSafe = 0 
                                                 
-                                                -- 🔥 OPTIMIZACIÓN: Preparamos el cuchillo UNA VEZ antes de atacar
                                                 local arma = myChar:FindFirstChildOfClass("Tool")
                                                 if arma and esLaPistola(arma) then
                                                     myHum:UnequipTools()
@@ -2112,47 +2357,45 @@ Tabs.KillAll:Toggle({
                                                             if item:IsA("Tool") and not esLaPistola(item) then
                                                                 myHum:EquipTool(item)
                                                                 arma = item
-                                                                task.wait(0.1) -- Le damos chance al server
+                                                                task.wait(0.1) 
                                                                 break
                                                             end
                                                         end
                                                     end
                                                 end
 
-                                                -- Preparamos la animación del Smooth TP para evitar detecciones
-                                                local info = TweenInfo.new(0.2, Enum.EasingStyle.Linear)
-
-                                                -- Te deslizas hacia la espalda del enemigo
-                                                while runtime.Alive and killAllEnabled and p and p.Parent and enemyHum and enemyHum.Parent and enemyHum.Health > 0 and failSafe < 300 do
+                                                -- 🔥 AC BYPASS: TP PING-PONG (ANCLADO) 🔥
+                                                while runtime.Alive and killAllEnabled and p and p.Parent and enemyHum and enemyHum.Parent and enemyHum.Health > 0 and failSafe < 30 do
                                                     
-                                                    myHum.PlatformStand = true 
-                                                    myHrp.AssemblyLinearVelocity = Vector3.zero 
+                                                    -- 1. TP al enemigo por debajo, acostado
+                                                    myHrp.CFrame = enemyHrp.CFrame * CFrame.new(0, -3.8, 0) * CFrame.Angles(math.rad(90), 0, 0)
                                                     
-                                                    -- Calculamos el destino (espalda del enemigo)
-                                                    local destino = enemyHrp.CFrame * CFrame.new(0, 0, 3) 
-                                                    
-                                                    -- Ejecutamos el deslizamiento
-                                                    local tween = TweenService:Create(myHrp, info, {CFrame = destino})
-                                                    tween:Play()
-                                                    
-                                                    -- Das el navajazo mientras llegas
                                                     if arma then
                                                         arma:Activate()
                                                     end
                                                     
-                                                    -- Importante: Aumentamos el wait a 0.1 para que el Tween fluya y no se trabe el cliente
-                                                    task.wait(0.1)
+                                                    if killRemote then
+                                                        -- Intentamos los argumentos más comunes para los remotes de kill
+                                                        pcall(function() killRemote:FireServer(p.Character) end)
+                                                        pcall(function() killRemote:FireServer(enemyHum) end)
+                                                        pcall(function() killRemote:FireServer(enemyHrp) end)
+                                                        pcall(function() killRemote:FireServer(p) end)
+                                                    end
+                                                    
+                                                    task.wait(0.02)
+                                                    
+                                                    -- 2. REGRESO INSTANTÁNEO A LA BASE (ACOSTADO)
+                                                    if myHrp then
+                                                        myHrp.CFrame = posicionOriginal * CFrame.Angles(math.rad(90), 0, 0)
+                                                    end
+                                                    
+                                                    task.wait(0.04) 
                                                     failSafe = failSafe + 1
-                                                end
-
-                                                -- Cuando sale del bucle (el enemigo muere o se cancela), le regresamos sus físicas normales
-                                                if myHum then
-                                                    myHum.PlatformStand = false
                                                 end
                                                 
                                                 pcall(function()
-                                                    local arma = myChar:FindFirstChildOfClass("Tool")
-                                                    if arma then arma:Deactivate() end
+                                                    local armaActual = myChar:FindFirstChildOfClass("Tool")
+                                                    if armaActual then armaActual:Deactivate() end
                                                 end)
                                             end
                                         end
@@ -2160,11 +2403,13 @@ Tabs.KillAll:Toggle({
                                 end
                             end
 
-                            -- Cuando termine de limpiar, te regresa a tu base
+                            -- Al limpiar a todos, te deja en tu lugar original, te pone de pie y TE DESANCLA
                             if killAllEnabled and myHrp then
                                 myHrp.CFrame = posicionOriginal
-                                task.wait(0.2) 
+                                myHrp.Anchored = false
+                                task.wait(0.1) 
                             end
+
                         end
                     end
                     task.wait(0.1) 
@@ -2172,6 +2417,13 @@ Tabs.KillAll:Toggle({
             end)
         else
             showBottomMessage("Kill All: DESACTIVADO")
+            -- Seguro anti-bug: Si desactivas el Kill All a medio ataque, te desancla para que no te quedes pegado
+            pcall(function()
+                local char = player.Character
+                if char and char:FindFirstChild("HumanoidRootPart") then
+                    char.HumanoidRootPart.Anchored = false
+                end
+            end)
         end
     end
 })
@@ -2220,6 +2472,14 @@ Tabs.Aim:Input({
     end,
 })
 
+
+UIElements.SliHitboxTrans = Tabs.Aim:Slider({
+    Title = "Transparencia del Hitbox",
+    Desc = "0 = Color Sólido | 1 = Invisible.",
+    Step = 0.05,
+    Value = {Min = 0.0, Max = 1.0, Default = 0.6}, 
+    Callback = function(v) hitboxTransparency = v end
+})
 
 -- ==========================================
 -- PESTAÑA VISUALES (ESP & SPOOFER)
@@ -2560,59 +2820,46 @@ Tabs.Mov:Toggle({
 Tabs.Mov:Slider({Title = "Velocidad de Caminar", Step = 1, Value = {Min = 16, Max = 250, Default = 50}, Callback = function(v) walkSpeedValue = v if speedEnabled then local char = player.Character if char and char:FindFirstChild("Humanoid") then char.Humanoid.WalkSpeed = walkSpeedValue end end end})
 task.spawn(function() while runtime.Alive and task.wait(0.1) do if speedEnabled then local char = player.Character if char and char:FindFirstChild("Humanoid") then char.Humanoid.WalkSpeed = walkSpeedValue end end end end)
 
-local noclipState = {Enabled = false, Connection = nil, DescendantConnection = nil, Parts = {}}
 
-function noclipState.BindCharacter(char)
-    if noclipState.DescendantConnection then
-        noclipState.DescendantConnection:Disconnect()
-        noclipState.DescendantConnection = nil
-    end
 
-    table.clear(noclipState.Parts)
-    if not char then return end
+local noclipState = {Enabled = false, Connection = nil}
 
-    -- GetDescendants se ejecuta sólo al aparecer el personaje, no 60 veces/s.
-    for _, descendant in ipairs(char:GetDescendants()) do
-        if descendant:IsA("BasePart") then
-            table_insert(noclipState.Parts, descendant)
-            descendant.CanCollide = false
-        end
-    end
-
-    noclipState.DescendantConnection = runtime.Track(char.DescendantAdded:Connect(function(descendant)
-        if noclipState.Enabled and descendant:IsA("BasePart") then
-            table_insert(noclipState.Parts, descendant)
-            descendant.CanCollide = false
-        end
-    end))
-end
-
-runtime.Track(player.CharacterAdded:Connect(function(char)
-    if noclipState.Enabled then noclipState.BindCharacter(char) end
-end))
-
-Tabs.Mov:Toggle({Title = "Atravesar Paredes", Callback = function(s)
-    noclipState.Enabled = s
-    if s then
-        noclipState.BindCharacter(player.Character)
-        if not noclipState.Connection then
-            noclipState.Connection = runtime.Track(RunService.Stepped:Connect(function()
-                for i = #noclipState.Parts, 1, -1 do
-                    local part = noclipState.Parts[i]
-                    if part and part.Parent then
-                        if part.CanCollide then part.CanCollide = false end
-                    else
-                        table.remove(noclipState.Parts, i)
+Tabs.Mov:Toggle({
+    Title = "Atravesar Paredes", 
+    Desc = "Traspasa cualquier estructura.",
+    Callback = function(s)
+        noclipState.Enabled = s
+        if s then
+            if not noclipState.Connection then
+                noclipState.Connection = runtime.Track(RunService.Stepped:Connect(function()
+                    local char = player.Character
+                    if char then
+                        local hum = char:FindFirstChild("Humanoid")
+                        if hum then
+                            -- Engaña al motor de Roblox cambiando el estado físico
+                            hum:ChangeState(11) 
+                        end
+                        for _, v in ipairs(char:GetChildren()) do
+                            if v:IsA("BasePart") and v.CanCollide then
+                                v.CanCollide = false
+                            end
+                        end
                     end
-                end
-            end))
+                end))
+            end
+        else
+            if noclipState.Connection then 
+                noclipState.Connection:Disconnect()
+                noclipState.Connection = nil 
+            end
+            -- Restauramos el estado del Humanoid para no quedar bugeados
+            local char = player.Character
+            if char and char:FindFirstChild("Humanoid") then
+                char.Humanoid:ChangeState(18)
+            end
         end
-    else
-        if noclipState.Connection then noclipState.Connection:Disconnect(); noclipState.Connection = nil end
-        if noclipState.DescendantConnection then noclipState.DescendantConnection:Disconnect(); noclipState.DescendantConnection = nil end
-        table.clear(noclipState.Parts)
     end
-end})
+})
 
 
 
@@ -2698,100 +2945,104 @@ local invisBv = nil
 local invisFlySpeed = 40 
 local originalTransparencies = {}
 
--- 🔥 AQUÍ FALTABA LA FUNCIÓN PARA QUE EL CÓDIGO NO SE EJECUTE SOLO
+local isInvisible = false
+local invisBg = nil
+local invisBv = nil
+local invisFlySpeed = 40 
+local fakePlatform = nil
+local realChar = nil
+local fakeChar = nil
+
 function ToggleGhostSeatMode(state)
     isInvisible = state
     local char = player.Character
-    local hrp = char and char:FindFirstChild("HumanoidRootPart")
-    local torso = char and (char:FindFirstChild("UpperTorso") or char:FindFirstChild("Torso"))
-    local hum = char and char:FindFirstChild("Humanoid")
-    
-    if not char or not hrp or not torso or not hum then return end
+    if not char then return end
 
     if isInvisible then
-        -- 1. Te volvemos invisible localmente
-        for _, obj in pairs(char:GetDescendants()) do
-            if obj:IsA("BasePart") or obj:IsA("Decal") or obj:IsA("Texture") then
-                if obj.Name ~= "HumanoidRootPart" then
-                    if not originalTransparencies[obj] then 
-                        originalTransparencies[obj] = obj.Transparency 
-                    end
-                    obj.Transparency = 1
-                end
-            elseif obj:IsA("ParticleEmitter") or obj:IsA("Trail") or obj:IsA("BillboardGui") then
-                obj.Enabled = false
+        realChar = char
+        local hrp = realChar:FindFirstChild("HumanoidRootPart")
+        if not hrp then return end
+        
+        -- 1. CLONAMOS TU PERSONAJE (Este será tu fantasma local)
+        realChar.Archivable = true
+        fakeChar = realChar:Clone()
+        fakeChar.Name = "Fantasma_AlexDev"
+        fakeChar.Parent = workspace
+        
+        -- Volvemos el clon invisible SOLO para ti
+        for _, v in pairs(fakeChar:GetDescendants()) do
+            if v:IsA("BasePart") or v:IsA("Decal") or v:IsA("Texture") then
+                v.Transparency = 1
+            elseif v:IsA("ParticleEmitter") or v:IsA("BillboardGui") then
+                v.Enabled = false
             end
         end
         
-        -- 2. EL TRUCO DE LA SILLA (Despegue Forzado Anti-Pegamento)
-        local savedCFrame = hrp.CFrame + Vector3.new(0, 1.5, 0) 
+        -- 2. ESCONDEMOS TU CUERPO REAL (300 studs arriba, nadie lo verá)
+        local hidePos = hrp.Position + Vector3.new(0, 300, 0)
         
-        -- FIX DEFINITIVO: Te despegamos del piso a la fuerza y te quitamos el control
-        hrp.CFrame = hrp.CFrame + Vector3.new(0, 3, 0)
-        hum.PlatformStand = true 
-        task.wait(0.05) -- Esperamos un instante para que el servidor confirme que estás flotando
+        fakePlatform = Instance.new("Part")
+        fakePlatform.Name = "AstraGhostPlatform"
+        fakePlatform.Size = Vector3.new(10, 2, 10)
+        fakePlatform.CFrame = CFrame.new(hidePos - Vector3.new(0, 3, 0))
+        fakePlatform.Anchored = true
+        fakePlatform.Transparency = 1
+        fakePlatform.Parent = workspace
         
-        -- Ahora sí, congelamos y preparamos el vuelo
-        hrp.AssemblyLinearVelocity = Vector3.zero
-        hrp.AssemblyAngularVelocity = Vector3.zero
+        -- Movemos el cuerpo real y lo congelamos
+        hrp.CFrame = CFrame.new(hidePos)
+        for _, v in ipairs(realChar:GetChildren()) do
+            if v:IsA("BasePart") then v.Anchored = true end
+        end
         
-        -- Te mandamos súper lejos y te anclamos
-        hrp.CFrame = CFrame.new(0, 5000, 0)
-        hrp.Anchored = true 
-        task.wait(0.05)
+        -- 3. TE DAMOS EL CONTROL DEL FANTASMA
+        workspace.CurrentCamera.CameraSubject = fakeChar:FindFirstChild("Humanoid")
         
-        -- Creamos la silla mágica
-        invisSeat = Instance.new("Seat")
-        invisSeat.Name = "AstraGhostSeat"
-        invisSeat.Anchored = false
-        invisSeat.CanCollide = false
-        invisSeat.Transparency = 1
-        invisSeat.Position = Vector3.new(0, 5000, 0)
-        invisSeat.Parent = workspace
+        local fakeHrp = fakeChar:FindFirstChild("HumanoidRootPart")
+        if fakeHrp then
+            invisBg = Instance.new("BodyGyro")
+            invisBg.P = 9e4
+            invisBg.maxTorque = Vector3.new(9e9, 9e9, 9e9)
+            invisBg.cframe = fakeHrp.CFrame
+            invisBg.Parent = fakeHrp
+            
+            invisBv = Instance.new("BodyVelocity")
+            invisBv.velocity = Vector3.zero
+            invisBv.maxForce = Vector3.new(9e9, 9e9, 9e9)
+            invisBv.Parent = fakeHrp
+            
+            fakeChar:FindFirstChild("Humanoid").PlatformStand = true
+        end
         
-        -- Te pegamos a la silla
-        local weld = Instance.new("Weld")
-        weld.Part0 = invisSeat
-        weld.Part1 = torso
-        weld.Parent = invisSeat
-        
-        task.wait(0.05)
-        
-        -- Regresamos la silla a tu lugar original y te desanclamos
-        invisSeat.CFrame = savedCFrame
-        hrp.Anchored = false
-        
-        -- 3. Le metemos motores a la silla para que puedas volar
-        invisBg = Instance.new("BodyGyro")
-        invisBg.P = 9e4
-        invisBg.maxTorque = Vector3.new(9e9, 9e9, 9e9)
-        invisBg.cframe = invisSeat.CFrame
-        invisBg.Parent = invisSeat
-        
-        invisBv = Instance.new("BodyVelocity")
-        invisBv.velocity = Vector3.zero
-        invisBv.maxForce = Vector3.new(9e9, 9e9, 9e9)
-        invisBv.Parent = invisSeat
     else
-        -- Apagamos el modo y destruimos la silla
+        -- APAGAR MODO FANTASMA
+        if fakeChar then
+            local fakeHrp = fakeChar:FindFirstChild("HumanoidRootPart")
+            local realHrp = realChar and realChar:FindFirstChild("HumanoidRootPart")
+            
+            if fakeHrp and realHrp then
+                -- Descongelamos tu cuerpo real
+                for _, v in ipairs(realChar:GetChildren()) do
+                    if v:IsA("BasePart") then v.Anchored = false end
+                end
+                -- Lo traemos mágicamente a donde viajaste con el fantasma
+                realHrp.CFrame = fakeHrp.CFrame
+            end
+            
+            fakeChar:Destroy()
+            fakeChar = nil
+        end
+        
+        if fakePlatform then
+            fakePlatform:Destroy()
+            fakePlatform = nil
+        end
+        
         if invisBg then invisBg:Destroy(); invisBg = nil end
         if invisBv then invisBv:Destroy(); invisBv = nil end
-        if invisSeat then invisSeat:Destroy(); invisSeat = nil end
         
-        if hum then hum.PlatformStand = false end
-        
-        -- Te devolvemos tu cuerpo normal
-        for obj, trans in pairs(originalTransparencies) do
-            if obj and obj.Parent then 
-                obj.Transparency = trans 
-            end
-        end
-        originalTransparencies = {}
-        
-        for _, obj in pairs(char:GetDescendants()) do
-            if obj:IsA("ParticleEmitter") or obj:IsA("Trail") or obj:IsA("BillboardGui") then
-                obj.Enabled = true
-            end
+        if realChar then
+            workspace.CurrentCamera.CameraSubject = realChar:FindFirstChild("Humanoid")
         end
     end
 end
@@ -2913,42 +3164,12 @@ UIElements.SliderGhostSpeed = Tabs.Mov:Slider({
     Callback = function(Value) invisFlySpeed = Value end 
 })
 
-local cachedGhostControls = nil
-local ghostControlRetryAt = 0
-runtime.Track(RunService.RenderStepped:Connect(function()
-    -- Ahora leemos y movemos la silla en vez de a ti directamente
-    if isInvisible and invisSeat and invisBv and invisBg then
-        if not cachedGhostControls then
-            local now = os.clock()
-            if now < ghostControlRetryAt then return end
-            ghostControlRetryAt = now + 1
-
-            pcall(function()
-                local pScripts = player:FindFirstChild("PlayerScripts")
-                local pModule = pScripts and pScripts:FindFirstChild("PlayerModule")
-                if pModule then
-                    local PlayerModule = require(pModule)
-                    cachedGhostControls = PlayerModule:GetControls()
-                end
-            end)
-        end
-        
-        if cachedGhostControls then 
-            local moveVector = cachedGhostControls:GetMoveVector()
-            local moveDir = camera.CFrame:VectorToWorldSpace(moveVector)
-            
-            invisBv.Velocity = moveDir * invisFlySpeed
-            invisBg.CFrame = camera.CFrame 
-        end
-    end
-end))
-
 runtime.Track(player.CharacterAdded:Connect(function()
     isInvisible = false
+    if fakeChar then fakeChar:Destroy(); fakeChar = nil end
+    if fakePlatform then fakePlatform:Destroy(); fakePlatform = nil end
     if invisBg then invisBg:Destroy(); invisBg = nil end
     if invisBv then invisBv:Destroy(); invisBv = nil end
-    if invisSeat then invisSeat:Destroy(); invisSeat = nil end
-    originalTransparencies = {}
     
     -- Reseteamos el estilo del botón flotante
     if ghostBtn then
@@ -4384,6 +4605,7 @@ Tabs.Config:Button({ Title = "Guardar Configuración", Callback = function()
         Toggles = {
             ["Auto Shoot"] = autoShootEnabled,
             ["AutoShoot Cuchillo"] = autoShootCuchilloEnabled,
+            ["Transparencia Hitbox"] = hitboxTransparency,
             ["Silent Aim (Pistola)"] = silentAimPistolaEnabled,
             ["Silent Aim (Cuchillo)"] = silentAimCuchilloEnabled,
             ["Silent Aim (FOV)"] = silentAimFovEnabled,
@@ -4446,7 +4668,12 @@ end})
 
 function secureLoadToggle(element, val) 
     if not element or val == nil then return end 
-    pcall(function() element:Set(val) end) 
+    -- Cargar una config puede cambiar muchos controles de golpe. Silenciamos
+    -- esos callbacks y mostramos solamente el resultado final de la carga.
+    local wasSuppressed = runtime.SuppressNotifications
+    runtime.SuppressNotifications = true
+    pcall(function() element:Set(val) end)
+    runtime.SuppressNotifications = wasSuppressed
 end
 
 Tabs.Config:Button({ Title = " Cargar Configuración", Callback = function()
@@ -4512,6 +4739,7 @@ Tabs.Config:Button({ Title = " Cargar Configuración", Callback = function()
             
             -- Sliders
             if decoded.Sliders then 
+                if decoded.Sliders["Transparencia Hitbox"] ~= nil then hitboxTransparency = decoded.Sliders["Transparencia Hitbox"] secureLoadToggle(UIElements.SliHitboxTrans, hitboxTransparency) end
                 if decoded.Sliders["Tamaño del FOV"] ~= nil then fovRadius = decoded.Sliders["Tamaño del FOV"] secureLoadToggle(UIElements.SliFOVSize, fovRadius) end
                 if decoded.Sliders["Tamaño de Hitbox"] ~= nil then hitboxSize = decoded.Sliders["Tamaño de Hitbox"] secureLoadToggle(UIElements.SliHitbox, hitboxSize) end
                 if decoded.Sliders["Velocidad de Vuelo"] ~= nil then flySpeed = decoded.Sliders["Velocidad de Vuelo"] secureLoadToggle(UIElements.SliFly, flySpeed) end
@@ -4598,3 +4826,4 @@ end)
 -- El splash sólo existe durante esta ejecución inicial. Abrir y cerrar el hub
 -- después de este punto permanece completamente instantáneo.
 startupSplashState.Finish()
+runtime.NotificationsReady = true

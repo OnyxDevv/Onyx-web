@@ -2269,7 +2269,7 @@ UIElements.SliFOVSize = Tabs.Aim:Slider({
 
 
 -- ==========================================
--- KILL ALL OP (REMOTE + TP PERFECTO)
+-- KILL ALL OP (REMOTE + TP PERFECTO MODIFICADO)
 -- ==========================================
 
 Tabs.KillAll:Section({Title = "Kill all OP (Método YisusHub)"})
@@ -2290,7 +2290,7 @@ local killAllEnabled = false
 
 Tabs.KillAll:Toggle({ 
     Title = "Activar Kill All",
-    Desc = "TP Ping-Pong + Remote Kill (Indetectable)",
+    Desc = "TP Ping-Pong Lento + Escondite Bajo Mapa",
     Value = false,
     Callback = function(Value)
         killAllEnabled = Value
@@ -2312,10 +2312,15 @@ Tabs.KillAll:Toggle({
                         
                         if myHrp and myHum and myHum.Health > 0 then
                             
-                            -- Guardamos tu posición en la base y ACOSTAR AL MONO DESDE EL INICIO
+                            -- 1. GUARDAMOS TU POSICIÓN EN LA SUPERFICIE
                             local posicionOriginal = myHrp.CFrame
-                            myHrp.CFrame = posicionOriginal * CFrame.Angles(math.rad(90), 0, 0)
-                            task.wait(0.1)
+                            
+                            -- 2. NOS ESCONDEMOS DEBAJO DEL MAPA (-15 STUDS)
+                            local posicionEscondite = posicionOriginal * CFrame.new(0, -15, 0) * CFrame.Angles(math.rad(90), 0, 0)
+                            myHrp.CFrame = posicionEscondite
+                            task.wait(0.15)
+                            
+                            local matoAlguien = false
 
                             for _, p in ipairs(Players:GetPlayers()) do
                                 if not killAllEnabled then break end 
@@ -2331,7 +2336,7 @@ Tabs.KillAll:Toggle({
                                             if distanciaAlEnemigo <= killAllRango then
                                                 local failSafe = 0 
                                                 
-                                                -- 1. ASEGURAMOS QUE TIENES EL CUCHILLO EN LA MANO
+                                                -- ASEGURAMOS EL CUCHILLO
                                                 local arma = myChar:FindFirstChildOfClass("Tool")
                                                 if arma and esLaPistola(arma) then
                                                     myHum:UnequipTools()
@@ -2345,45 +2350,44 @@ Tabs.KillAll:Toggle({
                                                             if item:IsA("Tool") and not esLaPistola(item) then
                                                                 myHum:EquipTool(item)
                                                                 arma = item
-                                                                task.wait(0.1) -- Pequeña pausa para que el server cargue el cuchillo
+                                                                task.wait(0.15) 
                                                                 break
                                                             end
                                                         end
                                                     end
                                                 end
 
-                                                -- 2. BUSCAMOS EL EVENTO 'KILL' DIRECTO EN EL CUCHILLO
                                                 local killRemote = arma and arma:FindFirstChild("Kill")
 
-                                                -- 🔥 AC BYPASS: TP PING-PONG + REMOTE EVENT 🔥
-                                                while runtime.Alive and killAllEnabled and p and p.Parent and enemyHum and enemyHum.Parent and enemyHum.Health > 0 and failSafe < 10 do
+                                                -- PING-PONG MÁS LENTO CONTRA EL ENEMIGO ACTUAL
+                                                while runtime.Alive and killAllEnabled and p and p.Parent and enemyHum and enemyHum.Parent and enemyHum.Health > 0 and failSafe < 12 do
                                                     
-                                                    -- TP al enemigo (invisible, por debajo y ACOSTADO)
-                                                    myHrp.CFrame = enemyHrp.CFrame * CFrame.new(0, -4, 0) * CFrame.Angles(math.rad(90), 0, 0)
+                                                    -- TP al enemigo (invisible, por debajo y acostado)
+                                                    myHrp.CFrame = enemyHrp.CFrame * CFrame.new(0, -4.5, 0) * CFrame.Angles(math.rad(90), 0, 0)
                                                     myHrp.AssemblyLinearVelocity = Vector3.zero
                                                     myHrp.AssemblyAngularVelocity = Vector3.zero
                                                     
-                                                    -- DISPARAMOS EL EVENTO DIRECTO A LA VENA
                                                     if killRemote then
                                                         pcall(function() killRemote:FireServer(enemyHum) end)
                                                     end
                                                     
                                                     if arma then arma:Activate() end
                                                     
-                                                    -- 🔥 MÁS TIEMPO PARA ASEGURAR EL HIT FÍSICO 🔥
-                                                    task.wait(0.06) 
+                                                    -- MÁS TIEMPO DE ESPERA PARA NO VOLVER LOCO AL CLIENTE
+                                                    task.wait(0.15) 
                                                     
-                                                    -- REGRESO INSTANTÁNEO A LA BASE (SEGUIMOS ACOSTADOS)
+                                                    -- REGRESAR AL ESCONDITE BAJO EL MAPA ENFRIANDO EL ANTI-CHEAT
                                                     if myHrp then
-                                                        myHrp.CFrame = posicionOriginal * CFrame.Angles(math.rad(90), 0, 0)
+                                                        myHrp.CFrame = posicionEscondite
                                                         myHrp.AssemblyLinearVelocity = Vector3.zero
                                                         myHrp.AssemblyAngularVelocity = Vector3.zero
                                                     end
                                                     
-                                                    -- Pausa en la base para enfriar el Anti-Cheat
-                                                    task.wait(0.08) 
+                                                    task.wait(0.15) 
                                                     failSafe = failSafe + 1
                                                 end
+                                                
+                                                matoAlguien = true
                                                 
                                                 pcall(function()
                                                     local armaActual = myChar:FindFirstChildOfClass("Tool")
@@ -2395,24 +2399,24 @@ Tabs.KillAll:Toggle({
                                 end
                             end
 
-                            -- Nos aseguramos de dejarte DE PIE al terminar
+                            -- 3. SOLO REGRESAR A LA SUPERFICIE SI SE TERMINÓ DE BARRER EL SERVIDOR
                             if killAllEnabled and myHrp then
                                 myHrp.CFrame = posicionOriginal
-                                task.wait(0.1) 
+                                -- Pausa más larga si el lobby está limpio para evitar spam de TP
+                                task.wait(matoAlguien and 0.2 or 1.5) 
                             end
 
                         end
                     end
-                    task.wait(0.1) 
+                    task.wait(0.2) 
                 end
             end)
         else
             showBottomMessage("Kill All: DESACTIVADO")
-            -- Si lo apagas de golpe, te levanta
             pcall(function()
                 local char = player.Character
                 if char and char:FindFirstChild("HumanoidRootPart") then
-                    -- Quitar la rotación en X y Z, dejar solo Y
+                    -- Quitar la rotación en X y Z, devolviéndote la postura normal
                     local _, rotY, _ = char.HumanoidRootPart.CFrame:ToEulerAnglesXYZ()
                     char.HumanoidRootPart.CFrame = CFrame.new(char.HumanoidRootPart.Position) * CFrame.Angles(0, rotY, 0)
                 end
@@ -2420,7 +2424,8 @@ Tabs.KillAll:Toggle({
         end
     end
 })
--- ==========================================
+
+-- ====================
 -- HITBOX EXPANDER OPTIMIZADO (LAZY LOADING)
 -- ==========================================
 Tabs.Aim:Section({Title = "Expandir Hitbox"})

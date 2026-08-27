@@ -2269,7 +2269,7 @@ UIElements.SliFOVSize = Tabs.Aim:Slider({
 
 
 -- ==========================================
--- KILL ALL OP (REMOTE + TP PERFECTO MODIFICADO)
+-- KILL ALL OP (REMOTE + TP + HITBOX)
 -- ==========================================
 
 Tabs.KillAll:Section({Title = "Kill all OP (Método YisusHub)"})
@@ -2290,7 +2290,7 @@ local killAllEnabled = false
 
 Tabs.KillAll:Toggle({ 
     Title = "Activar Kill All",
-    Desc = "TP Ping-Pong Lento + Escondite Bajo Mapa",
+    Desc = "Ping-Pong + Escondite Global + Hitbox 5",
     Value = false,
     Callback = function(Value)
         killAllEnabled = Value
@@ -2312,13 +2312,13 @@ Tabs.KillAll:Toggle({
                         
                         if myHrp and myHum and myHum.Health > 0 then
                             
-                            -- 1. GUARDAMOS TU POSICIÓN EN LA SUPERFICIE
+                            -- 1. POSICIÓN GLOBAL EXACTA (Ignora hacia donde mires)
                             local posicionOriginal = myHrp.CFrame
+                            -- Bajamos exactamente 6.5 studs en el eje Y del mundo
+                            local posicionEscondite = CFrame.new(posicionOriginal.Position - Vector3.new(0, 6.5, 0)) * CFrame.Angles(math.rad(90), 0, 0)
                             
-                            -- 2. NOS ESCONDEMOS DEBAJO DEL MAPA (-15 STUDS)
-                            local posicionEscondite = posicionOriginal * CFrame.new(0, -15, 0) * CFrame.Angles(math.rad(90), 0, 0)
                             myHrp.CFrame = posicionEscondite
-                            task.wait(0.15)
+                            task.wait(0.1)
                             
                             local matoAlguien = false
 
@@ -2334,9 +2334,41 @@ Tabs.KillAll:Toggle({
                                             local distanciaAlEnemigo = (posicionOriginal.Position - enemyHrp.Position).Magnitude
                                             
                                             if distanciaAlEnemigo <= killAllRango then
-                                                local failSafe = 0 
                                                 
-                                                -- ASEGURAMOS EL CUCHILLO
+                                                -- =====================================
+                                                -- 🔥 EXPANSIÓN DE HITBOX AUTOMÁTICA (5)
+                                                -- =====================================
+                                                local fakeHitbox = nil
+                                                for _, child in ipairs(p.Character:GetChildren()) do
+                                                    if child:GetAttribute("EsAstraHitbox") then
+                                                        fakeHitbox = child
+                                                        break
+                                                    end
+                                                end
+                                                
+                                                if not fakeHitbox then
+                                                    fakeHitbox = Instance.new("Part")
+                                                    fakeHitbox.Name = "Torso" -- Bypassea AC porque es un nombre válido de cuerpo
+                                                    fakeHitbox:SetAttribute("EsAstraHitbox", true)
+                                                    fakeHitbox.Shape = Enum.PartType.Block
+                                                    fakeHitbox.Size = Vector3.new(5, 5, 5) -- Expansión en 5
+                                                    fakeHitbox.CFrame = enemyHrp.CFrame
+                                                    fakeHitbox.Massless = true
+                                                    fakeHitbox.CanCollide = false
+                                                    fakeHitbox.Anchored = false
+                                                    fakeHitbox.Transparency = 1 
+                                                    fakeHitbox.Parent = p.Character 
+                                                    
+                                                    local weld = Instance.new("WeldConstraint")
+                                                    weld.Part0 = enemyHrp
+                                                    weld.Part1 = fakeHitbox
+                                                    weld.Parent = fakeHitbox
+                                                else
+                                                    fakeHitbox.Size = Vector3.new(5, 5, 5)
+                                                end
+                                                -- =====================================
+
+                                                -- ASEGURAMOS EL CUCHILLO EN LA MANO
                                                 local arma = myChar:FindFirstChildOfClass("Tool")
                                                 if arma and esLaPistola(arma) then
                                                     myHum:UnequipTools()
@@ -2350,7 +2382,7 @@ Tabs.KillAll:Toggle({
                                                             if item:IsA("Tool") and not esLaPistola(item) then
                                                                 myHum:EquipTool(item)
                                                                 arma = item
-                                                                task.wait(0.15) 
+                                                                task.wait(0.1) 
                                                                 break
                                                             end
                                                         end
@@ -2358,12 +2390,13 @@ Tabs.KillAll:Toggle({
                                                 end
 
                                                 local killRemote = arma and arma:FindFirstChild("Kill")
-
-                                                -- PING-PONG MÁS LENTO CONTRA EL ENEMIGO ACTUAL
-                                                while runtime.Alive and killAllEnabled and p and p.Parent and enemyHum and enemyHum.Parent and enemyHum.Health > 0 and failSafe < 12 do
+                                                local failSafe = 0 
+                                                
+                                                -- 🔥 MÁXIMO 2 INTENTOS: Al tener Hitbox enorme, ya no ocupamos spamear TPs
+                                                while runtime.Alive and killAllEnabled and p.Parent and enemyHum and enemyHum.Health > 0 and enemyHrp and failSafe < 2 do
                                                     
-                                                    -- TP al enemigo (invisible, por debajo y acostado)
-                                                    myHrp.CFrame = enemyHrp.CFrame * CFrame.new(0, -4.5, 0) * CFrame.Angles(math.rad(90), 0, 0)
+                                                    -- TP al enemigo (-4 studs de su centro)
+                                                    myHrp.CFrame = enemyHrp.CFrame * CFrame.new(0, -4, 0) * CFrame.Angles(math.rad(90), 0, 0)
                                                     myHrp.AssemblyLinearVelocity = Vector3.zero
                                                     myHrp.AssemblyAngularVelocity = Vector3.zero
                                                     
@@ -2373,17 +2406,16 @@ Tabs.KillAll:Toggle({
                                                     
                                                     if arma then arma:Activate() end
                                                     
-                                                    -- MÁS TIEMPO DE ESPERA PARA NO VOLVER LOCO AL CLIENTE
-                                                    task.wait(0.15) 
+                                                    task.wait(0.1) 
                                                     
-                                                    -- REGRESAR AL ESCONDITE BAJO EL MAPA ENFRIANDO EL ANTI-CHEAT
+                                                    -- REGRESAR AL ESCONDITE GLOBAL INMEDIATAMENTE
                                                     if myHrp then
                                                         myHrp.CFrame = posicionEscondite
                                                         myHrp.AssemblyLinearVelocity = Vector3.zero
                                                         myHrp.AssemblyAngularVelocity = Vector3.zero
                                                     end
                                                     
-                                                    task.wait(0.15) 
+                                                    task.wait(0.1) 
                                                     failSafe = failSafe + 1
                                                 end
                                                 
@@ -2399,11 +2431,10 @@ Tabs.KillAll:Toggle({
                                 end
                             end
 
-                            -- 3. SOLO REGRESAR A LA SUPERFICIE SI SE TERMINÓ DE BARRER EL SERVIDOR
+                            -- Solo salir a la superficie cuando barrimos todo
                             if killAllEnabled and myHrp then
-                                myHrp.CFrame = posicionOriginal
-                                -- Pausa más larga si el lobby está limpio para evitar spam de TP
-                                task.wait(matoAlguien and 0.2 or 1.5) 
+                                myHrp.CFrame = CFrame.new(posicionOriginal.Position) -- Nos pone de pie en el lugar exacto
+                                task.wait(matoAlguien and 0.2 or 1.0) 
                             end
 
                         end
@@ -2416,7 +2447,6 @@ Tabs.KillAll:Toggle({
             pcall(function()
                 local char = player.Character
                 if char and char:FindFirstChild("HumanoidRootPart") then
-                    -- Quitar la rotación en X y Z, devolviéndote la postura normal
                     local _, rotY, _ = char.HumanoidRootPart.CFrame:ToEulerAnglesXYZ()
                     char.HumanoidRootPart.CFrame = CFrame.new(char.HumanoidRootPart.Position) * CFrame.Angles(0, rotY, 0)
                 end
@@ -2425,7 +2455,7 @@ Tabs.KillAll:Toggle({
     end
 })
 
--- ====================
+--====================
 -- HITBOX EXPANDER OPTIMIZADO (LAZY LOADING)
 -- ==========================================
 Tabs.Aim:Section({Title = "Expandir Hitbox"})

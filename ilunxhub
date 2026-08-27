@@ -3060,9 +3060,6 @@ local function liberarMovimientoKillAll(
             myHum.AutoRotate =
                 true
 
-            myHum:ChangeState(
-                Enum.HumanoidStateType.GettingUp
-            )
         end)
     end
 
@@ -3157,9 +3154,6 @@ local function reposarEnBaseKillAll(
             myHum.PlatformStand =
                 true
 
-            myHum:ChangeState(
-                Enum.HumanoidStateType.Physics
-            )
         end)
 
 
@@ -4117,11 +4111,14 @@ UIElements.TogKillAll =
 
                     pcall(function()
 
-                        if UIElements.TogKillAll then
+                        local killToggle = UIElements.TogKillAll
 
-                            UIElements.
-                                TogKillAll:
-                                Set(false)
+                        if killToggle then
+                            if type(killToggle.Set) == "function" then
+                                killToggle:Set(false)
+                            elseif type(killToggle.SetValue) == "function" then
+                                killToggle:SetValue(false)
+                            end
                         end
                     end)
 
@@ -4557,9 +4554,6 @@ UIElements.TogKillAll =
                     hum.AutoRotate =
                         true
 
-                    hum:ChangeState(
-                        Enum.HumanoidStateType.GettingUp
-                    )
                 end)
             end
 
@@ -4603,6 +4597,9 @@ UIElements.TogKillAll =
                 nil
 
             killAllWasSafe =
+                false
+
+            killAllIdleFree =
                 false
 
 

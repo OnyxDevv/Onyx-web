@@ -2307,8 +2307,10 @@ Tabs.KillAll:Toggle({
                         
                         if myHrp and myHum and myHum.Health > 0 then
                             
-                            -- Guardamos tu posición en la base
+                            -- Guardamos tu posición en la base y ACOSTAR AL MONO DESDE EL INICIO
                             local posicionOriginal = myHrp.CFrame
+                            myHrp.CFrame = posicionOriginal * CFrame.Angles(math.rad(90), 0, 0)
+                            task.wait(0.1)
 
                             for _, p in ipairs(Players:GetPlayers()) do
                                 if not killAllEnabled then break end 
@@ -2351,9 +2353,10 @@ Tabs.KillAll:Toggle({
                                                 -- 🔥 AC BYPASS: TP PING-PONG + REMOTE EVENT 🔥
                                                 while runtime.Alive and killAllEnabled and p and p.Parent and enemyHum and enemyHum.Parent and enemyHum.Health > 0 and failSafe < 10 do
                                                     
-                                                    -- TP al enemigo (invisible, por debajo)
-                                                    myHrp.CFrame = enemyHrp.CFrame * CFrame.new(0, -3.8, 0) * CFrame.Angles(math.rad(90), 0, 0)
+                                                    -- TP al enemigo (invisible, por debajo y ACOSTADO)
+                                                    myHrp.CFrame = enemyHrp.CFrame * CFrame.new(0, -4, 0) * CFrame.Angles(math.rad(90), 0, 0)
                                                     myHrp.AssemblyLinearVelocity = Vector3.zero
+                                                    myHrp.AssemblyAngularVelocity = Vector3.zero
                                                     
                                                     -- DISPARAMOS EL EVENTO DIRECTO A LA VENA
                                                     if killRemote then
@@ -2362,15 +2365,18 @@ Tabs.KillAll:Toggle({
                                                     
                                                     if arma then arma:Activate() end
                                                     
-                                                    task.wait(0.02)
+                                                    -- 🔥 MÁS TIEMPO PARA ASEGURAR EL HIT FÍSICO 🔥
+                                                    task.wait(0.06) 
                                                     
-                                                    -- REGRESO INSTANTÁNEO A LA BASE
+                                                    -- REGRESO INSTANTÁNEO A LA BASE (SEGUIMOS ACOSTADOS)
                                                     if myHrp then
-                                                        myHrp.CFrame = posicionOriginal
+                                                        myHrp.CFrame = posicionOriginal * CFrame.Angles(math.rad(90), 0, 0)
                                                         myHrp.AssemblyLinearVelocity = Vector3.zero
+                                                        myHrp.AssemblyAngularVelocity = Vector3.zero
                                                     end
                                                     
-                                                    task.wait(0.04) 
+                                                    -- Pausa en la base para enfriar el Anti-Cheat
+                                                    task.wait(0.08) 
                                                     failSafe = failSafe + 1
                                                 end
                                                 
@@ -2384,7 +2390,7 @@ Tabs.KillAll:Toggle({
                                 end
                             end
 
-                            -- Nos aseguramos de dejarte de pie al terminar
+                            -- Nos aseguramos de dejarte DE PIE al terminar
                             if killAllEnabled and myHrp then
                                 myHrp.CFrame = posicionOriginal
                                 task.wait(0.1) 
@@ -2397,6 +2403,15 @@ Tabs.KillAll:Toggle({
             end)
         else
             showBottomMessage("Kill All: DESACTIVADO")
+            -- Si lo apagas de golpe, te levanta
+            pcall(function()
+                local char = player.Character
+                if char and char:FindFirstChild("HumanoidRootPart") then
+                    -- Quitar la rotación en X y Z, dejar solo Y
+                    local _, rotY, _ = char.HumanoidRootPart.CFrame:ToEulerAnglesXYZ()
+                    char.HumanoidRootPart.CFrame = CFrame.new(char.HumanoidRootPart.Position) * CFrame.Angles(0, rotY, 0)
+                end
+            end)
         end
     end
 })

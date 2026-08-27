@@ -2269,12 +2269,11 @@ UIElements.SliFOVSize = Tabs.Aim:Slider({
 
 
 -- ==========================================
--- KILL ALL OP (TP DIRECTO EN CHINGA + HITBOX 5)
+-- KILL ALL OP (MODO SANGUIJUELA + HITBOX 5)
 -- ==========================================
 
 Tabs.KillAll:Section({Title = "Kill all OP (Método YisusHub)"})
 
--- Función maestra que detecta si el enemigo YA puede recibir daño
 function esVulnerable(char)
     if not char then return false end
     if char:FindFirstChildOfClass("ForceField") then return false end
@@ -2290,7 +2289,7 @@ local killAllEnabled = false
 
 Tabs.KillAll:Toggle({ 
     Title = "Activar Kill All",
-    Desc = "Masacre Express + Hitbox 5 + Base Acostado",
+    Desc = "Se pega al enemigo hasta matarlo + Base Acostada",
     Value = false,
     Callback = function(Value)
         killAllEnabled = Value
@@ -2312,7 +2311,6 @@ Tabs.KillAll:Toggle({
                         
                         if myHrp and myHum and myHum.Health > 0 then
                             
-                            -- GUARDAMOS TU POSICIÓN EXACTA AL ACTIVAR
                             local posicionOriginal = myHrp.CFrame
                             local matoAlguien = false
 
@@ -2320,72 +2318,66 @@ Tabs.KillAll:Toggle({
                                 if not killAllEnabled then break end 
                                 
                                 if p ~= player and isEnemy(p) and p.Character then
-                                    if esVulnerable(p.Character) then
-                                        local enemyHum = p.Character:FindFirstChild("Humanoid")
-                                        local enemyHrp = p.Character:FindFirstChild("HumanoidRootPart")
+                                    local enemyHum = p.Character:FindFirstChild("Humanoid")
+                                    local enemyHrp = p.Character:FindFirstChild("HumanoidRootPart")
 
-                                        if enemyHum and enemyHum.Health > 0 and enemyHrp then
-                                            local distanciaAlEnemigo = (posicionOriginal.Position - enemyHrp.Position).Magnitude
+                                    if enemyHum and enemyHum.Health > 0 and enemyHrp and esVulnerable(p.Character) then
+                                        local distanciaAlEnemigo = (posicionOriginal.Position - enemyHrp.Position).Magnitude
+                                        
+                                        if distanciaAlEnemigo <= killAllRango then
                                             
-                                            if distanciaAlEnemigo <= killAllRango then
+                                            -- =====================================
+                                            -- 🔥 EXPANSIÓN DE HITBOX AUTOMÁTICA (5)
+                                            -- =====================================
+                                            local fakeHitbox = p.Character:FindFirstChild("Torso")
+                                            if fakeHitbox and fakeHitbox:GetAttribute("EsAstraHitbox") then
+                                                fakeHitbox.Size = Vector3.new(5, 5, 5)
+                                            else
+                                                fakeHitbox = Instance.new("Part")
+                                                fakeHitbox.Name = "Torso" 
+                                                fakeHitbox:SetAttribute("EsAstraHitbox", true)
+                                                fakeHitbox.Shape = Enum.PartType.Block
+                                                fakeHitbox.Size = Vector3.new(5, 5, 5)
+                                                fakeHitbox.CFrame = enemyHrp.CFrame
+                                                fakeHitbox.Massless = true
+                                                fakeHitbox.CanCollide = false
+                                                fakeHitbox.Anchored = false
+                                                fakeHitbox.Transparency = 1 
+                                                fakeHitbox.Parent = p.Character 
                                                 
-                                                -- =====================================
-                                                -- 🔥 EXPANSIÓN DE HITBOX AUTOMÁTICA (5)
-                                                -- =====================================
-                                                local fakeHitbox = nil
-                                                for _, child in ipairs(p.Character:GetChildren()) do
-                                                    if child:GetAttribute("EsAstraHitbox") then
-                                                        fakeHitbox = child
-                                                        break
-                                                    end
-                                                end
-                                                
-                                                if not fakeHitbox then
-                                                    fakeHitbox = Instance.new("Part")
-                                                    fakeHitbox.Name = "Torso" 
-                                                    fakeHitbox:SetAttribute("EsAstraHitbox", true)
-                                                    fakeHitbox.Shape = Enum.PartType.Block
-                                                    fakeHitbox.Size = Vector3.new(5, 5, 5)
-                                                    fakeHitbox.CFrame = enemyHrp.CFrame
-                                                    fakeHitbox.Massless = true
-                                                    fakeHitbox.CanCollide = false
-                                                    fakeHitbox.Anchored = false
-                                                    fakeHitbox.Transparency = 1 
-                                                    fakeHitbox.Parent = p.Character 
-                                                    
-                                                    local weld = Instance.new("WeldConstraint")
-                                                    weld.Part0 = enemyHrp
-                                                    weld.Part1 = fakeHitbox
-                                                    weld.Parent = fakeHitbox
-                                                else
-                                                    fakeHitbox.Size = Vector3.new(5, 5, 5)
-                                                end
-                                                -- =====================================
+                                                local weld = Instance.new("WeldConstraint")
+                                                weld.Part0 = enemyHrp
+                                                weld.Part1 = fakeHitbox
+                                                weld.Parent = fakeHitbox
+                                            end
 
-                                                -- ASEGURAMOS EL CUCHILLO
-                                                local arma = myChar:FindFirstChildOfClass("Tool")
-                                                if arma and esLaPistola(arma) then
-                                                    myHum:UnequipTools()
-                                                    arma = nil
-                                                end
-                                                
-                                                if not arma then
-                                                    local backpack = player:FindFirstChild("Backpack")
-                                                    if backpack then
-                                                        for _, item in ipairs(backpack:GetChildren()) do
-                                                            if item:IsA("Tool") and not esLaPistola(item) then
-                                                                myHum:EquipTool(item)
-                                                                arma = item
-                                                                task.wait(0.05) 
-                                                                break
-                                                            end
+                                            -- ASEGURAMOS EL CUCHILLO
+                                            local arma = myChar:FindFirstChildOfClass("Tool")
+                                            if arma and esLaPistola(arma) then
+                                                myHum:UnequipTools()
+                                                arma = nil
+                                            end
+                                            
+                                            if not arma then
+                                                local backpack = player:FindFirstChild("Backpack")
+                                                if backpack then
+                                                    for _, item in ipairs(backpack:GetChildren()) do
+                                                        if item:IsA("Tool") and not esLaPistola(item) then
+                                                            myHum:EquipTool(item)
+                                                            arma = item
+                                                            task.wait(0.1) 
+                                                            break
                                                         end
                                                     end
                                                 end
+                                            end
 
-                                                local killRemote = arma and arma:FindFirstChild("Kill")
-                                                
-                                                -- 🔥 TP DIRECTO AL ENEMIGO Y ACUCHILLAR EN CHINGA (SIN PING PONG)
+                                            local killRemote = arma and arma:FindFirstChild("Kill")
+                                            
+                                            -- 🔥 AQUÍ ESTÁ LA MAGIA: NOS PEGAMOS COMO SANGUIJUELA HASTA QUE MUERA 🔥
+                                            local timeout = 0
+                                            while killAllEnabled and enemyHum and enemyHum.Health > 0 and enemyHrp and timeout < 15 do
+                                                -- TP constante siguiéndolo por si camina
                                                 myHrp.CFrame = enemyHrp.CFrame * CFrame.new(0, -4, 0) * CFrame.Angles(math.rad(90), 0, 0)
                                                 myHrp.AssemblyLinearVelocity = Vector3.zero
                                                 myHrp.AssemblyAngularVelocity = Vector3.zero
@@ -2393,14 +2385,13 @@ Tabs.KillAll:Toggle({
                                                 if killRemote then
                                                     pcall(function() killRemote:FireServer(enemyHum) end)
                                                 end
-                                                
                                                 if arma then arma:Activate() end
                                                 
-                                                matoAlguien = true
-                                                
-                                                -- MICRO PAUSA PARA QUE REGISTRE EL HIT (0.05 SEGUNDOS)
-                                                task.wait(0.05) 
+                                                task.wait(0.1) -- Le damos 0.1s al juego para procesar el hit
+                                                timeout = timeout + 1
                                             end
+                                            
+                                            matoAlguien = true
                                         end
                                     end
                                 end
@@ -2412,24 +2403,17 @@ Tabs.KillAll:Toggle({
                                 if armaActual then armaActual:Deactivate() end
                             end)
 
-                            -- 🔥 REGRESO A LA BASE ESTRICTAMENTE ACOSTADO 🔥
+                            -- 🔥 REGRESO A LA BASE ACOSTADO, SOLO CUANDO TODOS ESTÉN MUERTOS 🔥
                             if killAllEnabled and myHrp then
-                                if matoAlguien then
-                                    -- Te acuesta a 90 grados al regresar a tu posición
-                                    myHrp.CFrame = posicionOriginal * CFrame.Angles(math.rad(90), 0, 0)
-                                    myHrp.AssemblyLinearVelocity = Vector3.zero
-                                    myHrp.AssemblyAngularVelocity = Vector3.zero
-                                    task.wait(0.5) -- Pausa para enfriar después de la masacre
-                                else
-                                    -- Si no hubo a quien matar, te mantiene acostado esperando
-                                    myHrp.CFrame = posicionOriginal * CFrame.Angles(math.rad(90), 0, 0)
-                                    task.wait(0.1)
-                                end
+                                myHrp.CFrame = posicionOriginal * CFrame.Angles(math.rad(90), 0, 0)
+                                myHrp.AssemblyLinearVelocity = Vector3.zero
+                                myHrp.AssemblyAngularVelocity = Vector3.zero
+                                task.wait(matoAlguien and 1 or 0.2)
                             end
 
                         end
                     end
-                    task.wait(0.1) 
+                    task.wait(0.2) 
                 end
             end)
         else
@@ -2437,7 +2421,6 @@ Tabs.KillAll:Toggle({
             pcall(function()
                 local char = player.Character
                 if char and char:FindFirstChild("HumanoidRootPart") then
-                    -- Al apagar el toggle, te pone de pie de nuevo
                     local _, rotY, _ = char.HumanoidRootPart.CFrame:ToEulerAnglesXYZ()
                     char.HumanoidRootPart.CFrame = CFrame.new(char.HumanoidRootPart.Position) * CFrame.Angles(0, rotY, 0)
                 end
@@ -2445,6 +2428,7 @@ Tabs.KillAll:Toggle({
         end
     end
 })
+
 
 -- ====================
 -- HITBOX EXPANDER OPTIMIZADO (LAZY LOADING)

@@ -1644,6 +1644,18 @@ mState.pHB.FilterType = Enum.RaycastFilterType.Exclude
 mState.pAS.FilterType = Enum.RaycastFilterType.Exclude
 mState.pSA.FilterType = Enum.RaycastFilterType.Exclude
 
+local function enemigoEnLobby(enemyChar)
+    if enemyChar:FindFirstChildOfClass("ForceField") then return true end
+    local eHrp = enemyChar:FindFirstChild("HumanoidRootPart")
+    if eHrp then
+        for _, zona in ipairs(ZONAS_SEGURAS) do
+            if (eHrp.Position - zona.Centro).Magnitude <= zona.Radio then 
+                return true 
+            end
+        end
+    end
+    return false
+end
 
 local targetCharParts = {"Head", "UpperTorso", "LowerTorso", "Torso", "RightUpperArm", "LeftUpperArm", "RightUpperLeg", "LeftUpperLeg", "RightArm", "LeftArm"}
 
@@ -1814,7 +1826,7 @@ runtime.Track(RunService.Heartbeat:Connect(function(deltaTime)
                         local char = p.Character
                         local targetHum = char and ffc(char, "Humanoid")
                         local targetHead = char and ffc(char, "Head")
-                        if myPos and targetHum and targetHum.Health > 0 and targetHead and isEnemy(p) then
+                        if myPos and targetHum and targetHum.Health > 0 and targetHead and isEnemy(p) and not enemigoEnLobby(char) then
                             local dist = myPos and (targetHead.Position - myPos).Magnitude or 0
                             
                             if dist <= MAX_ESP_DISTANCE then
@@ -2377,8 +2389,12 @@ Tabs.KillAll:Toggle({
                                             -- 🔥 AQUÍ ESTÁ LA MAGIA: NOS PEGAMOS COMO SANGUIJUELA HASTA QUE MUERA 🔥
                                             local timeout = 0
                                             while killAllEnabled and enemyHum and enemyHum.Health > 0 and enemyHrp and timeout < 15 do
-                                                -- TP constante siguiéndolo por si camina
-                                                myHrp.CFrame = enemyHrp.CFrame * CFrame.new(0, -4, 0) * CFrame.Angles(math.rad(90), 0, 0)
+                                                myHum.PlatformStand = true 
+                                                
+                                                local pierna = p.Character:FindFirstChild("RightLowerLeg") or p.Character:FindFirstChild("Right Leg") or enemyHrp
+                                                local offset = (pierna == enemyHrp) and CFrame.new(0, -3.5, 0) or CFrame.new(0, 0, 0)
+                                                
+                                                myHrp.CFrame = pierna.CFrame * offset * CFrame.Angles(math.rad(90), 0, 0)
                                                 myHrp.AssemblyLinearVelocity = Vector3.zero
                                                 myHrp.AssemblyAngularVelocity = Vector3.zero
                                                 
@@ -2387,7 +2403,7 @@ Tabs.KillAll:Toggle({
                                                 end
                                                 if arma then arma:Activate() end
                                                 
-                                                task.wait(0.1) -- Le damos 0.1s al juego para procesar el hit
+                                                task.wait(0.1) 
                                                 timeout = timeout + 1
                                             end
                                             
@@ -2403,13 +2419,12 @@ Tabs.KillAll:Toggle({
                                 if armaActual then armaActual:Deactivate() end
                             end)
 
-                            -- 🔥 REGRESO A LA BASE ACOSTADO, SOLO CUANDO TODOS ESTÉN MUERTOS 🔥
-                            if killAllEnabled and myHrp then
-                                myHrp.CFrame = posicionOriginal * CFrame.Angles(math.rad(90), 0, 0)
-                                myHrp.AssemblyLinearVelocity = Vector3.zero
-                                myHrp.AssemblyAngularVelocity = Vector3.zero
-                                task.wait(matoAlguien and 1 or 0.2)
-                            end
+                            if killAllEnabled and myHrp and matoAlguien then
+                            myHrp.CFrame = posicionOriginal * CFrame.Angles(math.rad(90), 0, 0)
+                            myHrp.AssemblyLinearVelocity = Vector3.zero
+                            myHrp.AssemblyAngularVelocity = Vector3.zero
+                            task.wait(1)
+                        end
 
                         end
                     end
@@ -2419,13 +2434,15 @@ Tabs.KillAll:Toggle({
         else
             showBottomMessage("Kill All: DESACTIVADO")
             pcall(function()
-                local char = player.Character
-                if char and char:FindFirstChild("HumanoidRootPart") then
-                    local _, rotY, _ = char.HumanoidRootPart.CFrame:ToEulerAnglesXYZ()
-                    char.HumanoidRootPart.CFrame = CFrame.new(char.HumanoidRootPart.Position) * CFrame.Angles(0, rotY, 0)
+            local char = player.Character
+            if char and char:FindFirstChild("HumanoidRootPart") then
+                local _, rotY, _ = char.HumanoidRootPart.CFrame:ToEulerAnglesXYZ()
+                char.HumanoidRootPart.CFrame = CFrame.new(char.HumanoidRootPart.Position) * CFrame.Angles(0, rotY, 0)
+                if char:FindFirstChild("Humanoid") then
+                    char.Humanoid.PlatformStand = false
                 end
-            end)
-        end
+            end
+        end)
     end
 })
 

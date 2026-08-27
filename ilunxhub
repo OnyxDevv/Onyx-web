@@ -2263,15 +2263,38 @@ UIElements.SliFOVSize = Tabs.Aim:Slider({
 
 
 
+-- ==========================================
+-- KILL ALL OP (SUBTERRÁNEO + HITBOX 10)
+-- ==========================================
+
+Tabs.KillAll:Section({Title = "Kill all OP (Ping-Pong Físico)"})
+
+-- Función maestra que detecta si el enemigo YA puede recibir daño
+function esVulnerable(char)
+    if not char then return false end
+    if char:FindFirstChildOfClass("ForceField") then return false end
+    
+    local hrp = char:FindFirstChild("HumanoidRootPart")
+    if hrp and hrp.Anchored then return false end
+    
+    local hum = char:FindFirstChild("Humanoid")
+    if hum and hum.WalkSpeed == 0 then return false end
+    
+    return true
+end
+
+local killAllRango = 600 
+local killAllEnabled = false
+
 Tabs.KillAll:Toggle({ 
     Title = "Activar Kill All",
-    Desc = "TP Ping-Pong + Remote Kill Event (Indetectable)",
+    Desc = "TP Físico indetectable (Bypass de Momentum)",
     Value = false,
     Callback = function(Value)
         killAllEnabled = Value
         if Value then
-            showBottomMessage("Kill All: ACTIVADO")
-            
+            showBottomMessage("Kill All Físico: ACTIVADO")
+
             task.spawn(function()
                 while runtime.Alive and killAllEnabled do
                     local myChar = player.Character
@@ -2287,11 +2310,8 @@ Tabs.KillAll:Toggle({
                         
                         if myHrp and myHum and myHum.Health > 0 then
                             
-                            -- Guardamos la posición original
+                            -- Guardamos la posición y nos acostamos en la base
                             local posicionOriginal = myHrp.CFrame
-                            
-                            -- 🔥 EL SECRETO: ANCLAR EL PERSONAJE 🔥
-                            myHrp.Anchored = true 
                             myHrp.CFrame = posicionOriginal * CFrame.Angles(math.rad(90), 0, 0)
                             task.wait(0.1)
 
@@ -2307,6 +2327,10 @@ Tabs.KillAll:Toggle({
                                             local distanciaAlEnemigo = (posicionOriginal.Position - enemyHrp.Position).Magnitude
                                             
                                             if distanciaAlEnemigo <= killAllRango then
+                                                -- Expandimos su hitbox para asegurar el hit aunque estemos bajo tierra
+                                                enemyHrp.Size = Vector3.new(25, 25, 25)
+                                                enemyHrp.CanCollide = false
+                                                
                                                 local failSafe = 0 
                                                 
                                                 local arma = myChar:FindFirstChildOfClass("Tool")
@@ -2328,43 +2352,33 @@ Tabs.KillAll:Toggle({
                                                     end
                                                 end
 
-                                                -- 🔥 BUSCADOR DE REMOTE EN TIEMPO REAL 🔥
-                                                local killRemote = nil
-                                                if arma then
-                                                    killRemote = arma:FindFirstChild("Kill", true)
-                                                end
-                                                -- Si no está en el arma, lo busca en tu personaje por si lo esconden ahí
-                                                if not killRemote then
-                                                    killRemote = myChar:FindFirstChild("Kill", true)
-                                                end
-
-                                                -- 🔥 AC BYPASS: TP PING-PONG (ANCLADO) + REMOTE EVENT 🔥
+                                                -- 🔥 AC BYPASS: PING-PONG CON CERO INERCIA 🔥
                                                 while runtime.Alive and killAllEnabled and p and p.Parent and enemyHum and enemyHum.Parent and enemyHum.Health > 0 and failSafe < 30 do
                                                     
-                                                    -- 1. TP al enemigo por debajo, acostado
-                                                    myHrp.CFrame = enemyHrp.CFrame * CFrame.new(0, -3.8, 0) * CFrame.Angles(math.rad(90), 0, 0)
+                                                    -- 1. TP de Ataque (Acostado bajo el enemigo)
+                                                    myHrp.CFrame = enemyHrp.CFrame * CFrame.new(0, -4, 0) * CFrame.Angles(math.rad(90), 0, 0)
                                                     
-                                                    -- Activamos el arma visualmente
+                                                    -- Obligamos al motor a no generar picos de velocidad
+                                                    myHrp.AssemblyLinearVelocity = Vector3.zero
+                                                    myHrp.AssemblyAngularVelocity = Vector3.zero
+                                                    
                                                     if arma then
                                                         arma:Activate()
                                                     end
                                                     
-                                                    -- 2. 🔥 EL GOLPE MORTAL INVISIBLE 🔥
-                                                    if killRemote then
-                                                        pcall(function() killRemote:FireServer(enemyHum) end)
-                                                    else
-                                                        -- Si por alguna rarísima razón no lo encuentra, usa el cuchillo normal
-                                                        task.wait(0.01)
-                                                    end
+                                                    -- Damos 0.05s reales para que la hitbox de 25 detecte tu cuchillo físicamente
+                                                    task.wait(0.05)
                                                     
-                                                    task.wait(0.03) -- Le damos un milisegundo al server para registrar el TP
-                                                    
-                                                    -- 3. REGRESO INSTANTÁNEO A LA BASE (ACOSTADO)
+                                                    -- 2. Regreso a la Base (Seguimos acostados)
                                                     if myHrp then
                                                         myHrp.CFrame = posicionOriginal * CFrame.Angles(math.rad(90), 0, 0)
+                                                        -- Reseteamos inercia otra vez al llegar
+                                                        myHrp.AssemblyLinearVelocity = Vector3.zero
+                                                        myHrp.AssemblyAngularVelocity = Vector3.zero
                                                     end
                                                     
-                                                    task.wait(0.05) 
+                                                    -- 🔥 EL TRUCO: Pasamos 0.12s en la base para enfriar el límite de distancia del BAC
+                                                    task.wait(0.12) 
                                                     failSafe = failSafe + 1
                                                 end
                                                 
@@ -2378,10 +2392,9 @@ Tabs.KillAll:Toggle({
                                 end
                             end
 
-                            -- Al limpiar a todos, te deja en tu lugar original, te pone de pie y TE DESANCLA
+                            -- Nos levantamos al terminar de limpiar
                             if killAllEnabled and myHrp then
                                 myHrp.CFrame = posicionOriginal
-                                myHrp.Anchored = false
                                 task.wait(0.1) 
                             end
 
@@ -2392,13 +2405,6 @@ Tabs.KillAll:Toggle({
             end)
         else
             showBottomMessage("Kill All: DESACTIVADO")
-            -- Seguro anti-bug: Si desactivas el Kill All a medio ataque, te desancla para que no te quedes pegado
-            pcall(function()
-                local char = player.Character
-                if char and char:FindFirstChild("HumanoidRootPart") then
-                    char.HumanoidRootPart.Anchored = false
-                end
-            end)
         end
     end
 })

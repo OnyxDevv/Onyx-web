@@ -1,23 +1,14 @@
 --[[
-    iLunX Appearance Lab
+    iLunX Appearance Vault
     Creator: AlexDev
-    Local-only appearance tester.
+    LOCAL-ONLY appearance tester / catalog.
 
-    Objetivo:
-      - Probar Korblox Right Leg
-      - 8-Bit Royal Crown
-      - Fiery Horns of the Netherworld
-      - Poisoned Horns of the Toxic Wasteland
-
-    El script intenta:
-      1) HumanoidDescription local.
-      2) InsertService:LoadAsset.
-      3) game:GetObjects.
-      4) Para accesorios, attachment/weld manual local.
-      5) Para Korblox, si ApplyDescription falla, clona las piezas visuales
-         encontradas y las suelda a la pierna derecha existente.
-
-    Todo es LOCAL. No toca el servidor ni da ownership de ningún item.
+    IMPORTANTE:
+    - Todo se aplica solamente en tu cliente.
+    - No concede ownership.
+    - No modifica el servidor.
+    - Conserva Meshes, Attachments, ParticleEmitters, Trails, Beams,
+      Lights, SurfaceAppearance y efectos contenidos dentro del asset.
 ]]
 
 --==================================================
@@ -28,158 +19,427 @@ local Players = game:GetService("Players")
 local TweenService = game:GetService("TweenService")
 local UserInputService = game:GetService("UserInputService")
 local InsertService = game:GetService("InsertService")
+local RunService = game:GetService("RunService")
 
 local LocalPlayer = Players.LocalPlayer
 local Character = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
 local Humanoid = Character:WaitForChild("Humanoid")
 
 --==================================================
--- ASSETS
+-- VERIFIED / CURATED CATALOG
 --==================================================
 
+local CATEGORIES = {
+    "Especiales",
+    "Horns & Crown",
+    "Valkyries",
+    "Dominus",
+    "Sparkle Time",
+    "Espalda",
+    "Hombro",
+    "Exclusivos",
+}
+
 local ASSETS = {
+    -- BODY / SPECIAL
+    Headless = {
+        Name = "Headless Head",
+        Id = 134082579,
+        Category = "Especiales",
+        Kind = "Headless",
+        Badge = "OFF-SALE",
+        Desc = "Headless local robusto",
+    },
     Korblox = {
         Name = "Korblox Right Leg",
         Id = 139607718,
-        Kind = "BodyPart",
+        Category = "Especiales",
+        Kind = "Korblox",
+        Badge = "OFF-SALE",
+        Desc = "Korblox Deathspeaker",
     },
 
+    -- HORNS / CROWN
     RCCrown = {
         Name = "8-Bit Royal Crown",
         Id = 10159600649,
+        Category = "Horns & Crown",
         Kind = "Accessory",
+        Badge = "LIMITED",
     },
-
     Fiery = {
         Name = "Fiery Horns",
         Id = 215718515,
+        Category = "Horns & Crown",
         Kind = "Accessory",
+        Badge = "LIMITED • FX",
     },
-
     Poisoned = {
         Name = "Poisoned Horns",
         Id = 1744060292,
+        Category = "Horns & Crown",
         Kind = "Accessory",
+        Badge = "LIMITED • FX",
+    },
+    Frozen = {
+        Name = "Frozen Horns",
+        Id = 74891470,
+        Category = "Horns & Crown",
+        Kind = "Accessory",
+        Badge = "LIMITED • FX",
+    },
+
+    -- VALKYRIES
+    Valk = {
+        Name = "Valkyrie Helm",
+        Id = 1365767,
+        Category = "Valkyries",
+        Kind = "Accessory",
+        Badge = "LIMITED",
+    },
+    Blackvalk = {
+        Name = "Blackvalk",
+        Id = 124730194,
+        Category = "Valkyries",
+        Kind = "Accessory",
+        Badge = "LIMITED • RARE",
+    },
+    EmeraldValk = {
+        Name = "Emerald Valkyrie",
+        Id = 2830437685,
+        Category = "Valkyries",
+        Kind = "Accessory",
+        Badge = "LIMITED • RARE",
+    },
+    VioletValk = {
+        Name = "Violet Valkyrie",
+        Id = 1402432199,
+        Category = "Valkyries",
+        Kind = "Accessory",
+        Badge = "OFF-SALE",
+    },
+
+    -- DOMINUS
+    DomEmpyreus = {
+        Name = "Dominus Empyreus",
+        Id = 21070012,
+        Category = "Dominus",
+        Kind = "Accessory",
+        Badge = "LIMITED • RARE",
+    },
+    DomInfernus = {
+        Name = "Dominus Infernus",
+        Id = 31101391,
+        Category = "Dominus",
+        Kind = "Accessory",
+        Badge = "LIMITED • RARE",
+    },
+    DomFrigidus = {
+        Name = "Dominus Frigidus",
+        Id = 48545806,
+        Category = "Dominus",
+        Kind = "Accessory",
+        Badge = "LIMITED • RARE",
+    },
+    DomAstra = {
+        Name = "Dominus Astra",
+        Id = 162067148,
+        Category = "Dominus",
+        Kind = "Accessory",
+        Badge = "LIMITED • RARE",
+    },
+
+    -- SPARKLE TIME FEDORAS
+    STF = {
+        Name = "Sparkle Time Fedora",
+        Id = 1285307,
+        Category = "Sparkle Time",
+        Kind = "Accessory",
+        Badge = "LIMITED",
+    },
+    RSTF = {
+        Name = "Red Sparkle Time Fedora",
+        Id = 72082328,
+        Category = "Sparkle Time",
+        Kind = "Accessory",
+        Badge = "LIMITED • RARE",
+    },
+    MBSTF = {
+        Name = "Midnight Blue STF",
+        Id = 119916949,
+        Category = "Sparkle Time",
+        Kind = "Accessory",
+        Badge = "LIMITED • RARE",
+    },
+    BSTF = {
+        Name = "Black Sparkle Time Fedora",
+        Id = 259423244,
+        Category = "Sparkle Time",
+        Kind = "Accessory",
+        Badge = "LIMITED • RARE",
+    },
+    PSTF = {
+        Name = "Purple Sparkle Time Fedora",
+        Id = 63043890,
+        Category = "Sparkle Time",
+        Kind = "Accessory",
+        Badge = "LIMITED • RARE",
+    },
+    GSTF = {
+        Name = "Green Sparkle Time Fedora",
+        Id = 100929604,
+        Category = "Sparkle Time",
+        Kind = "Accessory",
+        Badge = "LIMITED • RARE",
+    },
+    TSTF = {
+        Name = "Teal Sparkle Time Fedora",
+        Id = 147180077,
+        Category = "Sparkle Time",
+        Kind = "Accessory",
+        Badge = "LIMITED • RARE",
+    },
+    SBSTF = {
+        Name = "Sky Blue Sparkle Time Fedora",
+        Id = 493476042,
+        Category = "Sparkle Time",
+        Kind = "Accessory",
+        Badge = "LIMITED • RARE",
+    },
+    PISTF = {
+        Name = "Pink Sparkle Time Fedora",
+        Id = 334663683,
+        Category = "Sparkle Time",
+        Kind = "Accessory",
+        Badge = "LIMITED • RARE",
+    },
+    WSTF = {
+        Name = "White Sparkle Time Fedora",
+        Id = 1016143686,
+        Category = "Sparkle Time",
+        Kind = "Accessory",
+        Badge = "LIMITED",
+    },
+    OSTF = {
+        Name = "Orange Sparkle Time Fedora",
+        Id = 215751161,
+        Category = "Sparkle Time",
+        Kind = "Accessory",
+        Badge = "LIMITED • RARE",
+    },
+
+    -- BACK
+    Swordpack = {
+        Name = "Swordpack",
+        Id = 19398258,
+        Category = "Espalda",
+        Kind = "Accessory",
+        Badge = "LIMITED",
+    },
+    Daemonshank = {
+        Name = "Daemonshank",
+        Id = 17521857429,
+        Category = "Espalda",
+        Kind = "Accessory",
+        Badge = "LIMITED",
+    },
+    MoltenWings = {
+        Name = "Molten Lava Wings",
+        Id = 17266515535,
+        Category = "Espalda",
+        Kind = "Accessory",
+        Badge = "LIMITED",
+    },
+    Requiem = {
+        Name = "The Requiem",
+        Id = 107334338147739,
+        Category = "Espalda",
+        Kind = "Accessory",
+        Badge = "LIMITED",
+    },
+
+    -- SHOULDER
+    KorbloxPauldrons = {
+        Name = "Korblox Shoulder Pauldrons",
+        Id = 286513125,
+        Category = "Hombro",
+        Kind = "Accessory",
+        Badge = "LIMITED",
+    },
+    Raven = {
+        Name = "The Raven",
+        Id = 20945145,
+        Category = "Hombro",
+        Kind = "Accessory",
+        Badge = "LIMITED",
+    },
+    ORLY = {
+        Name = "O RLY?",
+        Id = 25872570,
+        Category = "Hombro",
+        Kind = "Accessory",
+        Badge = "LIMITED",
+    },
+    Headrow = {
+        Name = "Headrow",
+        Id = 1082935,
+        Category = "Hombro",
+        Kind = "Accessory",
+        Badge = "LIMITED",
+    },
+    SparkleBuddy = {
+        Name = "RIA 24 Sparkle Buddy",
+        Id = 136613436441070,
+        Category = "Hombro",
+        Kind = "Accessory",
+        Badge = "LIMITED",
+    },
+
+    -- EXCLUSIVE / PRIZES
+    BloxyCreator = {
+        Name = "Best Video Content Creator",
+        Id = 6736478948,
+        Category = "Exclusivos",
+        Kind = "Accessory",
+        Badge = "BLOXY • OFF-SALE",
+        Desc = "Premio oficial Bloxy",
     },
 }
 
+local ORDERED_KEYS = {
+    "Headless","Korblox",
+    "RCCrown","Fiery","Poisoned","Frozen",
+    "Valk","Blackvalk","EmeraldValk","VioletValk",
+    "DomEmpyreus","DomInfernus","DomFrigidus","DomAstra",
+    "STF","RSTF","MBSTF","BSTF","PSTF","GSTF","TSTF","SBSTF","PISTF","WSTF","OSTF",
+    "Swordpack","Daemonshank","MoltenWings","Requiem",
+    "KorbloxPauldrons","Raven","ORLY","Headrow","SparkleBuddy",
+    "BloxyCreator",
+}
+
 --==================================================
--- RUNTIME / CLEANUP
+-- RUNTIME
 --==================================================
 
 local ENV = (getgenv and getgenv()) or _G
 
-if ENV.__ILUNX_APPEARANCE_LAB and ENV.__ILUNX_APPEARANCE_LAB.Cleanup then
-    pcall(ENV.__ILUNX_APPEARANCE_LAB.Cleanup)
+if ENV.__ILUNX_APPEARANCE_VAULT and ENV.__ILUNX_APPEARANCE_VAULT.Cleanup then
+    pcall(ENV.__ILUNX_APPEARANCE_VAULT.Cleanup)
 end
 
 local Runtime = {
     Gui = nil,
     Connections = {},
-    Created = {},
-    HiddenParts = {},
-    Enabled = {
-        Korblox = false,
-        RCCrown = false,
-        Fiery = false,
-        Poisoned = false,
-    },
+    Enabled = {},
+    CreatedByKey = {},
+    HiddenByKey = {},
     Buttons = {},
     Logs = {},
+    CurrentCategory = "Especiales",
+    Search = "",
     OriginalDescription = nil,
+    Busy = {},
 }
 
-ENV.__ILUNX_APPEARANCE_LAB = Runtime
+ENV.__ILUNX_APPEARANCE_VAULT = Runtime
 
-local function trackConnection(c)
-    if c then
-        table.insert(Runtime.Connections, c)
-    end
-    return c
+for key in pairs(ASSETS) do
+    Runtime.Enabled[key] = false
 end
 
-local function trackCreated(obj)
-    if obj then
-        table.insert(Runtime.Created, obj)
-    end
-    return obj
+local function trackConnection(c)
+    if c then table.insert(Runtime.Connections, c) end
+    return c
 end
 
 local function safeDestroy(obj)
     if obj then
-        pcall(function()
-            obj:Destroy()
-        end)
+        pcall(function() obj:Destroy() end)
     end
 end
 
 local function getCharacter()
     Character = LocalPlayer.Character
-    if not Character then
-        return nil, nil
-    end
-
-    Humanoid = Character:FindFirstChildOfClass("Humanoid")
+    Humanoid = Character and Character:FindFirstChildOfClass("Humanoid") or nil
     return Character, Humanoid
 end
 
-local function restoreHiddenParts()
-    for part, oldValue in pairs(Runtime.HiddenParts) do
-        if part and part.Parent then
-            pcall(function()
-                part.LocalTransparencyModifier = oldValue
-            end)
+local function trackCreated(key, obj)
+    if not obj then return obj end
+    Runtime.CreatedByKey[key] = Runtime.CreatedByKey[key] or {}
+    table.insert(Runtime.CreatedByKey[key], obj)
+    return obj
+end
+
+local function clearCreated(key)
+    local list = Runtime.CreatedByKey[key]
+    if not list then return end
+
+    for i = #list, 1, -1 do
+        safeDestroy(list[i])
+        list[i] = nil
+    end
+
+    Runtime.CreatedByKey[key] = nil
+end
+
+local function rememberProperty(key, obj, property)
+    Runtime.HiddenByKey[key] = Runtime.HiddenByKey[key] or {}
+    local map = Runtime.HiddenByKey[key]
+    map[obj] = map[obj] or {}
+
+    if map[obj][property] == nil then
+        local ok, value = pcall(function() return obj[property] end)
+        if ok then
+            map[obj][property] = value
         end
-        Runtime.HiddenParts[part] = nil
     end
 end
 
-local function clearCreated(filterPrefix)
-    for i = #Runtime.Created, 1, -1 do
-        local obj = Runtime.Created[i]
-        if not obj or not obj.Parent then
-            table.remove(Runtime.Created, i)
-        elseif not filterPrefix or string.sub(obj.Name, 1, #filterPrefix) == filterPrefix then
-            safeDestroy(obj)
-            table.remove(Runtime.Created, i)
-        end
-    end
+local function setRemembered(key, obj, property, value)
+    if not obj then return end
+    rememberProperty(key, obj, property)
+    pcall(function() obj[property] = value end)
 end
 
-local function cleanupVisuals()
-    clearCreated()
-    restoreHiddenParts()
+local function restoreRemembered(key)
+    local map = Runtime.HiddenByKey[key]
+    if not map then return end
+
+    for obj, props in pairs(map) do
+        if obj and obj.Parent then
+            for property, value in pairs(props) do
+                pcall(function() obj[property] = value end)
+            end
+        end
+    end
+
+    Runtime.HiddenByKey[key] = nil
 end
 
 --==================================================
--- DIAGNOSTICS
+-- LOG
 --==================================================
 
 local StatusLabel
 local LogLabel
 
 local function stringify(...)
-    local values = table.pack(...)
+    local args = table.pack(...)
     local out = {}
-
-    for i = 1, values.n do
-        out[i] = tostring(values[i])
-    end
-
+    for i = 1, args.n do out[i] = tostring(args[i]) end
     return table.concat(out, " ")
 end
 
 local function addLog(...)
-    local text = stringify(...)
-    local stamp = os.date("%H:%M:%S")
-    local line = "[" .. stamp .. "] " .. text
-
+    local line = "[" .. os.date("%H:%M:%S") .. "] " .. stringify(...)
     table.insert(Runtime.Logs, line)
-    while #Runtime.Logs > 9 do
+
+    while #Runtime.Logs > 7 do
         table.remove(Runtime.Logs, 1)
     end
 
-    print("[iLunX Appearance]", text)
+    print("[iLunX Appearance Vault]", stringify(...))
 
     if LogLabel and LogLabel.Parent then
         LogLabel.Text = table.concat(Runtime.Logs, "\n")
@@ -191,81 +451,16 @@ local function setStatus(text, success)
 
     if StatusLabel and StatusLabel.Parent then
         StatusLabel.Text = text
-        StatusLabel.TextColor3 = success == false
+        StatusLabel.TextColor3 =
+            success == false
             and Color3.fromRGB(255, 126, 126)
-            or Color3.fromRGB(202, 206, 213)
+            or Color3.fromRGB(201, 204, 211)
     end
 end
 
 --==================================================
--- ASSET LOADER
+-- LOCAL ASSET LOADER
 --==================================================
-
-local function flattenLoadedObjects(rootObjects)
-    local list = {}
-
-    local function add(obj)
-        if not obj then return end
-        table.insert(list, obj)
-
-        for _, d in ipairs(obj:GetDescendants()) do
-            table.insert(list, d)
-        end
-    end
-
-    for _, obj in ipairs(rootObjects) do
-        add(obj)
-    end
-
-    return list
-end
-
-local function describeLoadedAsset(assetId, objects, method)
-    local all = flattenLoadedObjects(objects)
-    local types = {}
-    local names = {}
-
-    for _, obj in ipairs(all) do
-        types[obj.ClassName] = (types[obj.ClassName] or 0) + 1
-
-        if obj:IsA("Accessory")
-            or obj:IsA("MeshPart")
-            or obj:IsA("CharacterMesh")
-            or obj:IsA("Model")
-        then
-            if #names < 12 then
-                table.insert(names, obj.ClassName .. ":" .. obj.Name)
-            end
-        end
-    end
-
-    local summary = {}
-    for className, count in pairs(types) do
-        if className == "Accessory"
-            or className == "MeshPart"
-            or className == "CharacterMesh"
-            or className == "SpecialMesh"
-            or className == "Model"
-        then
-            table.insert(summary, className .. "=" .. count)
-        end
-    end
-
-    table.sort(summary)
-
-    addLog(
-        "Asset",
-        assetId,
-        "via",
-        method,
-        "|",
-        table.concat(summary, ", ")
-    )
-
-    if #names > 0 then
-        addLog("Objetos:", table.concat(names, " | "))
-    end
-end
 
 local function tryInsertService(assetId)
     local ok, result = pcall(function()
@@ -273,11 +468,11 @@ local function tryInsertService(assetId)
     end)
 
     if ok and result then
-        return true, {result}, "InsertService"
+        return {result}, "InsertService"
     end
 
-    addLog("InsertService fallo:", result)
-    return false
+    addLog("InsertService", assetId, "->", result)
+    return nil
 end
 
 local function tryGetObjects(assetId)
@@ -286,51 +481,38 @@ local function tryGetObjects(assetId)
     end)
 
     if ok and type(result) == "table" and #result > 0 then
-        return true, result, "GetObjects"
+        return result, "GetObjects"
     end
 
-    addLog("GetObjects fallo:", result or "tabla vacia")
-    return false
+    addLog("GetObjects", assetId, "->", result or "vacio")
+    return nil
 end
 
 local function loadAssetLocal(assetId)
-    -- Primero InsertService: avatar accessories pueden ser OpenUse,
-    -- pero en muchos clientes externos el permiso sigue bloqueado.
-    local ok, objects, method = tryInsertService(assetId)
+    local objects, method = tryInsertService(assetId)
+    if objects then return objects, method end
 
-    if not ok then
-        ok, objects, method = tryGetObjects(assetId)
-    end
+    objects, method = tryGetObjects(assetId)
+    if objects then return objects, method end
 
-    if not ok then
-        return nil, nil
-    end
-
-    describeLoadedAsset(assetId, objects, method)
-    return objects, method
+    return nil, nil
 end
 
-local function destroyLoadedRoots(objects)
+local function destroyRoots(objects)
     if not objects then return end
-
-    for _, obj in ipairs(objects) do
-        safeDestroy(obj)
-    end
+    for _, root in ipairs(objects) do safeDestroy(root) end
 end
 
---==================================================
--- ACCESSORY LOCAL ATTACHMENT
---==================================================
-
-local function findAccessory(objects)
+local function findAccoutrement(objects)
     for _, root in ipairs(objects or {}) do
-        if root:IsA("Accessory") then
+        if root:IsA("Accoutrement") then
             return root
         end
 
-        local accessory = root:FindFirstChildWhichIsA("Accessory", true)
-        if accessory then
-            return accessory
+        for _, d in ipairs(root:GetDescendants()) do
+            if d:IsA("Accoutrement") then
+                return d
+            end
         end
     end
 
@@ -338,27 +520,19 @@ local function findAccessory(objects)
 end
 
 local function findCharacterAttachment(character, attachmentName)
-    for _, obj in ipairs(character:GetDescendants()) do
-        if obj:IsA("Attachment") and obj.Name == attachmentName then
-            return obj
+    for _, d in ipairs(character:GetDescendants()) do
+        if d:IsA("Attachment")
+            and d.Name == attachmentName
+            and d.Parent:IsA("BasePart")
+        then
+            return d
         end
     end
 
     return nil
 end
 
-local function manuallyAttachAccessory(character, accessory)
-    local handle = accessory:FindFirstChild("Handle")
-    if not handle or not handle:IsA("BasePart") then
-        return false, "Accessory sin Handle"
-    end
-
-    handle.CanCollide = false
-    handle.CanTouch = false
-    handle.CanQuery = false
-    handle.Massless = true
-
-    -- Elimina welds viejos que puedan apuntar al rig original del asset.
+local function removeOldHandleJoints(handle)
     for _, d in ipairs(handle:GetChildren()) do
         if d:IsA("Weld")
             or d:IsA("WeldConstraint")
@@ -367,20 +541,37 @@ local function manuallyAttachAccessory(character, accessory)
             safeDestroy(d)
         end
     end
+end
+
+local function manuallyAttach(character, accoutrement)
+    local handle = accoutrement:FindFirstChild("Handle")
+
+    if not handle or not handle:IsA("BasePart") then
+        return false, "sin Handle"
+    end
+
+    handle.Anchored = false
+    handle.CanCollide = false
+    handle.CanTouch = false
+    handle.CanQuery = false
+    handle.Massless = true
+
+    removeOldHandleJoints(handle)
 
     local handleAttachment = handle:FindFirstChildWhichIsA("Attachment")
 
     if handleAttachment then
-        local bodyAttachment = findCharacterAttachment(character, handleAttachment.Name)
+        local bodyAttachment =
+            findCharacterAttachment(character, handleAttachment.Name)
 
-        if bodyAttachment and bodyAttachment.Parent:IsA("BasePart") then
+        if bodyAttachment then
             handle.CFrame =
                 bodyAttachment.Parent.CFrame
                 * bodyAttachment.CFrame
                 * handleAttachment.CFrame:Inverse()
 
             local weld = Instance.new("Weld")
-            weld.Name = "iLunXAccessoryWeld"
+            weld.Name = "iLunX_LocalAccessoryWeld"
             weld.Part0 = handle
             weld.Part1 = bodyAttachment.Parent
             weld.C0 = handleAttachment.CFrame
@@ -391,259 +582,176 @@ local function manuallyAttachAccessory(character, accessory)
         end
     end
 
-    -- Fallback clásico para hats/accesorios antiguos.
     local head = character:FindFirstChild("Head")
 
     if head and head:IsA("BasePart") then
-        handle.CFrame = head.CFrame * accessory.AttachmentPoint:Inverse()
+        local attachmentPoint = CFrame.new()
+
+        pcall(function()
+            attachmentPoint = accoutrement.AttachmentPoint
+        end)
+
+        handle.CFrame = head.CFrame * attachmentPoint:Inverse()
 
         local weld = Instance.new("Weld")
-        weld.Name = "iLunXAccessoryWeld"
+        weld.Name = "iLunX_LocalAccessoryWeld"
         weld.Part0 = handle
         weld.Part1 = head
-        weld.C0 = accessory.AttachmentPoint
+        weld.C0 = attachmentPoint
         weld.C1 = CFrame.new()
         weld.Parent = handle
 
-        return true, "Head/AttachmentPoint"
+        return true, "Head fallback"
     end
 
-    return false, "No encontre attachment compatible"
+    return false, "sin attachment compatible"
 end
 
-local function addAccessoryLocal(assetKey)
-    local asset = ASSETS[assetKey]
+local function addAccessoryLocal(key)
+    local asset = ASSETS[key]
     local character, humanoid = getCharacter()
 
     if not character or not humanoid then
-        return false, "No hay personaje"
+        return false, "personaje no disponible"
     end
 
-    local prefix = "iLunX_AP_" .. assetKey .. "_"
-    clearCreated(prefix)
+    clearCreated(key)
 
     local objects, method = loadAssetLocal(asset.Id)
-
     if not objects then
-        return false, "No pude cargar el asset " .. asset.Id
+        return false, "loader bloqueado"
     end
 
-    local sourceAccessory = findAccessory(objects)
+    local source = findAccoutrement(objects)
 
-    if not sourceAccessory then
-        destroyLoadedRoots(objects)
-        return false, "El asset cargo, pero no contiene Accessory"
+    if not source then
+        destroyRoots(objects)
+        return false, "asset sin Accoutrement"
     end
 
-    local accessory = sourceAccessory:Clone()
-    accessory.Name = prefix .. sourceAccessory.Name
+    local clone = source:Clone()
+    clone.Name = "iLunX_Vault_" .. key .. "_" .. source.Name
+    clone.Parent = character
 
-    -- Primero probamos la API normal. Si no crea weld, lo hacemos nosotros.
-    accessory.Parent = character
-    local addOk, addErr = pcall(function()
-        humanoid:AddAccessory(accessory)
-    end)
+    local attached = false
+    local attachInfo = ""
 
-    local handle = accessory:FindFirstChild("Handle")
-    local welded = false
+    if clone:IsA("Accessory") then
+        local ok = pcall(function()
+            humanoid:AddAccessory(clone)
+        end)
 
-    if handle then
-        for _, d in ipairs(handle:GetChildren()) do
-            if d:IsA("Weld") or d:IsA("WeldConstraint") then
-                welded = true
-                break
+        if ok then
+            local handle = clone:FindFirstChild("Handle")
+            if handle then
+                for _, d in ipairs(handle:GetChildren()) do
+                    if d:IsA("Weld")
+                        or d:IsA("WeldConstraint")
+                        or d:IsA("Motor6D")
+                    then
+                        attached = true
+                        break
+                    end
+                end
             end
         end
-    end
 
-    local attachInfo = "Humanoid:AddAccessory"
-
-    if not addOk or not welded then
-        local manualOk, manualInfo = manuallyAttachAccessory(character, accessory)
-        if not manualOk then
-            safeDestroy(accessory)
-            destroyLoadedRoots(objects)
-
-            return false,
-                "AddAccessory="
-                .. tostring(addErr)
-                .. " | Manual="
-                .. tostring(manualInfo)
+        if attached then
+            attachInfo = "AddAccessory"
         end
-
-        attachInfo = "Manual " .. manualInfo
     end
 
-    trackCreated(accessory)
-    destroyLoadedRoots(objects)
+    if not attached then
+        local ok, info = manuallyAttach(character, clone)
+        attached = ok
+        attachInfo = info
+    end
+
+    if not attached then
+        safeDestroy(clone)
+        destroyRoots(objects)
+        return false, attachInfo
+    end
+
+    trackCreated(key, clone)
+    destroyRoots(objects)
 
     return true, method .. " + " .. attachInfo
 end
 
 --==================================================
--- HUMANOID DESCRIPTION ROUTE
+-- HEADLESS - PURE LOCAL VISUAL
 --==================================================
 
-local function appendAccessoryId(current, id)
-    current = tostring(current or "")
+local function setHeadless(enabled)
+    local character = getCharacter()
+    if not character then return false, "sin personaje" end
 
-    for n in string.gmatch(current, "%d+") do
-        if tonumber(n) == id then
-            return current
+    clearCreated("Headless")
+    restoreRemembered("Headless")
+
+    if not enabled then
+        return true, "restaurado"
+    end
+
+    local head = character:FindFirstChild("Head")
+    if not head or not head:IsA("BasePart") then
+        return false, "Head no encontrado"
+    end
+
+    -- LTM es local por definición. Conserva attachments para que sombreros
+    -- y accesorios sigan anclados correctamente.
+    setRemembered(
+        "Headless",
+        head,
+        "LocalTransparencyModifier",
+        1
+    )
+
+    for _, d in ipairs(head:GetDescendants()) do
+        if d:IsA("Decal") or d:IsA("Texture") then
+            setRemembered("Headless", d, "Transparency", 1)
         end
     end
 
-    if current == "" then
-        return tostring(id)
-    end
-
-    return current .. "," .. tostring(id)
-end
-
-local function removeAccessoryId(current, id)
-    local result = {}
-
-    for n in string.gmatch(tostring(current or ""), "%d+") do
-        if tonumber(n) ~= id then
-            table.insert(result, n)
-        end
-    end
-
-    return table.concat(result, ",")
-end
-
-local function tryApplyDescription(mutator)
-    local character, humanoid = getCharacter()
-
-    if not character or not humanoid then
-        return false, "No hay Humanoid"
-    end
-
-    local okDescription, description = pcall(function()
-        return humanoid:GetAppliedDescription()
-    end)
-
-    if not okDescription or not description then
-        return false, "GetAppliedDescription: " .. tostring(description)
-    end
-
-    if not Runtime.OriginalDescription then
-        Runtime.OriginalDescription = description:Clone()
-    end
-
-    local okMutate, mutateErr = pcall(mutator, description)
-    if not okMutate then
-        safeDestroy(description)
-        return false, "Mutator: " .. tostring(mutateErr)
-    end
-
-    local applyOk, applyErr = pcall(function()
-        if humanoid.ApplyDescriptionAsync then
-            humanoid:ApplyDescriptionAsync(description)
-        else
-            humanoid:ApplyDescription(description)
-        end
-    end)
-
-    safeDestroy(description)
-
-    if not applyOk then
-        return false, tostring(applyErr)
-    end
-
-    return true, "HumanoidDescription"
-end
-
-local function applyAccessoryDescription(assetKey, enabled)
-    local asset = ASSETS[assetKey]
-
-    return tryApplyDescription(function(description)
-        -- Crown y horns son accesorios de cabeza.
-        if enabled then
-            description.HatAccessory =
-                appendAccessoryId(description.HatAccessory, asset.Id)
-        else
-            description.HatAccessory =
-                removeAccessoryId(description.HatAccessory, asset.Id)
-        end
-    end)
-end
-
-local function applyKorbloxDescription(enabled)
-    return tryApplyDescription(function(description)
-        if enabled then
-            description.RightLeg = ASSETS.Korblox.Id
-        elseif Runtime.OriginalDescription then
-            description.RightLeg = Runtime.OriginalDescription.RightLeg
-        end
-    end)
+    return true, "Headless visual local"
 end
 
 --==================================================
--- KORBLOX VISUAL FALLBACK
+-- KORBLOX - IMPROVED LOCAL FALLBACK
 --==================================================
 
-local R15_RIGHT_PARTS = {
-    RightUpperLeg = true,
-    RightLowerLeg = true,
-    RightFoot = true,
+local KORBLOX_R15_PARTS = {
+    "RightUpperLeg",
+    "RightLowerLeg",
+    "RightFoot",
 }
 
-local function collectCandidateBodyParts(objects)
-    local exact = {}
-    local meshParts = {}
-    local characterMeshes = {}
-
-    for _, root in ipairs(objects or {}) do
-        local scan = {root}
-
-        for _, d in ipairs(root:GetDescendants()) do
-            table.insert(scan, d)
-        end
-
-        for _, obj in ipairs(scan) do
-            if obj:IsA("MeshPart") then
-                table.insert(meshParts, obj)
-
-                if R15_RIGHT_PARTS[obj.Name] then
-                    exact[obj.Name] = obj
-                end
-            elseif obj:IsA("CharacterMesh") then
-                table.insert(characterMeshes, obj)
-            end
-        end
-    end
-
-    return exact, meshParts, characterMeshes
-end
-
-local function hideLocalPart(part)
-    if not Runtime.HiddenParts[part] then
-        Runtime.HiddenParts[part] = part.LocalTransparencyModifier
-    end
-
-    part.LocalTransparencyModifier = 1
-end
-
-local function cloneVisualMesh(source, target, name)
-    if not source:IsA("BasePart") or not target:IsA("BasePart") then
-        return nil
-    end
-
-    local visual = source:Clone()
-    visual.Name = "iLunX_Korblox_" .. name
-
-    -- Quitar scripts/joints del asset cargado.
-    for _, d in ipairs(visual:GetDescendants()) do
-        if d:IsA("Script")
-            or d:IsA("LocalScript")
-            or d:IsA("Motor6D")
+local function stripRigJoints(part)
+    for _, d in ipairs(part:GetDescendants()) do
+        if d:IsA("Motor6D")
             or d:IsA("Weld")
             or d:IsA("WeldConstraint")
+            or d:IsA("Script")
+            or d:IsA("LocalScript")
         then
             safeDestroy(d)
         end
     end
+end
+
+local function overlayBodyPart(key, source, target)
+    if not source or not target
+        or not source:IsA("BasePart")
+        or not target:IsA("BasePart")
+    then
+        return false
+    end
+
+    local visual = source:Clone()
+    visual.Name = "iLunX_KorbloxVisual_" .. target.Name
+
+    stripRigJoints(visual)
 
     visual.Anchored = false
     visual.CanCollide = false
@@ -651,7 +759,7 @@ local function cloneVisualMesh(source, target, name)
     visual.CanQuery = false
     visual.Massless = true
 
-    -- Conservamos la escala del limb actual para que el visual siga el rig.
+    -- Usa la escala actual del avatar para que no quede flotando.
     pcall(function()
         visual.Size = target.Size
     end)
@@ -665,267 +773,312 @@ local function cloneVisualMesh(source, target, name)
     weld.Part1 = visual
     weld.Parent = visual
 
-    hideLocalPart(target)
-    trackCreated(visual)
+    setRemembered(
+        key,
+        target,
+        "LocalTransparencyModifier",
+        1
+    )
 
-    return visual
+    trackCreated(key, visual)
+    return true
 end
 
-local function applyKorbloxVisualFallback()
-    local character, humanoid = getCharacter()
-
-    if not character or not humanoid then
-        return false, "No hay personaje"
+local function tryKorbloxViaDummy(character, humanoid)
+    if humanoid.RigType ~= Enum.HumanoidRigType.R15 then
+        return false, "dummy solo R15"
     end
 
-    clearCreated("iLunX_Korblox_")
-    restoreHiddenParts()
+    local okDesc, description = pcall(function()
+        return humanoid:GetAppliedDescription()
+    end)
 
-    local objects, method = loadAssetLocal(ASSETS.Korblox.Id)
-
-    if not objects then
-        return false, "No pude cargar Korblox"
+    if not okDesc or not description then
+        description = Instance.new("HumanoidDescription")
     end
 
-    local exact, meshParts, characterMeshes =
-        collectCandidateBodyParts(objects)
+    description.RightLeg = ASSETS.Korblox.Id
 
-    addLog(
-        "Korblox encontrados:",
-        "exact=" .. tostring(
-            (exact.RightUpperLeg and 1 or 0)
-            + (exact.RightLowerLeg and 1 or 0)
-            + (exact.RightFoot and 1 or 0)
-        ),
-        "meshParts=" .. tostring(#meshParts),
-        "characterMeshes=" .. tostring(#characterMeshes)
-    )
+    local okModel, model = pcall(function()
+        if Players.CreateHumanoidModelFromDescriptionAsync then
+            return Players:CreateHumanoidModelFromDescriptionAsync(
+                description,
+                Enum.HumanoidRigType.R15,
+                Enum.AssetTypeVerification.Default
+            )
+        else
+            return Players:CreateHumanoidModelFromDescription(
+                description,
+                Enum.HumanoidRigType.R15,
+                Enum.AssetTypeVerification.Default
+            )
+        end
+    end)
+
+    safeDestroy(description)
+
+    if not okModel or not model then
+        return false, "CreateHumanoidModel: " .. tostring(model)
+    end
 
     local applied = 0
 
-    if humanoid.RigType == Enum.HumanoidRigType.R15 then
-        -- Mejor caso: el asset trae nombres R15 exactos.
-        for partName in pairs(R15_RIGHT_PARTS) do
-            local source = exact[partName]
-            local target = character:FindFirstChild(partName)
+    for _, partName in ipairs(KORBLOX_R15_PARTS) do
+        local source = model:FindFirstChild(partName)
+        local target = character:FindFirstChild(partName)
 
-            if source and target and target:IsA("BasePart") then
-                if cloneVisualMesh(source, target, partName) then
-                    applied += 1
-                end
-            end
-        end
-
-        -- Algunos body-part assets solo exponen un MeshPart.
-        -- Lo aplicamos sobre RightLowerLeg como fallback visual.
-        if applied == 0 and #meshParts > 0 then
-            local target =
-                character:FindFirstChild("RightLowerLeg")
-                or character:FindFirstChild("RightUpperLeg")
-
-            if target then
-                if cloneVisualMesh(meshParts[1], target, "Fallback") then
-                    applied = 1
-
-                    local foot = character:FindFirstChild("RightFoot")
-                    if foot and foot:IsA("BasePart") then
-                        hideLocalPart(foot)
-                    end
-                end
-            end
-        end
-    else
-        -- R6 puede traer CharacterMesh. Lo clonamos localmente.
-        for _, characterMesh in ipairs(characterMeshes) do
-            local clone = characterMesh:Clone()
-            clone.Name = "iLunX_Korblox_R6_" .. characterMesh.Name
-            clone.Parent = character
-            trackCreated(clone)
+        if source and target and overlayBodyPart("Korblox", source, target) then
             applied += 1
         end
     end
 
-    destroyLoadedRoots(objects)
+    safeDestroy(model)
 
-    if applied <= 0 then
-        return false,
-            "Asset cargo pero no encontre una pieza corporal util. Mira Diagnostico."
+    if applied > 0 then
+        return true, "dummy R15 (" .. applied .. "/3)"
     end
 
-    return true, method .. " visual fallback (" .. applied .. " pieza/s)"
+    return false, "dummy sin piezas utiles"
+end
+
+local function findBodyObjects(objects)
+    local meshParts = {}
+    local characterMeshes = {}
+    local named = {}
+
+    for _, root in ipairs(objects or {}) do
+        local scan = {root}
+        for _, d in ipairs(root:GetDescendants()) do
+            table.insert(scan, d)
+        end
+
+        for _, obj in ipairs(scan) do
+            if obj:IsA("MeshPart") then
+                table.insert(meshParts, obj)
+                named[obj.Name] = obj
+            elseif obj:IsA("CharacterMesh") then
+                table.insert(characterMeshes, obj)
+            end
+        end
+    end
+
+    return meshParts, characterMeshes, named
+end
+
+local function tryKorbloxViaAsset(character, humanoid)
+    local objects, method = loadAssetLocal(ASSETS.Korblox.Id)
+    if not objects then
+        return false, "body asset no cargo"
+    end
+
+    local meshParts, characterMeshes, named = findBodyObjects(objects)
+    local applied = 0
+
+    if humanoid.RigType == Enum.HumanoidRigType.R15 then
+        for _, partName in ipairs(KORBLOX_R15_PARTS) do
+            local source = named[partName]
+            local target = character:FindFirstChild(partName)
+
+            if source and target
+                and overlayBodyPart("Korblox", source, target)
+            then
+                applied += 1
+            end
+        end
+
+        if applied == 0 and #meshParts > 0 then
+            -- Último fallback: algunos body assets devuelven una sola MeshPart.
+            local target =
+                character:FindFirstChild("RightLowerLeg")
+                or character:FindFirstChild("RightUpperLeg")
+
+            if target
+                and overlayBodyPart(
+                    "Korblox",
+                    meshParts[1],
+                    target
+                )
+            then
+                applied = 1
+
+                local foot = character:FindFirstChild("RightFoot")
+                if foot then
+                    setRemembered(
+                        "Korblox",
+                        foot,
+                        "LocalTransparencyModifier",
+                        1
+                    )
+                end
+            end
+        end
+    else
+        -- R6: CharacterMesh sí es la representación nativa.
+        for _, cm in ipairs(characterMeshes) do
+            local isRightLeg = false
+
+            pcall(function()
+                isRightLeg =
+                    cm.BodyPart == Enum.BodyPart.RightLeg
+            end)
+
+            if isRightLeg then
+                local clone = cm:Clone()
+                clone.Name = "iLunX_Korblox_R6"
+                clone.Parent = character
+                trackCreated("Korblox", clone)
+                applied += 1
+            end
+        end
+
+        -- Fallback R6 conocido del Deathspeaker si el asset body no expone
+        -- CharacterMesh utilizable.
+        if applied == 0 then
+            local cm = Instance.new("CharacterMesh")
+            cm.Name = "iLunX_Korblox_R6_Fallback"
+            cm.BodyPart = Enum.BodyPart.RightLeg
+            cm.MeshId = 101851696
+            cm.OverlayTextureId = 101851254
+            cm.Parent = character
+            trackCreated("Korblox", cm)
+            applied = 1
+        end
+    end
+
+    destroyRoots(objects)
+
+    if applied > 0 then
+        return true, method .. " body fallback (" .. applied .. ")"
+    end
+
+    return false, "asset body sin visual util"
+end
+
+local function setKorblox(enabled)
+    local character, humanoid = getCharacter()
+    if not character or not humanoid then
+        return false, "sin personaje"
+    end
+
+    clearCreated("Korblox")
+    restoreRemembered("Korblox")
+
+    if not enabled then
+        return true, "restaurado"
+    end
+
+    -- 1) Probamos ApplyDescription por si el entorno sí permite AvatarAppearance.
+    local okDesc, errDesc = pcall(function()
+        local description = humanoid:GetAppliedDescription()
+        description.RightLeg = ASSETS.Korblox.Id
+
+        if humanoid.ApplyDescriptionAsync then
+            humanoid:ApplyDescriptionAsync(description)
+        else
+            humanoid:ApplyDescription(description)
+        end
+
+        safeDestroy(description)
+    end)
+
+    if okDesc then
+        return true, "HumanoidDescription"
+    end
+
+    addLog("Korblox ApplyDescription bloqueado:", errDesc)
+
+    -- 2) Nuevo: construir un rig LOCAL temporal con la pierna oficial,
+    -- extraer sus MeshParts y soldarlas sobre nuestro rig.
+    local okDummy, infoDummy =
+        tryKorbloxViaDummy(character, humanoid)
+
+    if okDummy then
+        return true, infoDummy
+    end
+
+    addLog("Korblox dummy fallo:", infoDummy)
+
+    -- 3) Fallback directo al contenido del body asset.
+    local okAsset, infoAsset =
+        tryKorbloxViaAsset(character, humanoid)
+
+    if okAsset then
+        return true, infoAsset
+    end
+
+    return false,
+        "dummy=" .. tostring(infoDummy)
+        .. " | asset=" .. tostring(infoAsset)
 end
 
 --==================================================
 -- APPLY / REMOVE
 --==================================================
 
-local function removeLocalAccessory(assetKey)
-    local prefix = "iLunX_AP_" .. assetKey .. "_"
-    clearCreated(prefix)
-end
-
-local function setAccessory(assetKey, enabled)
-    Runtime.Enabled[assetKey] = enabled
+local function applyKey(key, enabled)
+    local asset = ASSETS[key]
+    if not asset then return false, "asset desconocido" end
 
     if not enabled then
-        removeLocalAccessory(assetKey)
-
-        -- Si HumanoidDescription local funciona, intenta limpiarlo tambien.
-        task.spawn(function()
-            local ok = applyAccessoryDescription(assetKey, false)
-            if ok then
-                addLog(ASSETS[assetKey].Name, "removido de HumanoidDescription")
-            end
-        end)
-
-        return true, "Desactivado"
-    end
-
-    setStatus("Probando " .. ASSETS[assetKey].Name .. "...")
-
-    -- Ruta 1: description.
-    local descOk, descInfo = applyAccessoryDescription(assetKey, true)
-
-    if descOk then
-        -- Verificar si realmente apareció un accessory que corresponda.
-        task.wait(0.15)
-        addLog(ASSETS[assetKey].Name, "Description OK:", descInfo)
-
-        -- Aunque Description diga OK, añadimos fallback si no hay resultado visible
-        -- identificable. Así también funciona en clientes que aceptan la llamada
-        -- pero luego el servidor resetea la apariencia.
-    else
-        addLog(
-            ASSETS[assetKey].Name,
-            "Description bloqueado:",
-            descInfo
-        )
-    end
-
-    local localOk, localInfo = addAccessoryLocal(assetKey)
-
-    if localOk then
-        return true, "Local OK: " .. localInfo
-    end
-
-    if descOk then
-        return true, "Description OK; fallback fallo: " .. tostring(localInfo)
-    end
-
-    return false,
-        "Description: "
-        .. tostring(descInfo)
-        .. " | Loader: "
-        .. tostring(localInfo)
-end
-
-local function setKorblox(enabled)
-    Runtime.Enabled.Korblox = enabled
-
-    if not enabled then
-        clearCreated("iLunX_Korblox_")
-        restoreHiddenParts()
-
-        local ok, info = applyKorbloxDescription(false)
-        if ok then
-            return true, "Korblox restaurado"
+        if asset.Kind == "Headless" then
+            return setHeadless(false)
+        elseif asset.Kind == "Korblox" then
+            return setKorblox(false)
+        else
+            clearCreated(key)
+            restoreRemembered(key)
+            return true, "removido"
         end
-
-        return true, "Fallback visual restaurado | " .. tostring(info)
     end
 
-    setStatus("Probando Korblox...")
-
-    local descOk, descInfo = applyKorbloxDescription(true)
-
-    if descOk then
-        addLog("Korblox Description OK:", descInfo)
-        return true, "HumanoidDescription OK"
+    if asset.Kind == "Headless" then
+        return setHeadless(true)
+    elseif asset.Kind == "Korblox" then
+        return setKorblox(true)
+    else
+        return addAccessoryLocal(key)
     end
-
-    addLog("Korblox Description bloqueado:", descInfo)
-
-    local visualOk, visualInfo = applyKorbloxVisualFallback()
-
-    if visualOk then
-        return true, visualInfo
-    end
-
-    return false,
-        "Description: "
-        .. tostring(descInfo)
-        .. " | Visual: "
-        .. tostring(visualInfo)
 end
 
 local function restoreAll()
-    for key in pairs(Runtime.Enabled) do
+    for key in pairs(ASSETS) do
         Runtime.Enabled[key] = false
-    end
-
-    cleanupVisuals()
-
-    local character, humanoid = getCharacter()
-
-    if humanoid and Runtime.OriginalDescription then
-        local ok, err = pcall(function()
-            if humanoid.ApplyDescriptionAsync then
-                humanoid:ApplyDescriptionAsync(
-                    Runtime.OriginalDescription:Clone()
-                )
-            else
-                humanoid:ApplyDescription(
-                    Runtime.OriginalDescription:Clone()
-                )
-            end
-        end)
-
-        addLog(
-            "Restore original HumanoidDescription:",
-            ok,
-            err or ""
-        )
+        clearCreated(key)
+        restoreRemembered(key)
     end
 end
 
 local function reapplyEnabled()
-    cleanupVisuals()
+    local enabled = {}
 
-    for key, enabled in pairs(Runtime.Enabled) do
-        if enabled then
-            if key == "Korblox" then
-                local ok, info = setKorblox(true)
-                addLog("Reapply Korblox:", ok, info)
-            else
-                local ok, info = setAccessory(key, true)
-                addLog("Reapply", key .. ":", ok, info)
-            end
-        end
+    for key, state in pairs(Runtime.Enabled) do
+        if state then table.insert(enabled, key) end
+    end
+
+    for _, key in ipairs(enabled) do
+        clearCreated(key)
+        restoreRemembered(key)
+    end
+
+    for _, key in ipairs(enabled) do
+        local ok, info = applyKey(key, true)
+        addLog("Reapply", ASSETS[key].Name, ok, info)
     end
 end
 
 --==================================================
--- UI
+-- GUI
 --==================================================
 
-local oldGui
-pcall(function()
-    local parent = gethui and gethui() or game:GetService("CoreGui")
-    oldGui = parent:FindFirstChild("iLunX_AppearanceLab")
-end)
-
-if oldGui then
-    safeDestroy(oldGui)
-end
-
 local Gui = Instance.new("ScreenGui")
-Gui.Name = "iLunX_AppearanceLab"
+Gui.Name = "iLunX_AppearanceVault"
 Gui.ResetOnSpawn = false
 Gui.IgnoreGuiInset = false
 Gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
 Runtime.Gui = Gui
 
 local guiParent = LocalPlayer:WaitForChild("PlayerGui")
+
 pcall(function()
     guiParent = gethui and gethui() or game:GetService("CoreGui")
 end)
@@ -940,290 +1093,453 @@ Gui.Parent = guiParent
 
 local Main = Instance.new("Frame")
 Main.Name = "Main"
-Main.Size = UDim2.fromOffset(360, 475)
-Main.Position = UDim2.new(0.5, -180, 0.5, -237)
-Main.BackgroundColor3 = Color3.fromRGB(18, 18, 21)
+Main.AnchorPoint = Vector2.new(0.5, 0.5)
+Main.Position = UDim2.fromScale(0.5, 0.5)
+Main.Size = UDim2.fromOffset(610, 570)
+Main.BackgroundColor3 = Color3.fromRGB(15, 15, 18)
 Main.BorderSizePixel = 0
+Main.ClipsDescendants = true
 Main.Parent = Gui
+Instance.new("UICorner", Main).CornerRadius = UDim.new(0, 20)
 
-local Corner = Instance.new("UICorner")
-Corner.CornerRadius = UDim.new(0, 18)
-Corner.Parent = Main
-
-local Stroke = Instance.new("UIStroke")
-Stroke.Color = Color3.fromRGB(70, 72, 78)
-Stroke.Transparency = 0.35
-Stroke.Thickness = 1
-Stroke.Parent = Main
+local mainStroke = Instance.new("UIStroke")
+mainStroke.Color = Color3.fromRGB(72, 74, 81)
+mainStroke.Transparency = 0.3
+mainStroke.Thickness = 1
+mainStroke.Parent = Main
 
 local Header = Instance.new("Frame")
-Header.Size = UDim2.new(1, 0, 0, 68)
+Header.Size = UDim2.new(1, 0, 0, 70)
 Header.BackgroundTransparency = 1
 Header.Parent = Main
 
 local Title = Instance.new("TextLabel")
-Title.Size = UDim2.new(1, -64, 0, 28)
-Title.Position = UDim2.fromOffset(18, 12)
+Title.Position = UDim2.fromOffset(20, 12)
+Title.Size = UDim2.new(1, -80, 0, 28)
 Title.BackgroundTransparency = 1
-Title.Text = "iLunX Appearance Lab"
-Title.TextColor3 = Color3.fromRGB(245, 245, 247)
-Title.TextSize = 18
+Title.RichText = true
+Title.Text =
+    '<font color="#FFFFFF">iLun</font>'
+    .. '<font color="#D8DCE1">X</font>'
+    .. '<font color="#A7ACB3"> Appearance Vault</font>'
+Title.TextColor3 = Color3.new(1, 1, 1)
 Title.Font = Enum.Font.GothamBold
+Title.TextSize = 18
 Title.TextXAlignment = Enum.TextXAlignment.Left
 Title.Parent = Header
 
-local SubTitle = Instance.new("TextLabel")
-SubTitle.Size = UDim2.new(1, -64, 0, 18)
-SubTitle.Position = UDim2.fromOffset(18, 39)
-SubTitle.BackgroundTransparency = 1
-SubTitle.Text = "Local only • AlexDev"
-SubTitle.TextColor3 = Color3.fromRGB(135, 138, 146)
-SubTitle.TextSize = 11
-SubTitle.Font = Enum.Font.GothamMedium
-SubTitle.TextXAlignment = Enum.TextXAlignment.Left
-SubTitle.Parent = Header
+local Subtitle = Instance.new("TextLabel")
+Subtitle.Position = UDim2.fromOffset(20, 40)
+Subtitle.Size = UDim2.new(1, -80, 0, 18)
+Subtitle.BackgroundTransparency = 1
+Subtitle.Text = "Local only  •  limiteds & exclusives  •  AlexDev"
+Subtitle.TextColor3 = Color3.fromRGB(121, 124, 132)
+Subtitle.Font = Enum.Font.GothamMedium
+Subtitle.TextSize = 10
+Subtitle.TextXAlignment = Enum.TextXAlignment.Left
+Subtitle.Parent = Header
 
 local Close = Instance.new("TextButton")
+Close.Position = UDim2.new(1, -52, 0, 17)
 Close.Size = UDim2.fromOffset(34, 34)
-Close.Position = UDim2.new(1, -46, 0, 14)
-Close.BackgroundColor3 = Color3.fromRGB(35, 35, 40)
+Close.BackgroundColor3 = Color3.fromRGB(31, 31, 36)
 Close.Text = "×"
-Close.TextColor3 = Color3.fromRGB(210, 212, 218)
-Close.TextSize = 20
+Close.TextColor3 = Color3.fromRGB(215, 217, 222)
 Close.Font = Enum.Font.GothamMedium
+Close.TextSize = 20
 Close.AutoButtonColor = false
 Close.Parent = Header
 Instance.new("UICorner", Close).CornerRadius = UDim.new(0, 10)
 
-local Content = Instance.new("Frame")
-Content.Size = UDim2.new(1, -28, 0, 233)
-Content.Position = UDim2.fromOffset(14, 72)
-Content.BackgroundTransparency = 1
-Content.Parent = Main
+-- SIDEBAR
+local Sidebar = Instance.new("Frame")
+Sidebar.Position = UDim2.fromOffset(14, 72)
+Sidebar.Size = UDim2.new(0, 142, 1, -142)
+Sidebar.BackgroundColor3 = Color3.fromRGB(20, 20, 24)
+Sidebar.BorderSizePixel = 0
+Sidebar.Parent = Main
+Instance.new("UICorner", Sidebar).CornerRadius = UDim.new(0, 14)
 
-local ContentLayout = Instance.new("UIListLayout")
-ContentLayout.Padding = UDim.new(0, 8)
-ContentLayout.SortOrder = Enum.SortOrder.LayoutOrder
-ContentLayout.Parent = Content
+local SidebarPadding = Instance.new("UIPadding")
+SidebarPadding.PaddingTop = UDim.new(0, 8)
+SidebarPadding.PaddingBottom = UDim.new(0, 8)
+SidebarPadding.PaddingLeft = UDim.new(0, 7)
+SidebarPadding.PaddingRight = UDim.new(0, 7)
+SidebarPadding.Parent = Sidebar
 
-local function makeToggle(key)
-    local asset = ASSETS[key]
+local SidebarLayout = Instance.new("UIListLayout")
+SidebarLayout.Padding = UDim.new(0, 4)
+SidebarLayout.SortOrder = Enum.SortOrder.LayoutOrder
+SidebarLayout.Parent = Sidebar
 
-    local button = Instance.new("TextButton")
-    button.Name = key
-    button.Size = UDim2.new(1, 0, 0, 50)
-    button.BackgroundColor3 = Color3.fromRGB(29, 29, 34)
-    button.BorderSizePixel = 0
-    button.Text = ""
-    button.AutoButtonColor = false
-    button.Parent = Content
-    Instance.new("UICorner", button).CornerRadius = UDim.new(0, 13)
+local CategoryButtons = {}
 
-    local name = Instance.new("TextLabel")
-    name.Size = UDim2.new(1, -86, 0, 21)
-    name.Position = UDim2.fromOffset(14, 7)
-    name.BackgroundTransparency = 1
-    name.Text = asset.Name
-    name.TextColor3 = Color3.fromRGB(238, 238, 242)
-    name.Font = Enum.Font.GothamMedium
-    name.TextSize = 13
-    name.TextXAlignment = Enum.TextXAlignment.Left
-    name.Parent = button
+local Body = Instance.new("Frame")
+Body.Position = UDim2.fromOffset(166, 72)
+Body.Size = UDim2.new(1, -180, 1, -142)
+Body.BackgroundTransparency = 1
+Body.Parent = Main
 
-    local id = Instance.new("TextLabel")
-    id.Size = UDim2.new(1, -86, 0, 16)
-    id.Position = UDim2.fromOffset(14, 27)
-    id.BackgroundTransparency = 1
-    id.Text = "Asset " .. tostring(asset.Id)
-    id.TextColor3 = Color3.fromRGB(119, 121, 129)
-    id.Font = Enum.Font.Gotham
-    id.TextSize = 10
-    id.TextXAlignment = Enum.TextXAlignment.Left
-    id.Parent = button
+local SearchBox = Instance.new("TextBox")
+SearchBox.Size = UDim2.new(1, 0, 0, 38)
+SearchBox.BackgroundColor3 = Color3.fromRGB(25, 25, 30)
+SearchBox.BorderSizePixel = 0
+SearchBox.PlaceholderText = "Buscar limited, Valk, Dominus..."
+SearchBox.PlaceholderColor3 = Color3.fromRGB(105, 108, 116)
+SearchBox.Text = ""
+SearchBox.TextColor3 = Color3.fromRGB(231, 232, 236)
+SearchBox.ClearTextOnFocus = false
+SearchBox.TextSize = 11
+SearchBox.Font = Enum.Font.GothamMedium
+SearchBox.TextXAlignment = Enum.TextXAlignment.Left
+SearchBox.Parent = Body
+Instance.new("UICorner", SearchBox).CornerRadius = UDim.new(0, 12)
 
-    local pill = Instance.new("Frame")
-    pill.Size = UDim2.fromOffset(50, 28)
-    pill.Position = UDim2.new(1, -62, 0.5, -14)
-    pill.BackgroundColor3 = Color3.fromRGB(52, 52, 58)
-    pill.Parent = button
-    Instance.new("UICorner", pill).CornerRadius = UDim.new(1, 0)
+local SearchPadding = Instance.new("UIPadding")
+SearchPadding.PaddingLeft = UDim.new(0, 13)
+SearchPadding.PaddingRight = UDim.new(0, 13)
+SearchPadding.Parent = SearchBox
 
-    local knob = Instance.new("Frame")
-    knob.Size = UDim2.fromOffset(22, 22)
-    knob.Position = UDim2.fromOffset(3, 3)
-    knob.BackgroundColor3 = Color3.fromRGB(203, 205, 211)
-    knob.Parent = pill
-    Instance.new("UICorner", knob).CornerRadius = UDim.new(1, 0)
+local ItemList = Instance.new("ScrollingFrame")
+ItemList.Position = UDim2.fromOffset(0, 46)
+ItemList.Size = UDim2.new(1, 0, 1, -46)
+ItemList.BackgroundTransparency = 1
+ItemList.BorderSizePixel = 0
+ItemList.ScrollBarThickness = 2
+ItemList.ScrollBarImageColor3 = Color3.fromRGB(95, 98, 106)
+ItemList.CanvasSize = UDim2.new()
+ItemList.AutomaticCanvasSize = Enum.AutomaticSize.Y
+ItemList.ScrollingDirection = Enum.ScrollingDirection.Y
+ItemList.Parent = Body
 
-    Runtime.Buttons[key] = {
-        Button = button,
-        Pill = pill,
-        Knob = knob,
+local ItemLayout = Instance.new("UIListLayout")
+ItemLayout.Padding = UDim.new(0, 7)
+ItemLayout.SortOrder = Enum.SortOrder.LayoutOrder
+ItemLayout.Parent = ItemList
+
+local function renderToggle(refs, state)
+    refs.State.Text = state and "ON" or "OFF"
+    refs.State.TextColor3 =
+        state
+        and Color3.fromRGB(245, 245, 247)
+        or Color3.fromRGB(112, 115, 123)
+
+    TweenService:Create(
+        refs.Pill,
+        TweenInfo.new(0.14, Enum.EasingStyle.Quart, Enum.EasingDirection.Out),
+        {
+            BackgroundColor3 =
+                state
+                and Color3.fromRGB(91, 95, 104)
+                or Color3.fromRGB(45, 45, 51),
+        }
+    ):Play()
+
+    TweenService:Create(
+        refs.Knob,
+        TweenInfo.new(0.14, Enum.EasingStyle.Quart, Enum.EasingDirection.Out),
+        {
+            Position =
+                state
+                and UDim2.fromOffset(24, 3)
+                or UDim2.fromOffset(3, 3),
+        }
+    ):Play()
+end
+
+local function createItemButton(key, asset)
+    local Button = Instance.new("TextButton")
+    Button.Name = key
+    Button.Size = UDim2.new(1, -4, 0, 62)
+    Button.BackgroundColor3 = Color3.fromRGB(25, 25, 30)
+    Button.BorderSizePixel = 0
+    Button.Text = ""
+    Button.AutoButtonColor = false
+    Button.Parent = ItemList
+    Instance.new("UICorner", Button).CornerRadius = UDim.new(0, 13)
+
+    local Name = Instance.new("TextLabel")
+    Name.Position = UDim2.fromOffset(13, 8)
+    Name.Size = UDim2.new(1, -105, 0, 19)
+    Name.BackgroundTransparency = 1
+    Name.Text = asset.Name
+    Name.TextColor3 = Color3.fromRGB(238, 239, 242)
+    Name.Font = Enum.Font.GothamMedium
+    Name.TextSize = 12
+    Name.TextXAlignment = Enum.TextXAlignment.Left
+    Name.TextTruncate = Enum.TextTruncate.AtEnd
+    Name.Parent = Button
+
+    local Meta = Instance.new("TextLabel")
+    Meta.Position = UDim2.fromOffset(13, 28)
+    Meta.Size = UDim2.new(1, -110, 0, 15)
+    Meta.BackgroundTransparency = 1
+    Meta.Text = asset.Badge .. "  •  " .. tostring(asset.Id)
+    Meta.TextColor3 = Color3.fromRGB(119, 122, 131)
+    Meta.Font = Enum.Font.Gotham
+    Meta.TextSize = 9
+    Meta.TextXAlignment = Enum.TextXAlignment.Left
+    Meta.TextTruncate = Enum.TextTruncate.AtEnd
+    Meta.Parent = Button
+
+    local Desc = Instance.new("TextLabel")
+    Desc.Position = UDim2.fromOffset(13, 44)
+    Desc.Size = UDim2.new(1, -110, 0, 11)
+    Desc.BackgroundTransparency = 1
+    Desc.Text = asset.Desc or asset.Category
+    Desc.TextColor3 = Color3.fromRGB(83, 86, 94)
+    Desc.Font = Enum.Font.Gotham
+    Desc.TextSize = 8
+    Desc.TextXAlignment = Enum.TextXAlignment.Left
+    Desc.Parent = Button
+
+    local Pill = Instance.new("Frame")
+    Pill.Size = UDim2.fromOffset(48, 27)
+    Pill.Position = UDim2.new(1, -60, 0.5, -13)
+    Pill.BackgroundColor3 = Color3.fromRGB(45, 45, 51)
+    Pill.Parent = Button
+    Instance.new("UICorner", Pill).CornerRadius = UDim.new(1, 0)
+
+    local Knob = Instance.new("Frame")
+    Knob.Size = UDim2.fromOffset(21, 21)
+    Knob.Position = UDim2.fromOffset(3, 3)
+    Knob.BackgroundColor3 = Color3.fromRGB(239, 240, 243)
+    Knob.Parent = Pill
+    Instance.new("UICorner", Knob).CornerRadius = UDim.new(1, 0)
+
+    local State = Instance.new("TextLabel")
+    State.AnchorPoint = Vector2.new(1, 0)
+    State.Position = UDim2.new(1, -13, 0, 6)
+    State.Size = UDim2.fromOffset(42, 12)
+    State.BackgroundTransparency = 1
+    State.Text = "OFF"
+    State.TextColor3 = Color3.fromRGB(112, 115, 123)
+    State.Font = Enum.Font.GothamBold
+    State.TextSize = 7
+    State.TextXAlignment = Enum.TextXAlignment.Right
+    State.Visible = false
+    State.Parent = Button
+
+    local refs = {
+        Button = Button,
+        Pill = Pill,
+        Knob = Knob,
+        State = State,
+        Asset = asset,
     }
 
-    local busy = false
+    Runtime.Buttons[key] = refs
+    renderToggle(refs, Runtime.Enabled[key])
 
-    local function render(state)
-        TweenService:Create(
-            pill,
-            TweenInfo.new(0.16, Enum.EasingStyle.Quart, Enum.EasingDirection.Out),
-            {
-                BackgroundColor3 = state
-                    and Color3.fromRGB(94, 97, 105)
-                    or Color3.fromRGB(52, 52, 58),
-            }
-        ):Play()
-
-        TweenService:Create(
-            knob,
-            TweenInfo.new(0.16, Enum.EasingStyle.Quart, Enum.EasingDirection.Out),
-            {
-                Position = state
-                    and UDim2.fromOffset(25, 3)
-                    or UDim2.fromOffset(3, 3),
-                BackgroundColor3 = state
-                    and Color3.fromRGB(255, 255, 255)
-                    or Color3.fromRGB(203, 205, 211),
-            }
-        ):Play()
-    end
-
-    button.MouseButton1Click:Connect(function()
-        if busy then return end
-        busy = true
+    Button.MouseButton1Click:Connect(function()
+        if Runtime.Busy[key] then return end
+        Runtime.Busy[key] = true
 
         local wanted = not Runtime.Enabled[key]
+        setStatus(
+            (wanted and "Equipando " or "Quitando ")
+            .. asset.Name
+            .. "..."
+        )
 
         task.spawn(function()
-            local ok, info
-
-            if key == "Korblox" then
-                ok, info = setKorblox(wanted)
-            else
-                ok, info = setAccessory(key, wanted)
-            end
+            local ok, info = applyKey(key, wanted)
 
             if ok then
                 Runtime.Enabled[key] = wanted
-                render(wanted)
+                renderToggle(refs, wanted)
+
                 setStatus(
                     asset.Name
-                    .. (wanted and " activado • " or " desactivado • ")
+                    .. (wanted and " equipado • " or " removido • ")
                     .. tostring(info),
                     true
                 )
             else
                 Runtime.Enabled[key] = false
-                render(false)
-                setStatus(asset.Name .. " fallo • " .. tostring(info), false)
+                renderToggle(refs, false)
+
+                setStatus(
+                    asset.Name
+                    .. " fallo • "
+                    .. tostring(info),
+                    false
+                )
             end
 
-            busy = false
+            Runtime.Busy[key] = nil
         end)
     end)
 
-    render(false)
+    return Button
 end
 
-makeToggle("Korblox")
-makeToggle("RCCrown")
-makeToggle("Fiery")
-makeToggle("Poisoned")
+for _, key in ipairs(ORDERED_KEYS) do
+    createItemButton(key, ASSETS[key])
+end
 
-local Actions = Instance.new("Frame")
-Actions.Size = UDim2.new(1, -28, 0, 38)
-Actions.Position = UDim2.fromOffset(14, 315)
-Actions.BackgroundTransparency = 1
-Actions.Parent = Main
+local function refreshItems()
+    local query = string.lower(Runtime.Search or "")
+    local category = Runtime.CurrentCategory
 
-local actionLayout = Instance.new("UIListLayout")
-actionLayout.FillDirection = Enum.FillDirection.Horizontal
-actionLayout.Padding = UDim.new(0, 8)
-actionLayout.Parent = Actions
+    for key, refs in pairs(Runtime.Buttons) do
+        local asset = ASSETS[key]
+        local categoryMatch = asset.Category == category
+        local searchMatch = true
 
-local function makeAction(text, width, callback)
+        if query ~= "" then
+            local haystack = string.lower(
+                asset.Name
+                .. " "
+                .. tostring(asset.Id)
+                .. " "
+                .. asset.Category
+                .. " "
+                .. (asset.Badge or "")
+            )
+
+            searchMatch =
+                string.find(haystack, query, 1, true) ~= nil
+        end
+
+        refs.Button.Visible = categoryMatch and searchMatch
+    end
+
+    ItemList.CanvasPosition = Vector2.new(0, 0)
+end
+
+local function selectCategory(category)
+    Runtime.CurrentCategory = category
+
+    for name, button in pairs(CategoryButtons) do
+        button.BackgroundColor3 =
+            name == category
+            and Color3.fromRGB(43, 44, 50)
+            or Color3.fromRGB(20, 20, 24)
+
+        button.TextColor3 =
+            name == category
+            and Color3.fromRGB(242, 243, 246)
+            or Color3.fromRGB(132, 135, 143)
+    end
+
+    refreshItems()
+end
+
+for index, category in ipairs(CATEGORIES) do
     local b = Instance.new("TextButton")
-    b.Size = UDim2.fromOffset(width, 38)
-    b.BackgroundColor3 = Color3.fromRGB(33, 33, 38)
+    b.Name = category
+    b.Size = UDim2.new(1, 0, 0, 38)
+    b.BackgroundColor3 = Color3.fromRGB(20, 20, 24)
+    b.BorderSizePixel = 0
+    b.Text = category
+    b.TextColor3 = Color3.fromRGB(132, 135, 143)
+    b.Font = Enum.Font.GothamMedium
+    b.TextSize = 10
+    b.TextXAlignment = Enum.TextXAlignment.Left
+    b.AutoButtonColor = false
+    b.LayoutOrder = index
+    b.Parent = Sidebar
+    Instance.new("UICorner", b).CornerRadius = UDim.new(0, 10)
+
+    local p = Instance.new("UIPadding")
+    p.PaddingLeft = UDim.new(0, 10)
+    p.Parent = b
+
+    CategoryButtons[category] = b
+
+    b.MouseButton1Click:Connect(function()
+        selectCategory(category)
+    end)
+end
+
+trackConnection(SearchBox:GetPropertyChangedSignal("Text"):Connect(function()
+    Runtime.Search = SearchBox.Text
+    refreshItems()
+end))
+
+--==================================================
+-- BOTTOM BAR
+--==================================================
+
+local Bottom = Instance.new("Frame")
+Bottom.Position = UDim2.new(0, 14, 1, -61)
+Bottom.Size = UDim2.new(1, -28, 0, 47)
+Bottom.BackgroundColor3 = Color3.fromRGB(20, 20, 24)
+Bottom.BorderSizePixel = 0
+Bottom.Parent = Main
+Instance.new("UICorner", Bottom).CornerRadius = UDim.new(0, 13)
+
+StatusLabel = Instance.new("TextLabel")
+StatusLabel.Position = UDim2.fromOffset(12, 6)
+StatusLabel.Size = UDim2.new(1, -238, 0, 16)
+StatusLabel.BackgroundTransparency = 1
+StatusLabel.Text = "Listo."
+StatusLabel.TextColor3 = Color3.fromRGB(201, 204, 211)
+StatusLabel.Font = Enum.Font.GothamMedium
+StatusLabel.TextSize = 9
+StatusLabel.TextXAlignment = Enum.TextXAlignment.Left
+StatusLabel.TextTruncate = Enum.TextTruncate.AtEnd
+StatusLabel.Parent = Bottom
+
+LogLabel = Instance.new("TextLabel")
+LogLabel.Position = UDim2.fromOffset(12, 23)
+LogLabel.Size = UDim2.new(1, -238, 0, 16)
+LogLabel.BackgroundTransparency = 1
+LogLabel.Text = "Los efectos originales del asset se conservan."
+LogLabel.TextColor3 = Color3.fromRGB(90, 93, 101)
+LogLabel.Font = Enum.Font.Code
+LogLabel.TextSize = 7
+LogLabel.TextXAlignment = Enum.TextXAlignment.Left
+LogLabel.TextTruncate = Enum.TextTruncate.AtEnd
+LogLabel.Parent = Bottom
+
+local function makeBottomButton(text, rightOffset, width, callback)
+    local b = Instance.new("TextButton")
+    b.AnchorPoint = Vector2.new(1, 0.5)
+    b.Position = UDim2.new(1, -rightOffset, 0.5, 0)
+    b.Size = UDim2.fromOffset(width, 31)
+    b.BackgroundColor3 = Color3.fromRGB(32, 32, 37)
     b.BorderSizePixel = 0
     b.Text = text
-    b.TextColor3 = Color3.fromRGB(218, 220, 225)
-    b.TextSize = 11
+    b.TextColor3 = Color3.fromRGB(210, 212, 218)
     b.Font = Enum.Font.GothamMedium
+    b.TextSize = 9
     b.AutoButtonColor = false
-    b.Parent = Actions
-    Instance.new("UICorner", b).CornerRadius = UDim.new(0, 11)
-
+    b.Parent = Bottom
+    Instance.new("UICorner", b).CornerRadius = UDim.new(0, 9)
     b.MouseButton1Click:Connect(callback)
     return b
 end
 
-makeAction("Reaplicar", 98, function()
-    setStatus("Reaplicando...")
+makeBottomButton("Restaurar", 9, 68, function()
+    restoreAll()
+
+    for key, refs in pairs(Runtime.Buttons) do
+        renderToggle(refs, false)
+    end
+
+    setStatus("Todo restaurado localmente.", true)
+end)
+
+makeBottomButton("Reaplicar", 84, 68, function()
+    setStatus("Reaplicando seleccion...")
     task.spawn(function()
         reapplyEnabled()
-        setStatus("Reaplicado.", true)
+        setStatus("Seleccion reaplicada.", true)
     end)
 end)
 
-makeAction("Restaurar", 98, function()
-    setStatus("Restaurando...")
-    task.spawn(function()
-        restoreAll()
-
-        for _, refs in pairs(Runtime.Buttons) do
-            refs.Pill.BackgroundColor3 = Color3.fromRGB(52, 52, 58)
-            refs.Knob.Position = UDim2.fromOffset(3, 3)
-            refs.Knob.BackgroundColor3 = Color3.fromRGB(203, 205, 211)
-        end
-
-        setStatus("Apariencia local restaurada.", true)
-    end)
-end)
-
-makeAction("Copiar log", 114, function()
+makeBottomButton("Log", 159, 52, function()
     local text = table.concat(Runtime.Logs, "\n")
 
     if setclipboard then
         setclipboard(text)
         setStatus("Diagnostico copiado.", true)
     else
-        setStatus("Tu entorno no tiene setclipboard.", false)
+        setStatus("setclipboard no disponible.", false)
     end
 end)
-
-local Diagnostic = Instance.new("Frame")
-Diagnostic.Size = UDim2.new(1, -28, 0, 102)
-Diagnostic.Position = UDim2.fromOffset(14, 363)
-Diagnostic.BackgroundColor3 = Color3.fromRGB(24, 24, 28)
-Diagnostic.BorderSizePixel = 0
-Diagnostic.Parent = Main
-Instance.new("UICorner", Diagnostic).CornerRadius = UDim.new(0, 13)
-
-StatusLabel = Instance.new("TextLabel")
-StatusLabel.Size = UDim2.new(1, -20, 0, 20)
-StatusLabel.Position = UDim2.fromOffset(10, 7)
-StatusLabel.BackgroundTransparency = 1
-StatusLabel.Text = "Listo para probar."
-StatusLabel.TextColor3 = Color3.fromRGB(202, 206, 213)
-StatusLabel.Font = Enum.Font.GothamMedium
-StatusLabel.TextSize = 10
-StatusLabel.TextXAlignment = Enum.TextXAlignment.Left
-StatusLabel.TextTruncate = Enum.TextTruncate.AtEnd
-StatusLabel.Parent = Diagnostic
-
-LogLabel = Instance.new("TextLabel")
-LogLabel.Size = UDim2.new(1, -20, 1, -32)
-LogLabel.Position = UDim2.fromOffset(10, 27)
-LogLabel.BackgroundTransparency = 1
-LogLabel.Text = ""
-LogLabel.TextColor3 = Color3.fromRGB(121, 124, 133)
-LogLabel.Font = Enum.Font.Code
-LogLabel.TextSize = 8
-LogLabel.TextWrapped = false
-LogLabel.TextXAlignment = Enum.TextXAlignment.Left
-LogLabel.TextYAlignment = Enum.TextYAlignment.Top
-LogLabel.Parent = Diagnostic
 
 --==================================================
 -- DRAG
@@ -1281,11 +1597,7 @@ trackConnection(LocalPlayer.CharacterAdded:Connect(function(newCharacter)
 
     task.wait(1)
 
-    if not Runtime.Gui or not Runtime.Gui.Parent then
-        return
-    end
-
-    addLog("Respawn detectado. Reaplicando seleccion...")
+    addLog("Respawn -> reaplicando apariencia local")
 
     task.spawn(function()
         reapplyEnabled()
@@ -1297,13 +1609,11 @@ end))
 --==================================================
 
 function Runtime.Cleanup()
-    cleanupVisuals()
+    restoreAll()
 
     for i = #Runtime.Connections, 1, -1 do
         local c = Runtime.Connections[i]
-        pcall(function()
-            c:Disconnect()
-        end)
+        pcall(function() c:Disconnect() end)
         Runtime.Connections[i] = nil
     end
 
@@ -1315,9 +1625,16 @@ Close.MouseButton1Click:Connect(function()
     Runtime.Cleanup()
 end)
 
--- Guardamos description inicial si el cliente deja leerla.
+-- Initial description for restoration / diagnostics.
 pcall(function()
-    Runtime.OriginalDescription = Humanoid:GetAppliedDescription():Clone()
+    Runtime.OriginalDescription =
+        Humanoid:GetAppliedDescription():Clone()
 end)
 
-setStatus("Listo. Prueba un item y revisa el diagnostico.", true)
+selectCategory("Especiales")
+setStatus(
+    "Vault listo • "
+    .. tostring(#ORDERED_KEYS)
+    .. " apariencias locales.",
+    true
+)

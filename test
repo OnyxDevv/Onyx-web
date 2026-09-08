@@ -438,7 +438,7 @@ end
 -- INICIALIZACIÓN WINDUI (CON CACHÉ 24HRS)
 -- ==========================================
 local WindUI
-local _version = "1.8.1_ILUNX_MAXPERF2"
+local _version = "1.8.2_ILUNX_MAXPERF3_FASTRESPAWN"
 local uiFileName = "iLunXHubUI_Cache_v" .. _version .. ".txt"
 local timeFileName = "iLunXHubUI_Cache_v" .. _version .. "_Time.txt"
 
@@ -459,7 +459,7 @@ local ok, result = pcall(function()
     else
         -- Si guardas ambos archivos juntos, prioriza la UI MAXPERF local.
         -- Si no existe, conserva el fallback remoto actual.
-        local localUiFile = "main_iLunX_PRO_MAXPERF_v2.lua"
+        local localUiFile = "main_iLunX_PRO_MAXPERF_v3.lua"
         local codigoUi
         if isfile and readfile and isfile(localUiFile) then
             codigoUi = readfile(localUiFile)
@@ -832,6 +832,7 @@ local Tabs = {
     Graficos = MainSection:Tab({Title = "Gráficos", Icon = "solar:palette-bold"}), -- 🔥 NUEVA PESTAÑA AQUÍ
     Emotes = TrollSection:Tab({Title = "Animaciones", Icon = "solar:smile-circle-bold"}),
     Apariencia = TrollSection:Tab({Title = "Apariencia", Icon = "solar:palette-bold"}),
+    Cambios = TrollSection:Tab({Title = "Cambios", Icon = "solar:box-bold"}),
     Config = TrollSection:Tab({Title = "Configuración", Icon = "solar:settings-bold"})
 }
 
@@ -888,22 +889,49 @@ Tabs.Inicio:Paragraph({
     Desc = "" .. tostring(nombreEjecutor)
 })
 
--- 🔥 MINI ANUNCIO AGREGADO AQUÍ 🔥
-Tabs.Inicio:Section({Title = "Novedades y Actualizaciones"})
+-- ==========================================
+-- CHANGELOG iLunX · TARJETAS VISUALES
+-- ==========================================
+Tabs.Cambios:Section({Title = "Actualización • 08 SEP 2026"})
 
-Tabs.Inicio:Paragraph({ 
-    Title = "Bienvenido a iLunXHub",
-    Desc = "OnyxHub ahora es iLunXHub"
+Tabs.Cambios:Paragraph({
+    Title = "iLunXHub · MAXPERF 3",
+    Desc = "ACTUALIZACIÓN 08 SEP 2026  •  DUELS\nMás velocidad al reaparecer, menos trabajo por frame y una interfaz más limpia.",
+    Image = "solar:home-bold",
+    ImageSize = 42,
+    Color = Color3.fromHex("#20242A")
 })
 
-Tabs.Inicio:Paragraph({ 
-    Title = "Mejoras Activas",
-    Desc = "Hitbox Expander y Kill All: Detección por Anti-Cheat arreglado.\nModo Fantasma: indetectable.\nSalto Infinito: Añadido a Movimiento."
+Tabs.Cambios:Paragraph({
+    Title = "Apariencia · Respawn instantáneo",
+    Desc = "Headless, Korblox y accesorios se restauran apenas el nuevo personaje está listo. Se eliminó la espera fija de casi 1 segundo y se añadió una segunda pasada inteligente sin reclonar lo que ya está equipado.",
+    Image = "solar:palette-bold",
+    ImageSize = 34,
+    Color = Color3.fromHex("#252A31")
 })
 
-Tabs.Inicio:Paragraph({ 
-    Title = "Eliminaciones por Seguridad",
-    Desc = "Speed Hack: Removido.\nNoclip: Removido."
+Tabs.Cambios:Paragraph({
+    Title = "Visuales · ESP Box estable",
+    Desc = "El Box 2D usa únicamente el cuerpo real del jugador. Hitbox Expander, accesorios grandes y limiteds ya no alteran su ancho o altura.",
+    Image = "solar:eye-bold",
+    ImageSize = 34,
+    Color = Color3.fromHex("#22272E")
+})
+
+Tabs.Cambios:Paragraph({
+    Title = "Rendimiento · MAXPERF",
+    Desc = "Menos búsquedas repetidas en Aim, Silent Aim, Auto Shoot, ESP y Hitbox. Cachés de partes corporales, accesorios y welds para reducir CPU y microtirones, especialmente en móvil.",
+    Image = "solar:target-bold",
+    ImageSize = 34,
+    Color = Color3.fromHex("#242931")
+})
+
+Tabs.Cambios:Paragraph({
+    Title = "Interfaz · Fluidez",
+    Desc = "Sliders y animaciones internas optimizados con Reduce Motion real, limpieza de conexiones mejorada y splash negro fullscreen más nítido.",
+    Image = "solar:settings-bold",
+    ImageSize = 34,
+    Color = Color3.fromHex("#20252C")
 })
 
 
@@ -2056,6 +2084,7 @@ runtime.Appearance = {
     EditorSelectedKey = nil,
     EditorSyncing = false,
     BatchLoading = false,
+    RespawnGeneration = 0,
     EditorDisplayToKey = {},
     EditorControls = {},
     EditorSlots = {},
@@ -2563,6 +2592,68 @@ function runtime.ReapplyAppearanceAccessories(char)
     runtime.EnforceBodyAppearance(char)
 end
 
+-- MAXPERF3: reaplica únicamente lo que falte. En respawn/CharacterAppearanceLoaded
+-- evita destruir y volver a clonar accesorios que ya se colocaron en la primera pasada.
+function runtime.EnsureAppearanceAccessories(char)
+    char = char or player.Character
+    if not char then return end
+
+    for _, key in ipairs(runtime.AppearanceOrder) do
+        local asset = runtime.AppearanceCatalog[key]
+        if asset and asset.Kind == "Accessory" and runtime.Appearance.Enabled[key] then
+            local current = runtime.Appearance.ActiveAccessories[key]
+            if current and current.Parent == char then
+                runtime.ApplyAppearanceOffsetToInstance(key, current, true)
+            else
+                runtime.ApplyAppearanceAccessory(key, char)
+            end
+        end
+    end
+
+    runtime.EnforceBodyAppearance(char)
+end
+
+local function hasEnabledAppearanceAccessory()
+    for _, key in ipairs(runtime.AppearanceOrder) do
+        local asset = runtime.AppearanceCatalog[key]
+        if asset and asset.Kind == "Accessory" and runtime.Appearance.Enabled[key] then
+            return true
+        end
+    end
+    return false
+end
+
+function runtime.FastRestoreAppearanceOnRespawn(char, generation)
+    if not runtime.Alive or not char or not char.Parent then return end
+
+    -- No esperamos un tiempo fijo. Sólo esperamos las piezas indispensables y
+    -- continuamos en cuanto existen; normalmente esto tarda uno o pocos frames.
+    local humanoid = char:FindFirstChildOfClass("Humanoid")
+    if not humanoid then
+        humanoid = char:WaitForChild("Humanoid", 0.35)
+    end
+    if not runtime.Alive or not humanoid or not char.Parent then return end
+    if generation and generation ~= runtime.Appearance.RespawnGeneration then return end
+
+    if runtime.Appearance.Enabled.Headless or hasEnabledAppearanceAccessory() then
+        if not char:FindFirstChild("Head") then
+            char:WaitForChild("Head", 0.35)
+        end
+    end
+    if runtime.Appearance.Enabled.Korblox and humanoid.RigType == Enum.HumanoidRigType.R15 then
+        if not char:FindFirstChild("RightUpperLeg") then
+            char:WaitForChild("RightUpperLeg", 0.35)
+        end
+    end
+
+    if not runtime.Alive or not char.Parent then return end
+    if generation and generation ~= runtime.Appearance.RespawnGeneration then return end
+
+    runtime.EnforceBodyAppearance(char)
+    runtime.EnsureAppearanceAccessories(char)
+    runtime.RebuildAppearanceBodyGuards(char)
+end
+
 function runtime.SetAppearance(key, state)
     local asset = runtime.AppearanceCatalog[key]
     if not asset then return end
@@ -2694,30 +2785,40 @@ runtime.AppearanceCleanup = function()
 end
 
 runtime.Track(player.CharacterAdded:Connect(function(char)
+    runtime.Appearance.RespawnGeneration = (runtime.Appearance.RespawnGeneration or 0) + 1
+    local generation = runtime.Appearance.RespawnGeneration
     runtime.Appearance.AttachmentCache[char] = nil
     table.clear(runtime.Appearance.ActiveAccessories)
-    task.delay(0.85, function()
-        if not runtime.Alive or not char.Parent then return end
+
+    -- Primera pasada: tan pronto como Humanoid/Head estén disponibles.
+    task.spawn(function()
+        runtime.FastRestoreAppearanceOnRespawn(char, generation)
+    end)
+
+    -- Segunda pasada corta de seguridad: cubre experiencias que insertan attachments
+    -- unas décimas después, pero no destruye/reclona accesorios que ya están correctos.
+    task.delay(0.10, function()
+        if not runtime.Alive or not char.Parent or generation ~= runtime.Appearance.RespawnGeneration then return end
+        runtime.Appearance.AttachmentCache[char] = nil
         runtime.EnforceBodyAppearance(char)
+        runtime.EnsureAppearanceAccessories(char)
         runtime.RebuildAppearanceBodyGuards(char)
-        runtime.ReapplyAppearanceAccessories(char)
-        task.delay(0.15, function()
-            if runtime.Alive and char.Parent then
-                runtime.EnforceBodyAppearance(char)
-                runtime.RebuildAppearanceBodyGuards(char)
-            end
-        end)
     end)
 end))
 
 pcall(function()
     runtime.Track(player.CharacterAppearanceLoaded:Connect(function(char)
+        if char ~= player.Character then return end
+        local generation = runtime.Appearance.RespawnGeneration
         runtime.Appearance.AttachmentCache[char] = nil
-        task.delay(0.12, function()
-            if runtime.Alive and char.Parent then
+
+        -- CharacterAppearanceLoaded puede sobrescribir meshes/transparencias del cuerpo.
+        -- Reafirmamos inmediatamente, reutilizando accesorios existentes si siguen vivos.
+        task.defer(function()
+            if runtime.Alive and char.Parent and generation == runtime.Appearance.RespawnGeneration then
                 runtime.EnforceBodyAppearance(char)
+                runtime.EnsureAppearanceAccessories(char)
                 runtime.RebuildAppearanceBodyGuards(char)
-                runtime.ReapplyAppearanceAccessories(char)
             end
         end)
     end))
@@ -4549,7 +4650,7 @@ local function reposarEnBaseKillAll(
         local basePose =
             killAllBaseCFrame
             * CFrame.Angles(
-                math.rad(-90),
+                math.rad(90),
                 0,
                 0
             )

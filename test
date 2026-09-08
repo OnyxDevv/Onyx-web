@@ -472,7 +472,7 @@ end
 -- INICIALIZACIÓN WINDUI (CON CACHÉ 24HRS)
 -- ==========================================
 local WindUI
-local _version = "1.7.10_ILUNX_APPEARANCE_LAYERED"
+local _version = "1.7.11_ILUNX_INLINE_ACCESSORY_EDITOR"
 local uiFileName = "iLunXHubUI_Cache_v" .. _version .. ".txt"
 local timeFileName = "iLunXHubUI_Cache_v" .. _version .. "_Time.txt"
 
@@ -1702,7 +1702,7 @@ function runtime.EnsureBodySelector()
     local card = Instance.new("CanvasGroup")
     card.AnchorPoint = Vector2.new(0.5, 0.5)
     card.Position = UDim2.fromScale(0.5, 0.5)
-    card.Size = UDim2.fromOffset(500, 420)
+    card.Size = UDim2.fromOffset(440, 360)
     card.BackgroundColor3 = Color3.fromHex("#111214")
     card.BorderSizePixel = 0
     card.ZIndex = 401
@@ -1720,25 +1720,43 @@ function runtime.EnsureBodySelector()
     scale.Parent = card
 
     local title = Instance.new("TextLabel")
-    title.Size = UDim2.new(1, -48, 0, 28)
-    title.Position = UDim2.fromOffset(24, 20)
+    title.Size = UDim2.new(1, -88, 0, 24)
+    title.Position = UDim2.fromOffset(18, 14)
     title.BackgroundTransparency = 1
     title.Text = "Selector corporal"
     title.TextColor3 = Color3.fromHex("#F7F8F9")
     title.Font = Enum.Font.GothamBold
-    title.TextSize = 18
+    title.TextSize = 15
     title.TextXAlignment = Enum.TextXAlignment.Left
     title.ZIndex = 402
     title.Parent = card
 
+    local closeSelector = Instance.new("TextButton")
+    closeSelector.Name = "Close"
+    closeSelector.Size = UDim2.fromOffset(28, 28)
+    closeSelector.Position = UDim2.new(1, -42, 0, 12)
+    closeSelector.BackgroundColor3 = Color3.fromHex("#25272B")
+    closeSelector.BorderSizePixel = 0
+    closeSelector.Text = "×"
+    closeSelector.TextColor3 = Color3.fromHex("#E7E9EC")
+    closeSelector.Font = Enum.Font.GothamBold
+    closeSelector.TextSize = 16
+    closeSelector.AutoButtonColor = false
+    closeSelector.ZIndex = 405
+    closeSelector.Parent = card
+    Instance.new("UICorner", closeSelector).CornerRadius = UDim.new(0, 9)
+    closeSelector.Activated:Connect(function()
+        overlay.Visible = false
+    end)
+
     local subtitle = Instance.new("TextLabel")
-    subtitle.Size = UDim2.new(1, -48, 0, 36)
-    subtitle.Position = UDim2.fromOffset(24, 49)
+    subtitle.Size = UDim2.new(1, -36, 0, 28)
+    subtitle.Position = UDim2.fromOffset(18, 39)
     subtitle.BackgroundTransparency = 1
     subtitle.Text = "Toca varias zonas del cuerpo. Las partes activas se iluminan al instante."
     subtitle.TextColor3 = Color3.fromHex("#9DA3AB")
     subtitle.Font = Enum.Font.Gotham
-    subtitle.TextSize = 12
+    subtitle.TextSize = 10
     subtitle.TextWrapped = true
     subtitle.TextXAlignment = Enum.TextXAlignment.Left
     subtitle.TextYAlignment = Enum.TextYAlignment.Top
@@ -1746,14 +1764,14 @@ function runtime.EnsureBodySelector()
     subtitle.Parent = card
 
     local figure = Instance.new("Frame")
-    figure.Size = UDim2.fromOffset(190, 270)
-    figure.Position = UDim2.fromOffset(24, 92)
+    figure.Size = UDim2.fromOffset(160, 220)
+    figure.Position = UDim2.fromOffset(18, 74)
     figure.BackgroundColor3 = Color3.fromHex("#090A0C")
     figure.BackgroundTransparency = 0.08
     figure.BorderSizePixel = 0
     figure.ZIndex = 402
     figure.Parent = card
-    Instance.new("UICorner", figure).CornerRadius = UDim.new(0, 18)
+    Instance.new("UICorner", figure).CornerRadius = UDim.new(0, 14)
 
     runtime.BodySelector = {Mode = "AutoShoot", Segments = {}, Rows = {}, Overlay = overlay, Card = card, Scale = scale, Title = title}
 
@@ -1784,30 +1802,30 @@ function runtime.EnsureBodySelector()
         button.Activated:Connect(function() toggle(name) end)
     end
 
-    segment("Cabeza", 70, 10, 50, 50, 25)
-    segment("Torso superior", 54, 68, 82, 56, 13)
-    segment("Torso inferior", 59, 128, 72, 40, 11)
-    segment("Brazo izquierdo", 24, 72, 24, 96, 12)
-    segment("Brazo derecho", 142, 72, 24, 96, 12)
-    segment("Pierna izquierda", 58, 176, 30, 82, 13)
-    segment("Pierna derecha", 102, 176, 30, 82, 13)
+    segment("Cabeza", 59, 8, 42, 42, 21)
+    segment("Torso superior", 46, 55, 68, 45, 11)
+    segment("Torso inferior", 50, 104, 60, 32, 9)
+    segment("Brazo izquierdo", 20, 58, 20, 78, 10)
+    segment("Brazo derecho", 120, 58, 20, 78, 10)
+    segment("Pierna izquierda", 49, 143, 25, 66, 11)
+    segment("Pierna derecha", 86, 143, 25, 66, 11)
 
     local list = Instance.new("Frame")
-    list.Size = UDim2.fromOffset(250, 270)
-    list.Position = UDim2.fromOffset(226, 92)
+    list.Size = UDim2.fromOffset(232, 220)
+    list.Position = UDim2.fromOffset(190, 74)
     list.BackgroundTransparency = 1
     list.ZIndex = 402
     list.Parent = card
 
     for index, name in ipairs(runtime.TargetBodyOrder) do
         local row = Instance.new("TextButton")
-        row.Size = UDim2.new(1, 0, 0, 31)
-        row.Position = UDim2.fromOffset(0, (index - 1) * 35)
+        row.Size = UDim2.new(1, 0, 0, 27)
+        row.Position = UDim2.fromOffset(0, (index - 1) * 30)
         row.BackgroundColor3 = Color3.fromHex("#1C1E21")
         row.BorderSizePixel = 0
         row.TextColor3 = Color3.fromHex("#E7E9EC")
         row.Font = Enum.Font.GothamMedium
-        row.TextSize = 12
+        row.TextSize = 10
         row.TextXAlignment = Enum.TextXAlignment.Left
         row.AutoButtonColor = false
         row.ZIndex = 403
@@ -1822,14 +1840,14 @@ function runtime.EnsureBodySelector()
 
     local function action(text, x, width, callback)
         local b = Instance.new("TextButton")
-        b.Size = UDim2.fromOffset(width, 36)
-        b.Position = UDim2.new(0, x, 1, -52)
+        b.Size = UDim2.fromOffset(width, 32)
+        b.Position = UDim2.new(0, x, 1, -42)
         b.BackgroundColor3 = Color3.fromHex("#25272B")
         b.BorderSizePixel = 0
         b.Text = text
         b.TextColor3 = Color3.fromHex("#F2F3F5")
         b.Font = Enum.Font.GothamBold
-        b.TextSize = 12
+        b.TextSize = 10
         b.AutoButtonColor = false
         b.ZIndex = 403
         b.Parent = card
@@ -1838,16 +1856,16 @@ function runtime.EnsureBodySelector()
         return b
     end
 
-    action("Todo", 24, 92, function()
+    action("Todo", 18, 74, function()
         local selected = runtime.TargetSelections[runtime.BodySelector.Mode]
         for _, name in ipairs(runtime.TargetBodyOrder) do selected[name] = true end
         runtime.BodySelector.Refresh()
     end)
-    action("Limpiar", 124, 92, function()
+    action("Limpiar", 98, 78, function()
         table.clear(runtime.TargetSelections[runtime.BodySelector.Mode])
         runtime.BodySelector.Refresh()
     end)
-    local done = action("Aplicar", 356, 120, function()
+    local done = action("Aplicar", 330, 92, function()
         local mode = runtime.BodySelector.Mode
         local selected = runtime.TargetSelections[mode]
         if not next(selected) then selected["Cabeza"] = true end
@@ -1885,9 +1903,24 @@ function runtime.OpenBodySelector(mode)
     runtime.BodySelector.Title.Text = "Selector corporal · " .. (mode == "AutoShoot" and "Auto Shoot" or "Silent Aim")
     runtime.BodySelector.Refresh()
     runtime.BodySelector.Overlay.Visible = true
-    runtime.BodySelector.Scale.Scale = 0.94
+
+    -- Escala adaptativa: la ventana completa, la X y los botones inferiores
+    -- permanecen dentro del viewport incluso en móviles/pantallas pequeñas.
+    local currentCamera = workspace.CurrentCamera
+    local viewport = currentCamera and currentCamera.ViewportSize or Vector2.new(800, 600)
+    local fitScale = math.min(
+        1,
+        math.max(0.52, (viewport.X - 20) / 440),
+        math.max(0.52, (viewport.Y - 20) / 360)
+    )
+
+    runtime.BodySelector.Scale.Scale = fitScale * 0.94
     runtime.BodySelector.Card.GroupTransparency = 0.12
-    TweenService:Create(runtime.BodySelector.Scale, TweenInfo.new(0.16, Enum.EasingStyle.Quint, Enum.EasingDirection.Out), {Scale = 1}):Play()
+    TweenService:Create(
+        runtime.BodySelector.Scale,
+        TweenInfo.new(0.16, Enum.EasingStyle.Quint, Enum.EasingDirection.Out),
+        {Scale = fitScale}
+    ):Play()
     TweenService:Create(runtime.BodySelector.Card, TweenInfo.new(0.14, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {GroupTransparency = 0}):Play()
 end
 
@@ -1989,6 +2022,8 @@ runtime.Appearance = {
     EditorSelectedKey = nil,
     EditorSyncing = false,
     EditorDisplayToKey = {},
+    EditorControls = {},
+    EditorSlots = {},
 }
 
 for _, key in ipairs(runtime.AppearanceOrder) do
@@ -2551,12 +2586,32 @@ end)
 -- =========================
 -- UI DE APARIENCIA
 -- =========================
-Tabs.Apariencia:Paragraph({
+-- LayoutOrder explícito permite crear los sliders de forma LAZY y colocarlos
+-- debajo de su limited aunque se creen mucho después de arrancar el hub.
+local appearanceLayoutOrder = 100
+
+local function placeAppearanceElement(element, order)
+    if element and element.ElementFrame then
+        element.ElementFrame.LayoutOrder = order
+    end
+    return element
+end
+
+local function nextAppearanceOrder(step)
+    local current = appearanceLayoutOrder
+    appearanceLayoutOrder = appearanceLayoutOrder + (step or 10)
+    return current
+end
+
+local introAppearance = Tabs.Apariencia:Paragraph({
     Title = "Appearance Vault",
     Desc = "Headless y Korblox son capas locales independientes. Los limiteds conservan sus meshes, attachments y efectos; puedes combinar varios sin reconstruir el avatar."
 })
+placeAppearanceElement(introAppearance, nextAppearanceOrder())
 
-Tabs.Apariencia:Section({Title = "Cuerpo"})
+local bodySection = Tabs.Apariencia:Section({Title = "Cuerpo"})
+placeAppearanceElement(bodySection, nextAppearanceOrder())
+
 for _, key in ipairs({"Headless", "Korblox"}) do
     local capturedKey = key
     local asset = runtime.AppearanceCatalog[capturedKey]
@@ -2566,26 +2621,161 @@ for _, key in ipairs({"Headless", "Korblox"}) do
         Value = false,
         Callback = function(state) runtime.SetAppearance(capturedKey, state) end,
     })
+    placeAppearanceElement(toggle, nextAppearanceOrder())
     runtime.Appearance.ToggleElements[capturedKey] = toggle
     if capturedKey == "Korblox" then UIElements.TogKorblox = toggle end
     if capturedKey == "Headless" then UIElements.TogHeadless = toggle end
 end
 
+local function setInlineAccessoryControlVisible(control, visible)
+    if control and control.ElementFrame then
+        control.ElementFrame.Visible = visible == true
+    end
+end
+
+local function updateInlineAccessoryOffset(key, component, value)
+    if runtime.Appearance.EditorSyncing then return end
+    if not runtime.Appearance.Enabled[key] then return end
+
+    local state = runtime.GetAppearanceOffset(key)
+    if component == "X" then
+        state.Position = Vector3.new(value, state.Position.Y, state.Position.Z)
+    elseif component == "Y" then
+        state.Position = Vector3.new(state.Position.X, value, state.Position.Z)
+    elseif component == "Z" then
+        state.Position = Vector3.new(state.Position.X, state.Position.Y, value)
+    elseif component == "RX" then
+        state.Rotation = Vector3.new(value, state.Rotation.Y, state.Rotation.Z)
+    elseif component == "RY" then
+        state.Rotation = Vector3.new(state.Rotation.X, value, state.Rotation.Z)
+    elseif component == "RZ" then
+        state.Rotation = Vector3.new(state.Rotation.X, state.Rotation.Y, value)
+    end
+
+    runtime.ApplyAppearanceOffset(key)
+end
+
+function runtime.EnsureInlineAppearanceControls(key)
+    local slot = runtime.Appearance.EditorSlots[key]
+    if not slot then return nil end
+    if slot.Controls then return slot.Controls end
+
+    local function make(title, component, minValue, maxValue, step, relativeOrder)
+        local control = Tabs.Apariencia:Slider({
+            Title = title,
+            Step = step,
+            Value = {Min = minValue, Max = maxValue, Default = 0},
+            Callback = function(value)
+                updateInlineAccessoryOffset(key, component, value)
+            end,
+        })
+        placeAppearanceElement(control, slot.BaseOrder + relativeOrder)
+        setInlineAccessoryControlVisible(control, false)
+        return control
+    end
+
+    local controls = {
+        X = make("Posición X · Izquierda / Derecha", "X", -3, 3, 0.05, 1),
+        Y = make("Posición Y · Abajo / Arriba", "Y", -3, 3, 0.05, 2),
+        Z = make("Posición Z · Atrás / Adelante", "Z", -3, 3, 0.05, 3),
+        RX = make("Rotación X", "RX", -180, 180, 1, 4),
+        RY = make("Rotación Y", "RY", -180, 180, 1, 5),
+        RZ = make("Rotación Z", "RZ", -180, 180, 1, 6),
+    }
+
+    local reset = Tabs.Apariencia:Button({
+        Title = "Restablecer posición · " .. runtime.AppearanceCatalog[key].Name,
+        Desc = "Devuelve este accesorio a su posición y rotación originales.",
+        Callback = function()
+            runtime.Appearance.AccessoryOffsets[key] = {
+                Position = Vector3.new(),
+                Rotation = Vector3.new(),
+            }
+            runtime.ApplyAppearanceOffset(key)
+            runtime.RefreshAppearanceControls()
+            showBottomMessage("Posición restaurada: " .. runtime.AppearanceCatalog[key].Name)
+        end,
+    })
+    placeAppearanceElement(reset, slot.BaseOrder + 7)
+    setInlineAccessoryControlVisible(reset, false)
+    controls.Reset = reset
+
+    slot.Controls = controls
+    runtime.Appearance.EditorControls[key] = controls
+    return controls
+end
+
+function runtime.RefreshAppearanceControls()
+    runtime.Appearance.EditorSyncing = true
+
+    for key, slot in pairs(runtime.Appearance.EditorSlots) do
+        local enabled = runtime.Appearance.Enabled[key] == true
+        local controls = slot.Controls
+
+        -- Lazy creation: 6 sliders sólo existen después de usar ese limited
+        -- por primera vez, evitando cientos de controles al iniciar el hub.
+        if enabled and not controls then
+            controls = runtime.EnsureInlineAppearanceControls(key)
+        end
+
+        if controls then
+            local state = runtime.GetAppearanceOffset(key)
+            local values = {
+                X = state.Position.X,
+                Y = state.Position.Y,
+                Z = state.Position.Z,
+                RX = state.Rotation.X,
+                RY = state.Rotation.Y,
+                RZ = state.Rotation.Z,
+            }
+
+            for component, control in pairs(controls) do
+                setInlineAccessoryControlVisible(control, enabled)
+                if enabled then
+                    local value = values[component]
+                    if value ~= nil then
+                        pcall(function() control:Set(value) end)
+                    end
+                end
+            end
+        end
+    end
+
+    runtime.Appearance.EditorSyncing = false
+end
+
+-- Nombre anterior conservado para SetAppearance y carga de configs.
+runtime.RefreshAppearanceEditor = runtime.RefreshAppearanceControls
+
 for _, category in ipairs(runtime.AppearanceCategories) do
-    Tabs.Apariencia:Section({Title = category})
+    local categorySection = Tabs.Apariencia:Section({Title = category})
+    placeAppearanceElement(categorySection, nextAppearanceOrder())
+
     for _, key in ipairs(runtime.AppearanceOrder) do
         local asset = runtime.AppearanceCatalog[key]
+
         if asset and asset.Kind == "Accessory" and asset.Category == category then
             local capturedKey = key
+            local baseOrder = nextAppearanceOrder()
             local desc = (asset.Badge or "Accessory") .. " · Asset " .. tostring(asset.Id)
             if asset.Desc then desc = asset.Desc .. " · " .. desc end
+
             local toggle = Tabs.Apariencia:Toggle({
                 Title = asset.Name,
                 Desc = desc,
                 Value = false,
-                Callback = function(state) runtime.SetAppearance(capturedKey, state) end,
+                Callback = function(state)
+                    runtime.SetAppearance(capturedKey, state)
+                end,
             })
+
+            placeAppearanceElement(toggle, baseOrder)
             runtime.Appearance.ToggleElements[capturedKey] = toggle
+            runtime.Appearance.EditorSlots[capturedKey] = {
+                BaseOrder = baseOrder,
+                Controls = nil,
+            }
+
             if capturedKey == "RC" then UIElements.TogAppearanceRC = toggle end
             if capturedKey == "Fiery" then UIElements.TogAppearanceFiery = toggle end
             if capturedKey == "Poisoned" then UIElements.TogAppearancePoisoned = toggle end
@@ -2593,119 +2783,7 @@ for _, category in ipairs(runtime.AppearanceCategories) do
     end
 end
 
--- =========================
--- ACOMODADOR CON SLIDERS
--- =========================
-Tabs.Apariencia:Section({Title = "Acomodador de accesorios"})
-Tabs.Apariencia:Paragraph({
-    Title = "Posición y rotación",
-    Desc = "Selecciona un accesorio equipado y usa sliders. X mueve lados, Y altura y Z adelante/atrás. Headless y Korblox no se mueven desde aquí."
-})
-
-local editorDropdown
-local editorSliders = {}
-
-local function getEditorValues()
-    local values = {}
-    local map = {}
-    for _, key in ipairs(runtime.AppearanceOrder) do
-        local asset = runtime.AppearanceCatalog[key]
-        if asset and asset.Kind == "Accessory" and runtime.Appearance.Enabled[key] then
-            table_insert(values, asset.Name)
-            map[asset.Name] = key
-        end
-    end
-    if #values == 0 then values[1] = "Ninguno equipado" end
-    runtime.Appearance.EditorDisplayToKey = map
-    return values
-end
-
-local function syncEditorSliders()
-    local key = runtime.Appearance.EditorSelectedKey
-    local state = key and runtime.GetAppearanceOffset(key) or {Position = Vector3.new(), Rotation = Vector3.new()}
-    runtime.Appearance.EditorSyncing = true
-    local vals = {
-        X = state.Position.X, Y = state.Position.Y, Z = state.Position.Z,
-        RX = state.Rotation.X, RY = state.Rotation.Y, RZ = state.Rotation.Z,
-    }
-    for name, value in pairs(vals) do
-        local slider = editorSliders[name]
-        if slider then pcall(function() slider:Set(value) end) end
-    end
-    runtime.Appearance.EditorSyncing = false
-end
-
-function runtime.RefreshAppearanceEditor()
-    if not editorDropdown then return end
-    local values = getEditorValues()
-    pcall(function() editorDropdown:Refresh(values) end)
-
-    local selected = runtime.Appearance.EditorSelectedKey
-    if not selected or not runtime.Appearance.Enabled[selected] then
-        local firstName = values[1]
-        runtime.Appearance.EditorSelectedKey = runtime.Appearance.EditorDisplayToKey[firstName]
-        pcall(function() editorDropdown:Select(firstName) end)
-    else
-        local name = runtime.AppearanceCatalog[selected].Name
-        pcall(function() editorDropdown:Select(name) end)
-    end
-    syncEditorSliders()
-end
-
-editorDropdown = Tabs.Apariencia:Dropdown({
-    Title = "Accesorio a acomodar",
-    Desc = "Solo aparecen los accesorios que estén equipados.",
-    Values = {"Ninguno equipado"},
-    Value = "Ninguno equipado",
-    Callback = function(value)
-        runtime.Appearance.EditorSelectedKey = runtime.Appearance.EditorDisplayToKey[value]
-        syncEditorSliders()
-    end,
-})
-UIElements.AppearanceAccessoryDropdown = editorDropdown
-
-local function updateEditorOffset(component, value)
-    if runtime.Appearance.EditorSyncing then return end
-    local key = runtime.Appearance.EditorSelectedKey
-    if not key or not runtime.Appearance.Enabled[key] then return end
-    local state = runtime.GetAppearanceOffset(key)
-    if component == "X" then state.Position = Vector3.new(value, state.Position.Y, state.Position.Z)
-    elseif component == "Y" then state.Position = Vector3.new(state.Position.X, value, state.Position.Z)
-    elseif component == "Z" then state.Position = Vector3.new(state.Position.X, state.Position.Y, value)
-    elseif component == "RX" then state.Rotation = Vector3.new(value, state.Rotation.Y, state.Rotation.Z)
-    elseif component == "RY" then state.Rotation = Vector3.new(state.Rotation.X, value, state.Rotation.Z)
-    elseif component == "RZ" then state.Rotation = Vector3.new(state.Rotation.X, state.Rotation.Y, value) end
-    runtime.ApplyAppearanceOffset(key)
-end
-
-editorSliders.X = Tabs.Apariencia:Slider({Title="Posición X · Izquierda / Derecha", Step=0.05, Value={Min=-3, Max=3, Default=0}, Callback=function(v) updateEditorOffset("X", v) end})
-editorSliders.Y = Tabs.Apariencia:Slider({Title="Posición Y · Abajo / Arriba", Step=0.05, Value={Min=-3, Max=3, Default=0}, Callback=function(v) updateEditorOffset("Y", v) end})
-editorSliders.Z = Tabs.Apariencia:Slider({Title="Posición Z · Atrás / Adelante", Step=0.05, Value={Min=-3, Max=3, Default=0}, Callback=function(v) updateEditorOffset("Z", v) end})
-editorSliders.RX = Tabs.Apariencia:Slider({Title="Rotación X", Step=1, Value={Min=-180, Max=180, Default=0}, Callback=function(v) updateEditorOffset("RX", v) end})
-editorSliders.RY = Tabs.Apariencia:Slider({Title="Rotación Y", Step=1, Value={Min=-180, Max=180, Default=0}, Callback=function(v) updateEditorOffset("RY", v) end})
-editorSliders.RZ = Tabs.Apariencia:Slider({Title="Rotación Z", Step=1, Value={Min=-180, Max=180, Default=0}, Callback=function(v) updateEditorOffset("RZ", v) end})
-
-UIElements.AppearancePosX = editorSliders.X
-UIElements.AppearancePosY = editorSliders.Y
-UIElements.AppearancePosZ = editorSliders.Z
-UIElements.AppearanceRotX = editorSliders.RX
-UIElements.AppearanceRotY = editorSliders.RY
-UIElements.AppearanceRotZ = editorSliders.RZ
-
-Tabs.Apariencia:Button({
-    Title = "Restablecer posición del accesorio",
-    Desc = "Devuelve a 0 la posición y rotación del limited seleccionado.",
-    Callback = function()
-        local key = runtime.Appearance.EditorSelectedKey
-        if not key then return end
-        runtime.Appearance.AccessoryOffsets[key] = {Position = Vector3.new(), Rotation = Vector3.new()}
-        syncEditorSliders()
-        runtime.ApplyAppearanceOffset(key)
-        showBottomMessage("Posición restaurada: " .. runtime.AppearanceCatalog[key].Name)
-    end,
-})
-
-Tabs.Apariencia:Button({
+local restoreAppearanceButton = Tabs.Apariencia:Button({
     Title = "Restaurar apariencia completa",
     Desc = "Quita Headless, Korblox y todos los limiteds aplicados por iLunXHub.",
     Callback = function()
@@ -2717,12 +2795,13 @@ Tabs.Apariencia:Button({
             if toggle then pcall(function() toggle:Set(false) end) end
         end
         runtime.SuppressNotifications = wasSuppressed
-        runtime.RefreshAppearanceEditor()
+        runtime.RefreshAppearanceControls()
         showBottomMessage("Apariencia restaurada.")
     end,
 })
+placeAppearanceElement(restoreAppearanceButton, nextAppearanceOrder())
 
-runtime.RefreshAppearanceEditor()
+runtime.RefreshAppearanceControls()
 
 
 local aimHookState = runtimeEnv.__ILUNX_AIM_HOOK_STATE

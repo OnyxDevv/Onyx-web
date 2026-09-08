@@ -4,7 +4,7 @@
     | |/ |/ / / _ \/ _  / /_/ // /  
     |__/|__/_/_//_/\_,_/\____/___/
     
-    v1.6.65-iLunXPRO-MAXPERF  |  2026-09-08  |  Roblox UI Library for scripts
+    v1.6.65-iLunXPRO-MAXPERF2  |  2026-09-08  |  Roblox UI Library for scripts
     
     To view the source code, see the `src/` folder on the official GitHub repository.
     
@@ -756,10 +756,11 @@ return x
 end
 
 function r.DisconnectAll()
+-- MAXPERF2: limpieza blindada; ninguna conexión vieja queda viva tras destruir/re-ejecutar.
 for u=#r.Signals,1,-1 do
 local x=r.Signals[u]
 r.Signals[u]=nil
-if x then x:Disconnect()end
+if x then pcall(function() x:Disconnect() end) end
 end
 end
 
@@ -1024,7 +1025,11 @@ ApplyTheme(C)
 end
 else
 for C,F in pairs(r.Objects)do
+if F and F.Object and F.Object.Parent~=nil then
 ApplyTheme(F)
+else
+r.Objects[C]=nil
+end
 end
 end
 end
@@ -7534,7 +7539,13 @@ aq=aA
 ae.SafeCallback(al.Callback,FormatValue(aA))
 end
 
-an=ad.RenderStepped:Connect(function()
+local dragAccumulator=0
+an=ad.RenderStepped:Connect(function(dt)
+if ak.Window.ReduceMotion then
+ dragAccumulator=dragAccumulator+dt
+ if dragAccumulator<(1/60) then return end
+ dragAccumulator=0
+end
 local f=am and aB.Position.X or ac:GetMouseLocation().X
 local g=math.clamp(
 (f-al.UIElements.SliderIcon.AbsolutePosition.X)

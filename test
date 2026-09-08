@@ -438,7 +438,7 @@ end
 -- INICIALIZACIÓN WINDUI (CON CACHÉ 24HRS)
 -- ==========================================
 local WindUI
-local _version = "1.8.0_ILUNX_MAXPERF"
+local _version = "1.8.1_ILUNX_MAXPERF2"
 local uiFileName = "iLunXHubUI_Cache_v" .. _version .. ".txt"
 local timeFileName = "iLunXHubUI_Cache_v" .. _version .. "_Time.txt"
 
@@ -459,7 +459,7 @@ local ok, result = pcall(function()
     else
         -- Si guardas ambos archivos juntos, prioriza la UI MAXPERF local.
         -- Si no existe, conserva el fallback remoto actual.
-        local localUiFile = "main_iLunX_PRO_MAXPERF.lua"
+        local localUiFile = "main_iLunX_PRO_MAXPERF_v2.lua"
         local codigoUi
         if isfile and readfile and isfile(localUiFile) then
             codigoUi = readfile(localUiFile)
@@ -1580,6 +1580,13 @@ runtime.TargetPartNameCache = {
     AutoShoot = {"Head"},
     SilentAim = {"Head"},
 }
+-- MAXPERF2: cacheamos las referencias de partes por Character. Silent Aim corre muy
+-- seguido, así que evitar FindFirstChild repetido aquí quita bastante trabajo en móvil.
+runtime.TargetSelectionVersion = {AutoShoot = 1, SilentAim = 1}
+runtime.TargetPartCache = {
+    AutoShoot = setmetatable({}, {__mode = "k"}),
+    SilentAim = setmetatable({}, {__mode = "k"}),
+}
 
 function runtime.RebuildTargetPartNameCache(mode)
     local selected = runtime.TargetSelections[mode] or {}
@@ -1636,6 +1643,9 @@ function runtime.SetTargetSelection(mode, value)
 
     if not next(selected) then selected["Cabeza"] = true end
     runtime.RebuildTargetPartNameCache(mode)
+    runtime.TargetSelectionVersion[mode] = (runtime.TargetSelectionVersion[mode] or 0) + 1
+    local cache = runtime.TargetPartCache[mode]
+    if cache then table.clear(cache) end
     local names = runtime.GetTargetSelectionArray(mode)
     if mode == "AutoShoot" then
         autoShootTargetPart = table.concat(names, ", ")
@@ -1651,6 +1661,23 @@ end
 function runtime.CollectTargetParts(char, mode, out, seen)
     table.clear(out)
     table.clear(seen)
+    if not char then return out end
+
+    local modeCache = runtime.TargetPartCache[mode]
+    local version = runtime.TargetSelectionVersion[mode] or 1
+    local cached = modeCache and modeCache[char]
+    if cached and cached.Version == version then
+        local valid = true
+        for i = 1, #cached.Parts do
+            local part = cached.Parts[i]
+            if not part or part.Parent ~= char then valid = false break end
+            out[i] = part
+        end
+        if valid and #out > 0 then return out end
+        table.clear(out)
+        modeCache[char] = nil
+    end
+
     local partNames = runtime.TargetPartNameCache[mode] or runtime.RebuildTargetPartNameCache(mode)
     for i = 1, #partNames do
         local part = ffc(char, partNames[i])
@@ -1662,6 +1689,12 @@ function runtime.CollectTargetParts(char, mode, out, seen)
     if #out == 0 then
         local fallback = ffc(char, "Head") or ffc(char, "HumanoidRootPart")
         if fallback then out[1] = fallback end
+    end
+
+    if modeCache and #out > 0 then
+        local parts = table.create and table.create(#out) or {}
+        for i = 1, #out do parts[i] = out[i] end
+        modeCache[char] = {Version = version, Parts = parts}
     end
     return out
 end
@@ -2977,6 +3010,15 @@ function cleanESP(targetPlayer)
     end
 end
 
+local function hideESP(targetPlayer)
+    local espObj = activeESPs[targetPlayer]
+    if not espObj then return end
+    if espObj.Highlight and espObj.Highlight.Enabled then espObj.Highlight.Enabled = false end
+    if espObj.Billboard and espObj.Billboard.Enabled then espObj.Billboard.Enabled = false end
+    -- Fuerza una sola reconstrucción de texto al volver a ser válido, sin destruir Instances.
+    espObj.LastDistance = -1
+end
+
 
 -- ==========================================
 -- 🚀 HILO MAESTRO DE OPTIMIZACIÓN (CERO LAG)
@@ -2996,6 +3038,8 @@ local mState = {
     igSA = {}, scSA = {}, seenSA = {},
     hbBlockedColor = Color3_fromRGB(255, 50, 50),
     hbByChar = setmetatable({}, {__mode = "k"}),
+    hbAdornment = setmetatable({}, {__mode = "k"}),
+    charCore = setmetatable({}, {__mode = "k"}),
     vpX = -1, vpY = -1, centerX = 0, centerY = 0,
     maxEspDistanceSq = MAX_ESP_DISTANCE * MAX_ESP_DISTANCE,
 }
@@ -3003,15 +3047,34 @@ mState.pHB.FilterType = Enum.RaycastFilterType.Exclude
 mState.pAS.FilterType = Enum.RaycastFilterType.Exclude
 mState.pSA.FilterType = Enum.RaycastFilterType.Exclude
 
-local function enemigoEnLobby(enemyChar)
+local function getCharCore(char)
+    if not char then return nil end
+    local core = mState.charCore[char]
+    if core and core.Humanoid and core.Humanoid.Parent == char and core.HRP and core.HRP.Parent == char then
+        if not core.Head or core.Head.Parent ~= char then core.Head = ffc(char, "Head") end
+        if not core.LeftFoot or core.LeftFoot.Parent ~= char then core.LeftFoot = ffc(char, "LeftFoot") or ffc(char, "LeftLeg") end
+        if not core.RightFoot or core.RightFoot.Parent ~= char then core.RightFoot = ffc(char, "RightFoot") or ffc(char, "RightLeg") end
+        return core
+    end
+    core = {
+        Humanoid = ffc(char, "Humanoid") or char:FindFirstChildOfClass("Humanoid"),
+        HRP = ffc(char, "HumanoidRootPart"),
+        Head = ffc(char, "Head"),
+        LeftFoot = ffc(char, "LeftFoot") or ffc(char, "LeftLeg"),
+        RightFoot = ffc(char, "RightFoot") or ffc(char, "RightLeg"),
+    }
+    mState.charCore[char] = core
+    return core
+end
+
+local function enemigoEnLobby(enemyChar, enemyHrp)
     if enemyChar:FindFirstChildOfClass("ForceField") then return true end
-    local eHrp = enemyChar:FindFirstChild("HumanoidRootPart")
+    local core = enemyHrp and nil or getCharCore(enemyChar)
+    local eHrp = enemyHrp or (core and core.HRP)
     if eHrp then
         for _, zona in ipairs(ZONAS_SEGURAS) do
             local delta = eHrp.Position - zona.Centro
-            if delta:Dot(delta) <= (zona.Radio * zona.Radio) then
-                return true
-            end
+            if delta:Dot(delta) <= (zona.Radio * zona.Radio) then return true end
         end
     end
     return false
@@ -3048,8 +3111,9 @@ runtime.Track(RunService.Heartbeat:Connect(function(deltaTime)
                 for i = 1, #listaJugadores do
                     local v = listaJugadores[i]
                     local targetChar = v ~= player and v.Character or nil
-                    local hrp = targetChar and ffc(targetChar, "HumanoidRootPart")
-                    local targetHum = targetChar and ffc(targetChar, "Humanoid")
+                    local targetCore = targetChar and getCharCore(targetChar) or nil
+                    local hrp = targetCore and targetCore.HRP
+                    local targetHum = targetCore and targetCore.Humanoid
                     
                     if hrp and targetHum and targetHum.Health > 0 and isEnemy(v) then
                         -- 1. BUSCAMOS O CREAMOS EL BLOQUE FALSO
@@ -3090,6 +3154,7 @@ runtime.Track(RunService.Heartbeat:Connect(function(deltaTime)
                             box.ZIndex = 5 
                             box.Parent = fakeHitbox
                             mState.hbByChar[targetChar] = fakeHitbox
+                            mState.hbAdornment[fakeHitbox] = box
                         end
                         
                         -- 2. ACTUALIZAMOS TAMAÑO FÍSICO
@@ -3114,7 +3179,11 @@ runtime.Track(RunService.Heartbeat:Connect(function(deltaTime)
                         local currentTrans = hitboxTransparency or 0.6
                         local targetBoxTrans = hitboxInvisible and 1 or currentTrans
                         
-                        local box = fakeHitbox:FindFirstChild("AstraHitboxBox")
+                        local box = mState.hbAdornment[fakeHitbox]
+                        if not (box and box.Parent == fakeHitbox) then
+                            box = fakeHitbox:FindFirstChild("AstraHitboxBox")
+                            mState.hbAdornment[fakeHitbox] = box
+                        end
                         if box then
                             if box.Size ~= fakeHitbox.Size then box.Size = fakeHitbox.Size end
                             if box.Color3 ~= targetColor then box.Color3 = targetColor end
@@ -3187,7 +3256,8 @@ runtime.Track(RunService.Heartbeat:Connect(function(deltaTime)
             mState.tESP = 0
             if not enLobby then
                 local myChar = player.Character
-                local myPos = (myChar and myChar:FindFirstChild("Head")) and myChar.Head.Position or nil
+                local myCore = myChar and getCharCore(myChar) or nil
+                local myPos = (myCore and myCore.Head and myCore.Head.Position) or nil
 
                 if mState.lastEspColor ~= espColor then
                     mState.lastEspColor = espColor
@@ -3203,9 +3273,10 @@ runtime.Track(RunService.Heartbeat:Connect(function(deltaTime)
                     local p = listaJugadores[i]
                     if p ~= player then
                         local char = p.Character
-                        local targetHum = char and ffc(char, "Humanoid")
-                        local targetHead = char and ffc(char, "Head")
-                        if myPos and targetHum and targetHum.Health > 0 and targetHead and isEnemy(p) and not enemigoEnLobby(char) then
+                        local core = char and getCharCore(char) or nil
+                        local targetHum = core and core.Humanoid
+                        local targetHead = core and core.Head
+                        if myPos and targetHum and targetHum.Health > 0 and targetHead and isEnemy(p) and not enemigoEnLobby(char, core.HRP) then
                             local delta = targetHead.Position - myPos
                             local distSq = delta:Dot(delta)
                             
@@ -3286,8 +3357,8 @@ runtime.Track(RunService.Heartbeat:Connect(function(deltaTime)
                                         espObj.Billboard.Enabled = false
                                     end
                                 end
-                            else cleanESP(p) end
-                        else cleanESP(p) end
+                            else hideESP(p) end
+                        else hideESP(p) end
                     end
                 end
             end
@@ -3295,7 +3366,7 @@ runtime.Track(RunService.Heartbeat:Connect(function(deltaTime)
     elseif mState.espAct then
         mState.espAct = false
         mState.tESP = 0
-        for i = 1, #listaJugadores do cleanESP(listaJugadores[i]) end
+        for i = 1, #listaJugadores do hideESP(listaJugadores[i]) end
     end
 
     -- ==========================================
@@ -3308,25 +3379,26 @@ runtime.Track(RunService.Heartbeat:Connect(function(deltaTime)
             mState.tAS = 0
             if not enLobby then
                 local char = player.Character
-                local hrp = char and char:FindFirstChild("HumanoidRootPart")
+                local localCore = char and getCharCore(char) or nil
+                local hrp = localCore and localCore.HRP
                 if hrp then
                     local arma = char:FindFirstChildOfClass("Tool")
                     if arma and arma:FindFirstChild("Handle") then
                         local esGun = esLaPistola(arma)
                         if (esGun and autoShootEnabled) or (not esGun and autoShootCuchilloEnabled) then
                             local myPos = hrp.Position
-                            local headPos = char:FindFirstChild("Head") and char.Head.Position or myPos
+                            local headPos = (localCore and localCore.Head and localCore.Head.Position) or myPos
                             
                             table.clear(mState.objAS)
                             for i = 1, #listaJugadores do
                                 local p = listaJugadores[i]
                                 local enemyChar = p ~= player and p.Character or nil
                                 if enemyChar and isEnemy(p) then
-                                    local enemyHrp = ffc(enemyChar, "HumanoidRootPart")
+                                    local enemyCore = getCharCore(enemyChar)
+                                    local enemyHrp = enemyCore and enemyCore.HRP
+                                    local enemyHum = enemyCore and enemyCore.Humanoid
                                     local enemyDelta = enemyHrp and (enemyHrp.Position - myPos) or nil
-                                    if enemyDelta and enemyDelta:Dot(enemyDelta) <= 640000 then
-                                        local enemyHum = ffc(enemyChar, "Humanoid")
-                                        if enemyHum and enemyHum.Health > 0 then
+                                    if enemyHum and enemyHum.Health > 0 and enemyDelta and enemyDelta:Dot(enemyDelta) <= 640000 then
                                             runtime.CollectTargetParts(enemyChar, "AutoShoot", mState.scAS, mState.seenAS)
                                             for j = 1, #mState.scAS do
                                                 local part = mState.scAS[j]
@@ -3338,7 +3410,6 @@ runtime.Track(RunService.Heartbeat:Connect(function(deltaTime)
                                                 record.Char = enemyChar
                                                 table_insert(mState.objAS, record)
                                             end
-                                        end
                                     end
                                 end 
                             end 
@@ -3398,7 +3469,8 @@ runtime.Track(RunService.Heartbeat:Connect(function(deltaTime)
             mState.tSA = 0
             if not enLobby then
                 local char = player.Character
-                local hrp = char and char:FindFirstChild("HumanoidRootPart")
+                local localCore = char and getCharCore(char) or nil
+                local hrp = localCore and localCore.HRP
                 if hrp then
                     local arma = char:FindFirstChildOfClass("Tool")
                     local allowedWeapon = false
@@ -3414,7 +3486,7 @@ runtime.Track(RunService.Heartbeat:Connect(function(deltaTime)
                         local shortestDistToCenter = math.huge 
                         local shortestDistanceFisica = math.huge 
                         local myPos = hrp.Position
-                        local headPos = char:FindFirstChild("Head") and char.Head.Position or myPos
+                        local headPos = (localCore and localCore.Head and localCore.Head.Position) or myPos
                         local viewport = camera.ViewportSize
                         if viewport.X ~= mState.vpX or viewport.Y ~= mState.vpY then
                             mState.vpX, mState.vpY = viewport.X, viewport.Y
@@ -3431,8 +3503,9 @@ runtime.Track(RunService.Heartbeat:Connect(function(deltaTime)
                             local p = listaJugadores[i]
                             local enemyChar = p ~= player and p.Character or nil
                             if enemyChar and isEnemy(p) then
-                                local enemyHum = ffc(enemyChar, "Humanoid") 
-                                local enemyHrp = ffc(enemyChar, "HumanoidRootPart")
+                                local enemyCore = getCharCore(enemyChar)
+                                local enemyHum = enemyCore and enemyCore.Humanoid
+                                local enemyHrp = enemyCore and enemyCore.HRP
                                 local enemyDelta = enemyHrp and (enemyHrp.Position - myPos) or nil
                                 if enemyHum and enemyHum.Health > 0 and enemyDelta and enemyDelta:Dot(enemyDelta) <= 640000 then
                                     if silentAimFovEnabled then
@@ -6143,7 +6216,7 @@ UIElements.TogEspNm = Tabs.Vis:Toggle({Title = "Mostrar Nombre", Value = true, C
 UIElements.TogEspDs = Tabs.Vis:Toggle({Title = "Mostrar Distancia", Value = true, Callback = function(s) espSettings.Distance = s end})
 UIElements.TogEspBox = Tabs.Vis:Toggle({
     Title = "ESP Box 2D",
-    Desc = "Dibuja una caja ajustada al personaje usando el mismo render de 30 FPS.",
+    Desc = "Caja estable anclada al cuerpo real; ignora hitbox y accesorios.",
     Value = false,
     Callback = function(s) espSettings.Box = s end,
 })
@@ -6274,19 +6347,21 @@ runtime.Track(RunService.RenderStepped:Connect(function(deltaTime)
 
     tracersLimpios = not espLinesEnabled
     local myChar = player.Character
-    local myRoot = myChar and ffc(myChar, "HumanoidRootPart")
+    local myCore = myChar and getCharCore(myChar) or nil
+    local myRoot = myCore and myCore.HRP
     local myPos = myRoot and myRoot.Position or camera.CFrame.Position
 
     for i = 1, #listaJugadores do
         local p = listaJugadores[i]
         if p ~= player then
             local char = p.Character
-            local hrp = char and ffc(char, "HumanoidRootPart")
-            local hum = char and ffc(char, "Humanoid")
+            local core = char and getCharCore(char) or nil
+            local hrp = core and core.HRP
+            local hum = core and core.Humanoid
             local valid = false
             local rootScreen, onScreen
 
-            if hrp and hum and hum.Health > 0 and isEnemy(p) and not enemigoEnLobby(char) then
+            if hrp and hum and hum.Health > 0 and isEnemy(p) and not enemigoEnLobby(char, hrp) then
                 local delta = myPos - hrp.Position
                 if delta:Dot(delta) <= MAX_ESP_DISTANCE_SQ then
                     rootScreen, onScreen = camera:WorldToViewportPoint(hrp.Position)
@@ -6315,39 +6390,70 @@ runtime.Track(RunService.RenderStepped:Connect(function(deltaTime)
             if wantsESP2D and valid then
                 esp2dClean = false
                 entry = entry or runtime.GetESP2DEntry(p)
-                local cf, size = char:GetBoundingBox()
-                local top = camera:WorldToViewportPoint(cf:PointToWorldSpace(Vector3_new(0, size.Y * 0.5, 0)))
-                local bottom = camera:WorldToViewportPoint(cf:PointToWorldSpace(Vector3_new(0, -size.Y * 0.5, 0)))
-                local left = camera:WorldToViewportPoint(cf:PointToWorldSpace(Vector3_new(-size.X * 0.5, 0, 0)))
-                local right = camera:WorldToViewportPoint(cf:PointToWorldSpace(Vector3_new(size.X * 0.5, 0, 0)))
+                -- MAXPERF2: caja corporal estable. NO usamos Character:GetBoundingBox(),
+                -- porque incluye el Torso falso del Hitbox Expander y accesorios/limiteds.
+                local head = core and core.Head
+                local up = hrp.CFrame.UpVector
+                local topWorld = head and (head.Position + up * (head.Size.Y * 0.55))
+                    or (hrp.Position + up * 2.8)
 
-                local boxH = math.max(8, math.abs(bottom.Y - top.Y))
-                local boxW = math.max(6, math.abs(right.X - left.X))
-                local x = ((left.X + right.X) * 0.5) - (boxW * 0.5)
-                local y = math.min(top.Y, bottom.Y)
-
-                if entry.Box then
-                    entry.Box.Position = Vector2_new(x, y)
-                    entry.Box.Size = Vector2_new(boxW, boxH)
-                    entry.Box.Color = espColor
-                    entry.Box.Visible = espSettings.Box
+                local leftFoot = core and core.LeftFoot
+                local rightFoot = core and core.RightFoot
+                local bottomWorld
+                if leftFoot or rightFoot then
+                    local lfPoint = leftFoot and (leftFoot.Position - up * (leftFoot.Size.Y * 0.5)) or nil
+                    local rfPoint = rightFoot and (rightFoot.Position - up * (rightFoot.Size.Y * 0.5)) or nil
+                    if lfPoint and rfPoint then
+                        -- Escogemos el punto más bajo respecto al eje vertical del propio personaje.
+                        bottomWorld = ((lfPoint - hrp.Position):Dot(up) < (rfPoint - hrp.Position):Dot(up)) and lfPoint or rfPoint
+                    else
+                        bottomWorld = lfPoint or rfPoint
+                    end
+                else
+                    bottomWorld = hrp.Position - up * ((hum.HipHeight or 2) + hrp.Size.Y * 0.5)
                 end
 
-                if espSettings.HealthBar then
-                    local ratio = math.clamp(hum.Health / math.max(hum.MaxHealth, 1), 0, 1)
-                    local bx = x - 5
-                    local byBottom = y + boxH
-                    local byHealth = byBottom - (boxH * ratio)
-                    entry.HealthBg.From = Vector2_new(bx, y)
-                    entry.HealthBg.To = Vector2_new(bx, byBottom)
-                    entry.HealthBg.Visible = true
-                    entry.Health.From = Vector2_new(bx, byBottom)
-                    entry.Health.To = Vector2_new(bx, byHealth)
-                    entry.Health.Color = Color3.fromHSV(ratio * 0.33, 0.92, 1)
-                    entry.Health.Visible = true
+                local topScreen = camera:WorldToViewportPoint(topWorld)
+                local bottomScreen = camera:WorldToViewportPoint(bottomWorld)
+                local geometryValid = topScreen.Z > 0.05 and bottomScreen.Z > 0.05
+
+                if geometryValid then
+                    local rawH = math.abs(bottomScreen.Y - topScreen.Y)
+                    local maxH = math.max(8, viewport.Y * 0.92)
+                    local boxH = math.clamp(rawH, 8, maxH)
+                    local ratioW = hum.RigType == Enum.HumanoidRigType.R6 and 0.62 or 0.55
+                    local boxW = math.clamp(boxH * ratioW, 6, math.max(6, viewport.X * 0.62))
+                    local x = rootScreen.X - boxW * 0.5
+                    local y = math.min(topScreen.Y, bottomScreen.Y)
+
+                    if entry.Box then
+                        entry.Box.Position = Vector2_new(x, y)
+                        entry.Box.Size = Vector2_new(boxW, boxH)
+                        if entry.LastBoxColor ~= espColor then
+                            entry.Box.Color = espColor
+                            entry.LastBoxColor = espColor
+                        end
+                        if entry.Box.Visible ~= espSettings.Box then entry.Box.Visible = espSettings.Box end
+                    end
+
+                    if espSettings.HealthBar then
+                        local ratio = math.clamp(hum.Health / math.max(hum.MaxHealth, 1), 0, 1)
+                        local bx = x - 5
+                        local byBottom = y + boxH
+                        local byHealth = byBottom - (boxH * ratio)
+                        entry.HealthBg.From = Vector2_new(bx, y)
+                        entry.HealthBg.To = Vector2_new(bx, byBottom)
+                        if not entry.HealthBg.Visible then entry.HealthBg.Visible = true end
+                        entry.Health.From = Vector2_new(bx, byBottom)
+                        entry.Health.To = Vector2_new(bx, byHealth)
+                        entry.Health.Color = Color3.fromHSV(ratio * 0.33, 0.92, 1)
+                        if not entry.Health.Visible then entry.Health.Visible = true end
+                    else
+                        if entry.HealthBg.Visible then entry.HealthBg.Visible = false end
+                        if entry.Health.Visible then entry.Health.Visible = false end
+                    end
                 else
-                    entry.HealthBg.Visible = false
-                    entry.Health.Visible = false
+                    runtime.HideESP2DEntry(entry)
                 end
             elseif entry then
                 runtime.HideESP2DEntry(entry)

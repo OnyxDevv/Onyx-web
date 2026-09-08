@@ -17,7 +17,7 @@ local workspace = game:GetService("Workspace")
 
 -- Estilo iOS: radios consistentes para ventana, controles y overlays.
 local IOS_STYLE = {
-    WindowRadius = 20,
+    WindowRadius = 22,
     ElementRadius = 14,
     OverlayRadius = 14,
     OpenButtonRadius = 16,
@@ -140,6 +140,12 @@ function runtime.Cleanup()
         runtime.StartupGui = nil
     end
 
+    if runtime.Window then
+        local uiWindow = runtime.Window
+        runtime.Window = nil
+        pcall(function() uiWindow:Destroy() end)
+    end
+
     if runtime.ScreenGui then
         pcall(function() runtime.ScreenGui:Destroy() end)
         runtime.ScreenGui = nil
@@ -228,7 +234,7 @@ end
 local startupSplashState = {StartedAt = os.clock()}
 
 do
-    -- Splash MAXPERF: negro real, nítido y cubriendo todo el viewport.
+    -- Splash: negro real, nítido y cubriendo todo el viewport.
     local splashParent = playerGui
     pcall(function()
         if gethui then splashParent = gethui() else splashParent = game:GetService("CoreGui") end
@@ -258,7 +264,7 @@ do
     splash.Name = "Splash"
     splash.Size = UDim2.fromScale(1, 1)
     splash.Position = UDim2.fromScale(0, 0)
-    splash.BackgroundColor3 = Color3.new(0, 0, 0)
+    splash.BackgroundColor3 = Color3.fromHex("#090D16")
     splash.BackgroundTransparency = 0
     splash.BorderSizePixel = 0
     splash.GroupTransparency = 1
@@ -270,7 +276,7 @@ do
     content.Name = "LoaderContent"
     content.AnchorPoint = Vector2.new(0.5, 0.5)
     content.Position = UDim2.fromScale(0.5, 0.5)
-    content.Size = UDim2.fromOffset(460, 128)
+    content.Size = UDim2.new(1, -32, 0, 128)
     content.BackgroundTransparency = 1
     content.ZIndex = 2
     content.Parent = splash
@@ -300,7 +306,7 @@ do
     status.Position = UDim2.new(0.5, 0, 0, 62)
     status.BackgroundTransparency = 1
     status.Text = "Cargando iLunXHub..."
-    status.TextColor3 = Color3.fromHex("#9B9FA6")
+    status.TextColor3 = Color3.fromHex("#9FADC3")
     status.Font = Enum.Font.GothamMedium
     status.TextSize = 13
     status.TextXAlignment = Enum.TextXAlignment.Center
@@ -311,7 +317,7 @@ do
     progressTrack.AnchorPoint = Vector2.new(0.5, 0)
     progressTrack.Size = UDim2.fromOffset(230, 2)
     progressTrack.Position = UDim2.new(0.5, 0, 0, 98)
-    progressTrack.BackgroundColor3 = Color3.fromHex("#242528")
+    progressTrack.BackgroundColor3 = Color3.fromHex("#26334A")
     progressTrack.BorderSizePixel = 0
     progressTrack.ZIndex = 3
     progressTrack.Parent = content
@@ -319,7 +325,7 @@ do
 
     local progress = Instance.new("Frame")
     progress.Size = UDim2.fromScale(0.04, 1)
-    progress.BackgroundColor3 = Color3.fromHex("#E7E9EC")
+    progress.BackgroundColor3 = Color3.fromHex("#D6E3F5")
     progress.BorderSizePixel = 0
     progress.ZIndex = 4
     progress.Parent = progressTrack
@@ -438,41 +444,42 @@ end
 -- INICIALIZACIÓN WINDUI (CON CACHÉ 24HRS)
 -- ==========================================
 local WindUI
-local _version = "1.8.2_ILUNX_MAXPERF3_FASTRESPAWN"
+local _version = "2.0.0_NOCTIS"
 local uiFileName = "iLunXHubUI_Cache_v" .. _version .. ".txt"
 local timeFileName = "iLunXHubUI_Cache_v" .. _version .. "_Time.txt"
 
 local ok, result = pcall(function()
-    local cacheValido = false
-    
-    -- Revisar la expiración del caché
-    if isfile and isfile(timeFileName) and readfile then
-        local savedTime = tonumber(readfile(timeFileName))
-        if savedTime and (os.time() - savedTime) < 86400 then -- 24 horas
-            cacheValido = true
+    local function execute(source, label)
+        local chunk, syntaxError = loadstring(source, label)
+        if not chunk then error("UI inválida: " .. tostring(syntaxError)) end
+        local library = chunk()
+        if type(library) ~= "table" or type(library.CreateWindow) ~= "function" then
+            error("El archivo de UI no devuelve una biblioteca válida.")
+        end
+        return library
+    end
+    -- El archivo nuevo siempre tiene prioridad, aunque exista caché de 24 horas.
+    if isfile and readfile then
+        for _, filename in ipairs({"main_iLunX_PRO.lua", "main.lua"}) do
+            if isfile(filename) then return execute(readfile(filename), filename) end
+        end
+        if isfile(uiFileName) and isfile(timeFileName) then
+            local savedTime = tonumber(readfile(timeFileName))
+            if savedTime and os.time() >= savedTime and os.time() - savedTime < 86400 then
+                local cached, library = pcall(execute, readfile(uiFileName), uiFileName)
+                if cached then return library end
+            end
         end
     end
-
-    if cacheValido and isfile and isfile(uiFileName) then
-        -- Cargar desde almacenamiento local (Carga instantánea sin lag)
-        return loadstring(readfile(uiFileName))()
-    else
-        -- Si guardas ambos archivos juntos, prioriza la UI MAXPERF local.
-        -- Si no existe, conserva el fallback remoto actual.
-        local localUiFile = "main_iLunX_PRO_MAXPERF_v3.lua"
-        local codigoUi
-        if isfile and readfile and isfile(localUiFile) then
-            codigoUi = readfile(localUiFile)
-        else
-            codigoUi = game:HttpGet("https://raw.githubusercontent.com/OnyxDevv/Onyx-web/refs/heads/main/main2.lua")
-        end
-        
-        if writefile then 
-            writefile(uiFileName, codigoUi) 
-            writefile(timeFileName, tostring(os.time())) -- Guardamos el nuevo tiempo de vida
-        end
-        return loadstring(codigoUi)()
+    local source = game:HttpGet("https://raw.githubusercontent.com/OnyxDevv/Onyx-web/refs/heads/main/main.lua")
+    local library = execute(source, "iLunXHub UI")
+    if writefile then
+        pcall(function()
+            writefile(uiFileName, source)
+            writefile(timeFileName, tostring(os.time()))
+        end)
     end
+    return library
 end)
 
 if ok and result then 
@@ -492,18 +499,19 @@ local Window = WindUI:CreateWindow({
     IconSize = 20,
     IconRadius = 8,
     Folder = "iLunXHub_WindUI",
-    Size = UDim2.new(0, 720, 0, 520),
+    Size = UDim2.new(0, 760, 0, 540),
     MinSize = Vector2.new(620, 420),
     MaxSize = Vector2.new(900, 650),
     Radius = IOS_STYLE.WindowRadius,
     ElementsRadius = IOS_STYLE.ElementRadius,
-    SideBarWidth = 184,
-    ShadowTransparency = 0.76,
+    SideBarWidth = 190,
+    ShadowTransparency = 0.58,
     Acrylic = false,
     Transparent = false,
     NewElements = false,
-    ReduceMotion = true,
-    EntryAnimation = false,
+    ReduceMotion = false,
+    EntryAnimation = true,
+    AmbientBackground = true,
     HideSearchBar = true,
     OpenButton = {
         Title = "Abrir iLunXHub",
@@ -512,16 +520,18 @@ local Window = WindUI:CreateWindow({
         StrokeThickness = 1,
         Enabled = true,
         Draggable = true,
-        Scale = 0.8,
+        Scale = 1,
+        OnlyMobile = false,
         Color = ColorSequence.new({
             ColorSequenceKeypoint.new(0, Color3.fromRGB(60, 65, 72)),
             ColorSequenceKeypoint.new(0.48, Color3.fromRGB(255, 255, 255)),
             ColorSequenceKeypoint.new(1, Color3.fromRGB(126, 132, 140))
         })
     },
-    Topbar = { Height = 52, ButtonsType = "Default" }
+    Topbar = { Height = 62, ButtonsType = "Default" }
 })
 
+runtime.Window = Window
 pcall(function()
     Window:OnDestroy(runtime.Cleanup)
 end)
@@ -613,11 +623,11 @@ runtime.NotificationsReady = false
 
 local function createIOSBanner(payload)
     local banner = Instance.new("CanvasGroup")
-    banner.Name = "iOSBannerFast"
+    banner.Name = "IlunXNoctisBanner"
     banner.AnchorPoint = Vector2.new(0.5, 0)
     banner.Position = UDim2.new(0.5, 0, 0, -96)
     banner.Size = UDim2.new(1, -24, 0, 78)
-    banner.BackgroundColor3 = Color3.fromHex("#1C1C1E")
+    banner.BackgroundColor3 = Color3.new(1, 1, 1)
     banner.BackgroundTransparency = 0.035
     banner.BorderSizePixel = 0
     banner.ClipsDescendants = true
@@ -630,19 +640,19 @@ local function createIOSBanner(payload)
     sizeConstraint.MaxSize = Vector2.new(390, 78)
     sizeConstraint.Parent = banner
 
-    Instance.new("UICorner", banner).CornerRadius = UDim.new(0, 20)
+    Instance.new("UICorner", banner).CornerRadius = UDim.new(0, 18)
 
     local stroke = Instance.new("UIStroke")
-    stroke.Color = Color3.fromHex("#68686B")
-    stroke.Transparency = 0.38
+    stroke.Color = Color3.fromHex("#8DA4C4")
+    stroke.Transparency = 0.56
     stroke.Thickness = 1
     stroke.Parent = banner
 
     local gradient = Instance.new("UIGradient")
     gradient.Color = ColorSequence.new({
-        ColorSequenceKeypoint.new(0, Color3.fromHex("#343437")),
-        ColorSequenceKeypoint.new(0.52, Color3.fromHex("#242426")),
-        ColorSequenceKeypoint.new(1, Color3.fromHex("#18181A"))
+        ColorSequenceKeypoint.new(0, Color3.fromHex("#26364B")),
+        ColorSequenceKeypoint.new(0.52, Color3.fromHex("#172333")),
+        ColorSequenceKeypoint.new(1, Color3.fromHex("#101722"))
     })
     gradient.Rotation = 105
     gradient.Parent = banner
@@ -668,7 +678,7 @@ local function createIOSBanner(payload)
     iconText.Size = UDim2.fromScale(1, 1)
     iconText.BackgroundTransparency = 1
     iconText.Text = payload.icon
-    iconText.TextColor3 = Color3.fromHex("#111113")
+    iconText.TextColor3 = Color3.fromHex("#132033")
     iconText.Font = Enum.Font.GothamBlack
     iconText.TextSize = 18
     iconText.ZIndex = 204
@@ -691,8 +701,8 @@ local function createIOSBanner(payload)
     timeLabel.Size = UDim2.fromOffset(48, 18)
     timeLabel.Position = UDim2.new(1, -13, 0, 8)
     timeLabel.BackgroundTransparency = 1
-    timeLabel.Text = "ahora"
-    timeLabel.TextColor3 = Color3.fromHex("#A7A7AD")
+    timeLabel.Text = "ILUNX"
+    timeLabel.TextColor3 = Color3.fromHex("#8EA1BD")
     timeLabel.Font = Enum.Font.GothamMedium
     timeLabel.TextSize = 10
     timeLabel.TextXAlignment = Enum.TextXAlignment.Right
@@ -704,8 +714,8 @@ local function createIOSBanner(payload)
     body.Position = UDim2.fromOffset(59, 27)
     body.BackgroundTransparency = 1
     body.Text = payload.text
-    body.TextColor3 = Color3.fromHex("#EAEAEE")
-    body.Font = Enum.Font.GothamMedium
+    body.TextColor3 = Color3.fromHex("#D6DFED")
+    body.Font = Enum.Font.Gotham
     body.TextSize = 13
     body.TextWrapped = true
     body.TextXAlignment = Enum.TextXAlignment.Left
@@ -713,6 +723,16 @@ local function createIOSBanner(payload)
     body.ZIndex = 203
     body.Parent = banner
 
+    local line = Instance.new("Frame")
+    line.Name = "Lifetime"
+    line.Size = UDim2.new(1, -36, 0, 2)
+    line.Position = UDim2.new(0, 18, 1, -6)
+    line.BackgroundColor3 = payload.accent
+    line.BackgroundTransparency = 0.45
+    line.BorderSizePixel = 0
+    line.ZIndex = 204
+    line.Parent = banner
+    Instance.new("UICorner", line).CornerRadius = UDim.new(1, 0)
     return banner
 end
 
@@ -725,24 +745,35 @@ local function runNotificationQueue()
             local payload = table.remove(notificationQueue, 1)
             local banner = createIOSBanner(payload)
 
-            local enterTween = TweenService:Create(
-                banner,
-                TweenInfo.new(NOTIFICATION_TIMING.Enter, Enum.EasingStyle.Quint, Enum.EasingDirection.Out),
-                {Position = UDim2.new(0.5, 0, 0, 10), GroupTransparency = 0}
-            )
-            enterTween:Play()
-            enterTween.Completed:Wait()
+            if Window.ReduceMotion then
+                banner.Position = UDim2.new(0.5, 0, 0, 10)
+                banner.GroupTransparency = 0
+            else
+                local enterTween = TweenService:Create(
+                    banner,
+                    TweenInfo.new(NOTIFICATION_TIMING.Enter, Enum.EasingStyle.Quint, Enum.EasingDirection.Out),
+                    {Position = UDim2.new(0.5, 0, 0, 10), GroupTransparency = 0}
+                )
+                enterTween:Play()
+                enterTween.Completed:Wait()
+            end
 
+            if not runtime.Alive or not banner.Parent then break end
+            TweenService:Create(banner.Lifetime, TweenInfo.new(payload.duration, Enum.EasingStyle.Linear), {
+                Size = UDim2.new(0, 0, 0, 2)
+            }):Play()
             task.wait(payload.duration)
             if not runtime.Alive or not banner.Parent then break end
 
-            local exitTween = TweenService:Create(
-                banner,
-                TweenInfo.new(NOTIFICATION_TIMING.Exit, Enum.EasingStyle.Quint, Enum.EasingDirection.In),
-                {Position = UDim2.new(0.5, 0, 0, -96), GroupTransparency = 1}
-            )
-            exitTween:Play()
-            exitTween.Completed:Wait()
+            if not Window.ReduceMotion then
+                local exitTween = TweenService:Create(
+                    banner,
+                    TweenInfo.new(NOTIFICATION_TIMING.Exit, Enum.EasingStyle.Quint, Enum.EasingDirection.In),
+                    {Position = UDim2.new(0.5, 0, 0, -96), GroupTransparency = 1}
+                )
+                exitTween:Play()
+                exitTween.Completed:Wait()
+            end
             if banner.Parent then banner:Destroy() end
             task.wait(NOTIFICATION_TIMING.Gap)
         end
@@ -781,7 +812,7 @@ sendNotification = function(text, options)
         text = text,
         title = tostring(options.title or "iLunXHub"),
         icon = tostring(options.icon or "X"),
-        accent = options.accent or Color3.fromHex("#A8C7FA"),
+        accent = options.accent or Color3.fromHex("#CFDBED"),
         duration = holdDuration,
         key = options.key,
     }
@@ -832,7 +863,6 @@ local Tabs = {
     Graficos = MainSection:Tab({Title = "Gráficos", Icon = "solar:palette-bold"}), -- 🔥 NUEVA PESTAÑA AQUÍ
     Emotes = TrollSection:Tab({Title = "Animaciones", Icon = "solar:smile-circle-bold"}),
     Apariencia = TrollSection:Tab({Title = "Apariencia", Icon = "solar:palette-bold"}),
-    Cambios = TrollSection:Tab({Title = "Cambios", Icon = "solar:box-bold"}),
     Config = TrollSection:Tab({Title = "Configuración", Icon = "solar:settings-bold"})
 }
 
@@ -890,51 +920,17 @@ Tabs.Inicio:Paragraph({
 })
 
 -- ==========================================
--- CHANGELOG iLunX · TARJETAS VISUALES
+-- CAMBIOS RECIENTES · INICIO
 -- ==========================================
-Tabs.Cambios:Section({Title = "Actualización • 08 SEP 2026"})
+Tabs.Inicio:Section({Title = "Actualización • 08 SEP 2026"})
 
-Tabs.Cambios:Paragraph({
-    Title = "iLunXHub · MAXPERF 3",
-    Desc = "ACTUALIZACIÓN 08 SEP 2026  •  DUELS\nMás velocidad al reaparecer, menos trabajo por frame y una interfaz más limpia.",
-    Image = "solar:home-bold",
-    ImageSize = 42,
-    Color = Color3.fromHex("#20242A")
-})
-
-Tabs.Cambios:Paragraph({
-    Title = "Apariencia · Respawn instantáneo",
-    Desc = "Headless, Korblox y accesorios se restauran apenas el nuevo personaje está listo. Se eliminó la espera fija de casi 1 segundo y se añadió una segunda pasada inteligente sin reclonar lo que ya está equipado.",
+Tabs.Inicio:Paragraph({
+    Title = "Apariencia",
+    Desc = "Pestaña Apariencia agregada con Korblox, Headless y algunos limiteds.",
     Image = "solar:palette-bold",
-    ImageSize = 34,
-    Color = Color3.fromHex("#252A31")
-})
-
-Tabs.Cambios:Paragraph({
-    Title = "Visuales · ESP Box estable",
-    Desc = "El Box 2D usa únicamente el cuerpo real del jugador. Hitbox Expander, accesorios grandes y limiteds ya no alteran su ancho o altura.",
-    Image = "solar:eye-bold",
-    ImageSize = 34,
-    Color = Color3.fromHex("#22272E")
-})
-
-Tabs.Cambios:Paragraph({
-    Title = "Rendimiento · MAXPERF",
-    Desc = "Menos búsquedas repetidas en Aim, Silent Aim, Auto Shoot, ESP y Hitbox. Cachés de partes corporales, accesorios y welds para reducir CPU y microtirones, especialmente en móvil.",
-    Image = "solar:target-bold",
-    ImageSize = 34,
-    Color = Color3.fromHex("#242931")
-})
-
-Tabs.Cambios:Paragraph({
-    Title = "Interfaz · Fluidez",
-    Desc = "Sliders y animaciones internas optimizados con Reduce Motion real, limpieza de conexiones mejorada y splash negro fullscreen más nítido.",
-    Image = "solar:settings-bold",
     ImageSize = 34,
     Color = Color3.fromHex("#20252C")
 })
-
-
 
 
 Tabs.Inicio:Section({Title = "Información del Servidor"})
@@ -1608,7 +1604,7 @@ runtime.TargetPartNameCache = {
     AutoShoot = {"Head"},
     SilentAim = {"Head"},
 }
--- MAXPERF2: cacheamos las referencias de partes por Character. Silent Aim corre muy
+-- OPT: cacheamos las referencias de partes por Character. Silent Aim corre muy
 -- seguido, así que evitar FindFirstChild repetido aquí quita bastante trabajo en móvil.
 runtime.TargetSelectionVersion = {AutoShoot = 1, SilentAim = 1}
 runtime.TargetPartCache = {
@@ -2085,6 +2081,12 @@ runtime.Appearance = {
     EditorSyncing = false,
     BatchLoading = false,
     RespawnGeneration = 0,
+    -- Guard del Character actual: si Roblox reconstruye los accesorios tras respawn,
+    -- los visuales de iLunX se reinyectan en el siguiente frame sin polling.
+    AccessoryGuardConnections = {},
+    AccessoryGuardMutating = {},
+    AccessoryGuardPending = false,
+    AccessoryGuardCharacter = nil,
     EditorDisplayToKey = {},
     EditorControls = {},
     EditorSlots = {},
@@ -2310,13 +2312,20 @@ end
 
 function runtime.RemoveAppearanceAccessory(key, char)
     if not char then return end
+
+    -- Evita que el guard de respawn confunda una eliminación intencional
+    -- (toggle OFF / reemplazo) con una limpieza hecha por Roblox.
+    runtime.Appearance.AccessoryGuardMutating[key] = true
+
     local cached = runtime.Appearance.ActiveAccessories[key]
     if cached and cached.Parent == char then
         runtime.Appearance.ActiveAccessories[key] = nil
         runtime.Appearance.AccessoryWeld[cached] = nil
         cached:Destroy()
+        runtime.Appearance.AccessoryGuardMutating[key] = nil
         return
     end
+
     runtime.Appearance.ActiveAccessories[key] = nil
     for _, obj in ipairs(char:GetChildren()) do
         if obj:IsA("Accoutrement") and obj:GetAttribute("iLunXAppearanceKey") == key then
@@ -2324,6 +2333,8 @@ function runtime.RemoveAppearanceAccessory(key, char)
             obj:Destroy()
         end
     end
+
+    runtime.Appearance.AccessoryGuardMutating[key] = nil
 end
 
 function runtime.GetAppearanceTemplate(key)
@@ -2554,28 +2565,29 @@ function runtime.ApplyAppearanceAccessory(key, char)
 
     local accessory = template:Clone()
     accessory:SetAttribute("iLunXAppearanceKey", key)
-    accessory.Parent = char
-    runtime.Appearance.ActiveAccessories[key] = accessory
 
+    -- AddAccessory funciona mejor recibiendo el Accessory sin parent. Roblox lo
+    -- parenta y crea el weld. Si el rig todavía no está listo, hacemos fallback manual.
     local ok = pcall(function() humanoid:AddAccessory(accessory) end)
-    if not ok then
+    if not ok or accessory.Parent ~= char then
+        accessory.Parent = char
         ok = manualAttachAppearanceAccessory(char, accessory)
     end
+
     if not ok then
         runtime.Appearance.ActiveAccessories[key] = nil
-        accessory:Destroy()
+        if accessory.Parent then accessory:Destroy() end
         return false
     end
 
+    runtime.Appearance.ActiveAccessories[key] = accessory
+
     task.defer(function()
-        if accessory.Parent then runtime.ApplyAppearanceOffsetToInstance(key, accessory) end
+        if not runtime.Alive or accessory.Parent ~= char then return end
+        -- Si AddAccessory todavía no generó weld, ApplyAppearanceOffset intenta
+        -- adjuntarlo manualmente usando los attachments que ya hayan aparecido.
+        runtime.ApplyAppearanceOffsetToInstance(key, accessory, true)
         runtime.EnforceBodyAppearance(char)
-    end)
-    task.delay(0.08, function()
-        if runtime.Alive and char.Parent then
-            runtime.EnforceBodyAppearance(char)
-            runtime.RebuildAppearanceBodyGuards(char)
-        end
     end)
     return true
 end
@@ -2592,27 +2604,6 @@ function runtime.ReapplyAppearanceAccessories(char)
     runtime.EnforceBodyAppearance(char)
 end
 
--- MAXPERF3: reaplica únicamente lo que falte. En respawn/CharacterAppearanceLoaded
--- evita destruir y volver a clonar accesorios que ya se colocaron en la primera pasada.
-function runtime.EnsureAppearanceAccessories(char)
-    char = char or player.Character
-    if not char then return end
-
-    for _, key in ipairs(runtime.AppearanceOrder) do
-        local asset = runtime.AppearanceCatalog[key]
-        if asset and asset.Kind == "Accessory" and runtime.Appearance.Enabled[key] then
-            local current = runtime.Appearance.ActiveAccessories[key]
-            if current and current.Parent == char then
-                runtime.ApplyAppearanceOffsetToInstance(key, current, true)
-            else
-                runtime.ApplyAppearanceAccessory(key, char)
-            end
-        end
-    end
-
-    runtime.EnforceBodyAppearance(char)
-end
-
 local function hasEnabledAppearanceAccessory()
     for _, key in ipairs(runtime.AppearanceOrder) do
         local asset = runtime.AppearanceCatalog[key]
@@ -2621,6 +2612,101 @@ local function hasEnabledAppearanceAccessory()
         end
     end
     return false
+end
+
+-- Reaplica únicamente lo que falte. Si el clon existe pero todavía no tiene
+-- weld válido, reintenta el attach sobre el mismo clon antes de recrearlo.
+function runtime.EnsureAppearanceAccessoryKey(key, char)
+    char = char or player.Character
+    if not char or not runtime.Appearance.Enabled[key] then return false end
+
+    local current = runtime.Appearance.ActiveAccessories[key]
+    if not current or current.Parent ~= char then
+        current = nil
+        for _, obj in ipairs(char:GetChildren()) do
+            if obj:IsA("Accoutrement") and obj:GetAttribute("iLunXAppearanceKey") == key then
+                current = obj
+                runtime.Appearance.ActiveAccessories[key] = obj
+                break
+            end
+        end
+    end
+
+    if current and current.Parent == char then
+        if runtime.ApplyAppearanceOffsetToInstance(key, current, true) then
+            return true
+        end
+
+        runtime.Appearance.AttachmentCache[char] = nil
+        if manualAttachAppearanceAccessory(char, current) then
+            runtime.Appearance.AccessoryWeld[current] = nil
+            return runtime.ApplyAppearanceOffsetToInstance(key, current, true)
+        end
+        return false
+    end
+
+    return runtime.ApplyAppearanceAccessory(key, char)
+end
+
+function runtime.EnsureAppearanceAccessories(char)
+    char = char or player.Character
+    if not char then return end
+
+    for _, key in ipairs(runtime.AppearanceOrder) do
+        local asset = runtime.AppearanceCatalog[key]
+        if asset and asset.Kind == "Accessory" and runtime.Appearance.Enabled[key] then
+            runtime.EnsureAppearanceAccessoryKey(key, char)
+        end
+    end
+
+    runtime.EnforceBodyAppearance(char)
+end
+
+function runtime.ClearAppearanceAccessoryGuard()
+    local list = runtime.Appearance.AccessoryGuardConnections
+    for i = #list, 1, -1 do
+        pcall(function() list[i]:Disconnect() end)
+        list[i] = nil
+    end
+    runtime.Appearance.AccessoryGuardPending = false
+    runtime.Appearance.AccessoryGuardCharacter = nil
+end
+
+function runtime.BindAppearanceAccessoryGuard(char, generation)
+    runtime.ClearAppearanceAccessoryGuard()
+    if not char or not char.Parent then return end
+    runtime.Appearance.AccessoryGuardCharacter = char
+
+    local function queueEnsure()
+        if runtime.Appearance.AccessoryGuardPending then return end
+        runtime.Appearance.AccessoryGuardPending = true
+        task.defer(function()
+            runtime.Appearance.AccessoryGuardPending = false
+            if not runtime.Alive or char ~= player.Character or not char.Parent then return end
+            if generation and generation ~= runtime.Appearance.RespawnGeneration then return end
+            runtime.Appearance.AttachmentCache[char] = nil
+            runtime.EnsureAppearanceAccessories(char)
+        end)
+    end
+
+    table_insert(runtime.Appearance.AccessoryGuardConnections, char.ChildRemoved:Connect(function(child)
+        if not child:IsA("Accoutrement") then return end
+        local key = child:GetAttribute("iLunXAppearanceKey")
+        if not key or runtime.Appearance.AccessoryGuardMutating[key] then return end
+        if runtime.Appearance.Enabled[key] then
+            runtime.Appearance.ActiveAccessories[key] = nil
+            queueEnsure()
+        end
+    end))
+
+    -- Algunos juegos insertan Head/attachments por etapas. En cuanto aparece un
+    -- attachment nuevo hacemos una única comprobación en el siguiente frame.
+    table_insert(runtime.Appearance.AccessoryGuardConnections, char.DescendantAdded:Connect(function(obj)
+        if obj:IsA("Attachment") and hasEnabledAppearanceAccessory() then
+            runtime.Appearance.AttachmentCache[char] = nil
+            queueEnsure()
+        end
+    end))
 end
 
 function runtime.FastRestoreAppearanceOnRespawn(char, generation)
@@ -2778,6 +2864,7 @@ end
 runtime.AppearanceCleanup = function()
     pcall(runtime.RestoreAppearance)
     runtime.ClearAppearanceBodyGuards()
+    runtime.ClearAppearanceAccessoryGuard()
     for key, template in pairs(runtime.Appearance.Templates) do
         pcall(function() template:Destroy() end)
         runtime.Appearance.Templates[key] = nil
@@ -2790,19 +2877,12 @@ runtime.Track(player.CharacterAdded:Connect(function(char)
     runtime.Appearance.AttachmentCache[char] = nil
     table.clear(runtime.Appearance.ActiveAccessories)
 
-    -- Primera pasada: tan pronto como Humanoid/Head estén disponibles.
+    -- El guard entra desde el primer frame: si Roblox limpia un limited mientras
+    -- termina de construir el avatar, se repone sin esperar un timer fijo.
+    runtime.BindAppearanceAccessoryGuard(char, generation)
+
     task.spawn(function()
         runtime.FastRestoreAppearanceOnRespawn(char, generation)
-    end)
-
-    -- Segunda pasada corta de seguridad: cubre experiencias que insertan attachments
-    -- unas décimas después, pero no destruye/reclona accesorios que ya están correctos.
-    task.delay(0.10, function()
-        if not runtime.Alive or not char.Parent or generation ~= runtime.Appearance.RespawnGeneration then return end
-        runtime.Appearance.AttachmentCache[char] = nil
-        runtime.EnforceBodyAppearance(char)
-        runtime.EnsureAppearanceAccessories(char)
-        runtime.RebuildAppearanceBodyGuards(char)
     end)
 end))
 
@@ -2812,8 +2892,6 @@ pcall(function()
         local generation = runtime.Appearance.RespawnGeneration
         runtime.Appearance.AttachmentCache[char] = nil
 
-        -- CharacterAppearanceLoaded puede sobrescribir meshes/transparencias del cuerpo.
-        -- Reafirmamos inmediatamente, reutilizando accesorios existentes si siguen vivos.
         task.defer(function()
             if runtime.Alive and char.Parent and generation == runtime.Appearance.RespawnGeneration then
                 runtime.EnforceBodyAppearance(char)
@@ -2823,6 +2901,11 @@ pcall(function()
         end)
     end))
 end)
+
+-- También protege el Character que ya existía cuando se ejecutó el hub.
+if player.Character and player.Character.Parent then
+    runtime.BindAppearanceAccessoryGuard(player.Character, runtime.Appearance.RespawnGeneration)
+end
 
 -- =========================
 -- UI DE APARIENCIA
@@ -6491,7 +6574,7 @@ runtime.Track(RunService.RenderStepped:Connect(function(deltaTime)
             if wantsESP2D and valid then
                 esp2dClean = false
                 entry = entry or runtime.GetESP2DEntry(p)
-                -- MAXPERF2: caja corporal estable. NO usamos Character:GetBoundingBox(),
+                -- OPT: caja corporal estable. NO usamos Character:GetBoundingBox(),
                 -- porque incluye el Torso falso del Hitbox Expander y accesorios/limiteds.
                 local head = core and core.Head
                 local up = hrp.CFrame.UpVector
@@ -6608,18 +6691,18 @@ local floatingButtonsList = {}
 function createFloatingBtn(name, startPos, internalId)
     local btn = Instance.new("TextButton")
     btn.Name = internalId or name
-    btn.Size = UDim2.new(0, 150, 0, 45)
+    btn.Size = UDim2.new(0, 158, 0, 46)
     btn.Position = startPos
-    btn.BackgroundColor3 = Color3.fromHex("#1C1C1E")
+    btn.BackgroundColor3 = Color3.fromHex("#192436")
     btn.BackgroundTransparency = 0.08 
     btn.Text = name
     
     -- 🔥 MEJORAS DE TEXTO AQUÍ 🔥
     btn.TextColor3 = Color3.fromHex("#F3F4F5")
-    btn.Font = Enum.Font.GothamBold -- En negritas para resaltar
+    btn.Font = Enum.Font.GothamMedium
     btn.TextSize = 14
     btn.TextScaled = true -- Para que se autoajuste si lo hacen cuadrado
-    btn.TextStrokeTransparency = 0.2 -- Contorno oscuro activado
+    btn.TextStrokeTransparency = 1
     btn.TextStrokeColor3 = Color3.new(0, 0, 0) -- Contorno negro puro
     
     btn.AutoButtonColor = false
@@ -6633,24 +6716,43 @@ function createFloatingBtn(name, startPos, internalId)
     -- ❌ ELIMINAMOS EL UIGradient AQUÍ PARA QUE NO MANCHE LAS LETRAS ❌
 
     local stroke = Instance.new("UIStroke")
-    stroke.Thickness = 1.2
-    stroke.Color = Color3.fromHex("#48484A")
+    stroke.Thickness = 1
+    stroke.Color = Color3.fromHex("#8D9FBA")
     stroke.Transparency = 0.35
     stroke.Parent = btn
 
-    btn.MouseEnter:Connect(function()
+    local textLimit = Instance.new("UITextSizeConstraint")
+    textLimit.MinTextSize = 10
+    textLimit.MaxTextSize = 14
+    textLimit.Parent = btn
+    local padding = Instance.new("UIPadding")
+    padding.PaddingLeft = UDim.new(0, 12)
+    padding.PaddingRight = UDim.new(0, 12)
+    padding.Parent = btn
+    local hoverTween, strokeTween
+    local function style(hovered)
         if _G.AstraBotonesOcultos then return end
-        btn.BackgroundColor3 = Color3.fromHex("#3A3A3C")
-        btn.BackgroundTransparency = 0.02
-        stroke.Color = Color3.fromHex("#D8DCE1")
-        stroke.Transparency = 0
+        if hoverTween then hoverTween:Cancel() end
+        if strokeTween then strokeTween:Cancel() end
+        local timing = TweenInfo.new(Window.ReduceMotion and 0 or 0.12, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+        hoverTween = TweenService:Create(btn, timing, {
+            BackgroundColor3 = Color3.fromHex(hovered and "#2C3D56" or "#192436"),
+            BackgroundTransparency = hovered and 0.02 or 0.08,
+        })
+        strokeTween = TweenService:Create(stroke, timing, {Transparency = hovered and 0.08 or 0.35})
+        hoverTween:Play()
+        strokeTween:Play()
+    end
+    btn:GetAttributeChangedSignal("IlunXHidden"):Connect(function()
+        if hoverTween then hoverTween:Cancel() end
+        if strokeTween then strokeTween:Cancel() end
     end)
-    btn.MouseLeave:Connect(function()
-        if _G.AstraBotonesOcultos then return end
-        btn.BackgroundColor3 = Color3.fromHex("#1C1C1E")
-        btn.BackgroundTransparency = 0.08
-        stroke.Color = Color3.fromHex("#48484A")
-        stroke.Transparency = 0.35
+    btn.MouseEnter:Connect(function() style(true) end)
+    btn.MouseLeave:Connect(function() style(false) end)
+    btn:GetPropertyChangedSignal("Visible"):Connect(function()
+        if hoverTween then hoverTween:Cancel() end
+        if strokeTween then strokeTween:Cancel() end
+        if btn.Visible then style(false) end
     end)
 
     makeDraggable(btn, btn)
@@ -8201,57 +8303,19 @@ Tabs.Config:Dropdown({
 
 Tabs.Config:Toggle({
     Title = "Ocultar Botón Flotante",
-    Callback = function(Value)
-        local guisToSearch = { player:FindFirstChild("PlayerGui") }
-        pcall(function() table.insert(guisToSearch, game:GetService("CoreGui")) end)
+    Desc = "Oculta el acceso para abrir iLunXHub.",
+    Callback = function(value)
+        Window:EditOpenButton({Enabled = not value})
+        if not value and Window.Closed then Window.OpenButtonMain:Visible(true) end
+    end
+})
 
-        for _, guiContainer in ipairs(guisToSearch) do
-            if guiContainer then
-                for _, v in pairs(guiContainer:GetDescendants()) do
-                    if (v:IsA("TextLabel") or v:IsA("TextButton")) and v.Text and string.find(v.Text, "Abrir iLunXHub") then
-                        
-                        -- Subimos hasta la caja principal
-                        local btnContainer = v
-                        while btnContainer.Parent and not btnContainer.Parent:IsA("ScreenGui") and not btnContainer.Parent:IsA("Folder") do
-                            btnContainer = btnContainer.Parent
-                        end
-                        
-                        if btnContainer:IsA("CanvasGroup") then
-                            btnContainer.GroupTransparency = Value and 1 or 0
-                        else
-                            -- Función inteligente que "recuerda" la transparencia original
-                            function aplicarTransparencia(obj)
-                                if obj:IsA("UIStroke") then
-                                    if not obj:GetAttribute("OrigTrans") then obj:SetAttribute("OrigTrans", obj.Transparency) end
-                                    obj.Transparency = Value and 1 or obj:GetAttribute("OrigTrans")
-                                elseif obj:IsA("TextLabel") or obj:IsA("TextButton") then
-                                    if not obj:GetAttribute("OrigTxtTrans") then obj:SetAttribute("OrigTxtTrans", obj.TextTransparency) end
-                                    obj.TextTransparency = Value and 1 or obj:GetAttribute("OrigTxtTrans")
-                                    
-                                    if not obj:GetAttribute("OrigBgTrans") then obj:SetAttribute("OrigBgTrans", obj.BackgroundTransparency) end
-                                    obj.BackgroundTransparency = Value and 1 or obj:GetAttribute("OrigBgTrans")
-                                elseif obj:IsA("Frame") or obj:IsA("ImageLabel") or obj:IsA("ImageButton") then
-                                    if not obj:GetAttribute("OrigBgTrans") then obj:SetAttribute("OrigBgTrans", obj.BackgroundTransparency) end
-                                    obj.BackgroundTransparency = Value and 1 or obj:GetAttribute("OrigBgTrans")
-                                    
-                                    pcall(function()
-                                        if not obj:GetAttribute("OrigImgTrans") then obj:SetAttribute("OrigImgTrans", obj.ImageTransparency) end
-                                        obj.ImageTransparency = Value and 1 or obj:GetAttribute("OrigImgTrans")
-                                    end)
-                                end
-                            end
-                            
-                            -- Aplicamos a todo lo de adentro
-                            for _, obj in pairs(btnContainer:GetDescendants()) do
-                                aplicarTransparencia(obj)
-                            end
-                            -- Aplicamos a la caja contenedora
-                            aplicarTransparencia(btnContainer)
-                        end
-                    end
-                end
-            end
-        end
+Tabs.Config:Toggle({
+    Title = "Reducir animaciones",
+    Desc = "Transiciones inmediatas para dispositivos de menor rendimiento.",
+    Value = false,
+    Callback = function(value)
+        Window.ReduceMotion = value
     end
 })
 
@@ -8268,6 +8332,7 @@ Tabs.Config:Toggle({
         
         for _, btn in ipairs(floatingButtonsList) do
             if btn then
+                btn:SetAttribute("IlunXHidden", Value)
                 btn.BackgroundTransparency = bgTrans
                 btn.TextTransparency = txtTrans
                 local stroke = btn:FindFirstChildOfClass("UIStroke")

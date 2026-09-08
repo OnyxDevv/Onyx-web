@@ -509,6 +509,13 @@ local Runtime = {
     Search = "",
     OriginalDescription = nil,
     Busy = {},
+
+    -- Editor local de accesorios.
+    -- Los offsets sobreviven a quitar/poner y a respawns.
+    AccessoryOffsets = {},
+    AccessoryBaseWeld = setmetatable({}, {__mode = "k"}),
+    EditorSelectedKey = nil,
+    EditorStep = 0.10,
 }
 
 ENV.__ILUNX_APPEARANCE_VAULT = Runtime
@@ -777,6 +784,143 @@ local function manuallyAttach(character, accoutrement)
     return false, "sin attachment compatible"
 end
 
+
+--==================================================
+-- ACCESSORY OFFSET EDITOR ENGINE
+--==================================================
+
+local function getAccessoryOffset(key)
+    local state = Runtime.AccessoryOffsets[key]
+
+    if not state then
+        state = {
+            Position = Vector3.new(0, 0, 0),
+            Rotation = Vector3.new(0, 0, 0),
+        }
+        Runtime.AccessoryOffsets[key] = state
+    end
+
+    return state
+end
+
+local function findAccessoryWeld(accessory)
+    if not accessory then return nil end
+
+    local handle = accessory:FindFirstChild("Handle")
+    if not handle or not handle:IsA("BasePart") then
+        return nil
+    end
+
+    -- Humanoid:AddAccessory normalmente crea "AccessoryWeld".
+    local preferred =
+        handle:FindFirstChild("AccessoryWeld")
+        or handle:FindFirstChild("iLunX_LocalAccessoryWeld")
+
+    if preferred and preferred:IsA("Weld") then
+        return preferred
+    end
+
+    for _, d in ipairs(handle:GetChildren()) do
+        if d:IsA("Weld") then
+            return d
+        end
+    end
+
+    return nil
+end
+
+local function applyAccessoryOffsetToInstance(key, accessory)
+    if not accessory or not accessory.Parent then
+        return false, "accessory no disponible"
+    end
+
+    local weld = findAccessoryWeld(accessory)
+
+    if not weld then
+        -- Si el accesorio por alguna razón quedó sin Weld convencional,
+        -- reconstruimos el attachment con nuestra ruta manual.
+        local character = LocalPlayer.Character
+        if character then
+            pcall(function()
+                manuallyAttach(character, accessory)
+            end)
+            weld = findAccessoryWeld(accessory)
+        end
+    end
+
+    if not weld then
+        return false, "Weld no encontrado"
+    end
+
+    local base = Runtime.AccessoryBaseWeld[accessory]
+    if not base then
+        base = weld.C1
+        Runtime.AccessoryBaseWeld[accessory] = base
+    end
+
+    local state = getAccessoryOffset(key)
+    local p = state.Position
+    local r = state.Rotation
+
+    -- C1 está del lado del body attachment, así que este offset es
+    -- intuitivo respecto al cuerpo: X lados, Y arriba/abajo, Z frente/atrás.
+    weld.C1 =
+        base
+        * CFrame.new(p.X, p.Y, p.Z)
+        * CFrame.Angles(
+            math.rad(r.X),
+            math.rad(r.Y),
+            math.rad(r.Z)
+        )
+
+    return true
+end
+
+local function applyAccessoryOffset(key)
+    local list = Runtime.CreatedByKey[key]
+    if not list then
+        return false, "no está equipado"
+    end
+
+    local applied = false
+    local lastInfo = "sin accessory"
+
+    for _, obj in ipairs(list) do
+        if obj
+            and obj.Parent
+            and obj:IsA("Accoutrement")
+        then
+            local ok, info =
+                applyAccessoryOffsetToInstance(key, obj)
+
+            if ok then
+                applied = true
+            else
+                lastInfo = info
+            end
+        end
+    end
+
+    return applied, applied and "OK" or lastInfo
+end
+
+local function getEquippedAccessoryKeys()
+    local result = {}
+
+    for _, key in ipairs(ORDERED_KEYS) do
+        local asset = ASSETS[key]
+
+        if asset
+            and asset.Kind == "Accessory"
+            and Runtime.Enabled[key]
+        then
+            table.insert(result, key)
+        end
+    end
+
+    return result
+end
+
 local function addAccessoryLocal(key)
     local asset = ASSETS[key]
     local character, humanoid = getCharacter()
@@ -844,6 +988,19 @@ local function addAccessoryLocal(key)
     end
 
     trackCreated(key, clone)
+
+    -- Aplicamos cualquier posición personalizada guardada para este item.
+    task.defer(function()
+        if clone and clone.Parent then
+            local ok, info =
+                applyAccessoryOffsetToInstance(key, clone)
+
+            if not ok then
+                addLog("Offset", asset.Name, "->", info)
+            end
+        end
+    end)
+
     destroyRoots(objects)
 
     return true, method .. " + " .. attachInfo
@@ -888,268 +1045,59 @@ local function setHeadless(enabled)
 end
 
 --==================================================
--- KORBLOX - IMPROVED LOCAL FALLBACK
+-- KORBLOX - DIRECT LOCAL BODY REPLACEMENT
 --==================================================
 
-local KORBLOX_R15_PARTS = {
-    "RightUpperLeg",
-    "RightLowerLeg",
-    "RightFoot",
+local KORBLOX_MESH = {
+    -- RenderMesh oficial señalado en Roblox DevForum.
+    RightUpperLeg = "https://assetdelivery.roblox.com/v1/asset/?id=9598310133",
+
+    -- IDs clásicos usados por el body package R15.
+    RightLowerLeg = "rbxassetid://902942093",
+    RightFoot = "rbxassetid://902942089",
+
+    Texture = "rbxassetid://902843398",
 }
 
-local function stripRigJoints(part)
-    for _, d in ipairs(part:GetDescendants()) do
-        if d:IsA("Motor6D")
-            or d:IsA("Weld")
-            or d:IsA("WeldConstraint")
-            or d:IsA("Script")
-            or d:IsA("LocalScript")
-        then
-            safeDestroy(d)
-        end
-    end
-end
-
-local function overlayBodyPart(key, source, target)
-    if not source or not target
-        or not source:IsA("BasePart")
-        or not target:IsA("BasePart")
-    then
-        return false
-    end
-
-    local visual = source:Clone()
-    visual.Name = "iLunX_KorbloxVisual_" .. target.Name
-
-    stripRigJoints(visual)
-
-    visual.Anchored = false
-    visual.CanCollide = false
-    visual.CanTouch = false
-    visual.CanQuery = false
-    visual.Massless = true
-
-    -- Usa la escala actual del avatar para que no quede flotando.
-    pcall(function()
-        visual.Size = target.Size
-    end)
-
-    visual.CFrame = target.CFrame
-    visual.Parent = target.Parent
-
-    local weld = Instance.new("WeldConstraint")
-    weld.Name = "iLunX_KorbloxWeld"
-    weld.Part0 = target
-    weld.Part1 = visual
-    weld.Parent = visual
-
-    setRemembered(
-        key,
-        target,
-        "LocalTransparencyModifier",
-        1
-    )
-
-    trackCreated(key, visual)
-    return true
-end
-
-local function tryKorbloxViaDummy(character, humanoid)
-    if humanoid.RigType ~= Enum.HumanoidRigType.R15 then
-        return false, "dummy solo R15"
-    end
-
-    local okDesc, description = pcall(function()
-        return humanoid:GetAppliedDescription()
-    end)
-
-    if not okDesc or not description then
-        description = Instance.new("HumanoidDescription")
-    end
-
-    description.RightLeg = ASSETS.Korblox.Id
-
-    local okModel, model = pcall(function()
-        if Players.CreateHumanoidModelFromDescriptionAsync then
-            return Players:CreateHumanoidModelFromDescriptionAsync(
-                description,
-                Enum.HumanoidRigType.R15,
-                Enum.AssetTypeVerification.Default
-            )
-        else
-            return Players:CreateHumanoidModelFromDescription(
-                description,
-                Enum.HumanoidRigType.R15,
-                Enum.AssetTypeVerification.Default
-            )
-        end
-    end)
-
-    safeDestroy(description)
-
-    if not okModel or not model then
-        return false, "CreateHumanoidModel: " .. tostring(model)
-    end
-
-    local applied = 0
-
-    for _, partName in ipairs(KORBLOX_R15_PARTS) do
-        local source = model:FindFirstChild(partName)
-        local target = character:FindFirstChild(partName)
-
-        if source and target and overlayBodyPart("Korblox", source, target) then
-            applied += 1
-        end
-    end
-
-    safeDestroy(model)
-
-    if applied > 0 then
-        return true, "dummy R15 (" .. applied .. "/3)"
-    end
-
-    return false, "dummy sin piezas utiles"
-end
-
-local function findBodyObjects(objects)
-    local meshParts = {}
-    local characterMeshes = {}
-    local named = {}
-
-    for _, root in ipairs(objects or {}) do
-        local scan = {root}
-        for _, d in ipairs(root:GetDescendants()) do
-            table.insert(scan, d)
-        end
-
-        for _, obj in ipairs(scan) do
-            if obj:IsA("MeshPart") then
-                table.insert(meshParts, obj)
-                named[obj.Name] = obj
-            elseif obj:IsA("CharacterMesh") then
-                table.insert(characterMeshes, obj)
-            end
-        end
-    end
-
-    return meshParts, characterMeshes, named
-end
-
-local function tryKorbloxViaAsset(character, humanoid)
-    local objects, method = loadAssetLocal(ASSETS.Korblox.Id)
-    if not objects then
-        return false, "body asset no cargo"
-    end
-
-    local meshParts, characterMeshes, named = findBodyObjects(objects)
-    local applied = 0
-
-    if humanoid.RigType == Enum.HumanoidRigType.R15 then
-        for _, partName in ipairs(KORBLOX_R15_PARTS) do
-            local source = named[partName]
-            local target = character:FindFirstChild(partName)
-
-            if source and target
-                and overlayBodyPart("Korblox", source, target)
-            then
-                applied += 1
-            end
-        end
-
-        if applied == 0 and #meshParts > 0 then
-            -- Último fallback: algunos body assets devuelven una sola MeshPart.
-            local target =
-                character:FindFirstChild("RightLowerLeg")
-                or character:FindFirstChild("RightUpperLeg")
-
-            if target
-                and overlayBodyPart(
-                    "Korblox",
-                    meshParts[1],
-                    target
-                )
-            then
-                applied = 1
-
-                local foot = character:FindFirstChild("RightFoot")
-                if foot then
-                    setRemembered(
-                        "Korblox",
-                        foot,
-                        "LocalTransparencyModifier",
-                        1
-                    )
-                end
-            end
-        end
-    else
-        -- R6: CharacterMesh sí es la representación nativa.
-        for _, cm in ipairs(characterMeshes) do
-            local isRightLeg = false
-
-            pcall(function()
-                isRightLeg =
-                    cm.BodyPart == Enum.BodyPart.RightLeg
-            end)
-
-            if isRightLeg then
-                local clone = cm:Clone()
-                clone.Name = "iLunX_Korblox_R6"
-                clone.Parent = character
-                trackCreated("Korblox", clone)
-                applied += 1
-            end
-        end
-
-        -- Fallback R6 conocido del Deathspeaker si el asset body no expone
-        -- CharacterMesh utilizable.
-        if applied == 0 then
-            local cm = Instance.new("CharacterMesh")
-            cm.Name = "iLunX_Korblox_R6_Fallback"
-            cm.BodyPart = Enum.BodyPart.RightLeg
-            cm.MeshId = 101851696
-            cm.OverlayTextureId = 101851254
-            cm.Parent = character
-            trackCreated("Korblox", cm)
-            applied = 1
-        end
-    end
-
-    destroyRoots(objects)
-
-    if applied > 0 then
-        return true, method .. " body fallback (" .. applied .. ")"
-    end
-
-    return false, "asset body sin visual util"
-end
-
-
-local function tryKorbloxForcedVisual(character, humanoid)
-    -- Last-resort local visual:
-    -- official classic Korblox Deathspeaker right-leg mesh.
-    local meshId = "rbxassetid://101851696"
-    local textureId = "rbxassetid://115727863"
-
-    if humanoid.RigType == Enum.HumanoidRigType.R6 then
-        local cm = Instance.new("CharacterMesh")
-        cm.Name = "iLunX_Korblox_Forced_R6"
-        cm.BodyPart = Enum.BodyPart.RightLeg
-        cm.MeshId = 101851696
-        cm.OverlayTextureId = 101851254
-        cm.Parent = character
-        trackCreated("Korblox", cm)
-        return true, "forced CharacterMesh R6"
-    end
-
+local function setKorbloxR15Direct(character)
+    local upper = character:FindFirstChild("RightUpperLeg")
     local lower = character:FindFirstChild("RightLowerLeg")
     local foot = character:FindFirstChild("RightFoot")
 
-    if not lower or not lower:IsA("BasePart") then
-        return false, "RightLowerLeg no existe"
+    if not upper or not upper:IsA("MeshPart") then
+        return false, "RightUpperLeg no es MeshPart"
     end
 
-    if foot and foot:IsA("BasePart") then
+    -- Guardamos el body real para poder restaurarlo exactamente.
+    setRemembered("Korblox", upper, "MeshId", KORBLOX_MESH.RightUpperLeg)
+    setRemembered("Korblox", upper, "TextureID", KORBLOX_MESH.Texture)
+    setRemembered("Korblox", upper, "LocalTransparencyModifier", 0)
+
+    -- El Korblox clásico visible es esencialmente la pieza superior.
+    -- Ocultamos LOCALMENTE lower/foot pero NO los destruimos, porque contienen
+    -- joints necesarios para animaciones, caminar y no romper el Humanoid.
+    if lower and lower:IsA("MeshPart") then
+        setRemembered(
+            "Korblox",
+            lower,
+            "MeshId",
+            KORBLOX_MESH.RightLowerLeg
+        )
+        setRemembered(
+            "Korblox",
+            lower,
+            "LocalTransparencyModifier",
+            1
+        )
+    end
+
+    if foot and foot:IsA("MeshPart") then
+        setRemembered(
+            "Korblox",
+            foot,
+            "MeshId",
+            KORBLOX_MESH.RightFoot
+        )
         setRemembered(
             "Korblox",
             foot,
@@ -1158,117 +1106,93 @@ local function tryKorbloxForcedVisual(character, humanoid)
         )
     end
 
+    -- Algunos juegos restauran la malla durante el mismo frame de spawn.
+    -- Repetimos una vez después de dos frames sin crear ningún loop.
+    task.defer(function()
+        RunService.RenderStepped:Wait()
+        RunService.RenderStepped:Wait()
+
+        if not Runtime.Enabled.Korblox then
+            return
+        end
+
+        local currentCharacter = LocalPlayer.Character
+        if currentCharacter ~= character then
+            return
+        end
+
+        pcall(function()
+            upper.MeshId = KORBLOX_MESH.RightUpperLeg
+            upper.TextureID = KORBLOX_MESH.Texture
+            upper.LocalTransparencyModifier = 0
+
+            if lower and lower.Parent then
+                lower.MeshId = KORBLOX_MESH.RightLowerLeg
+                lower.LocalTransparencyModifier = 1
+            end
+
+            if foot and foot.Parent then
+                foot.MeshId = KORBLOX_MESH.RightFoot
+                foot.LocalTransparencyModifier = 1
+            end
+        end)
+    end)
+
+    return true, "R15 direct mesh replacement"
+end
+
+local function setKorbloxR6Direct(character)
+    local rightLeg =
+        character:FindFirstChild("Right Leg")
+        or character:FindFirstChild("RightLeg")
+
+    if not rightLeg or not rightLeg:IsA("BasePart") then
+        return false, "Right Leg R6 no encontrada"
+    end
+
+    -- Oculta visualmente la pierna rectangular original sólo en este cliente.
     setRemembered(
         "Korblox",
-        lower,
+        rightLeg,
         "LocalTransparencyModifier",
         1
     )
 
-    local visual = Instance.new("Part")
-    visual.Name = "iLunX_Korblox_ForcedVisual"
-    visual.Size = lower.Size
-    visual.CFrame = lower.CFrame
-    visual.Transparency = 0
-    visual.Anchored = false
-    visual.CanCollide = false
-    visual.CanTouch = false
-    visual.CanQuery = false
-    visual.Massless = true
-    visual.CastShadow = true
-    visual.Parent = character
+    -- El CharacterMesh del Korblox Deathspeaker es la forma nativa del R6.
+    local mesh = Instance.new("CharacterMesh")
+    mesh.Name = "iLunX_Korblox_Deathspeaker_RightLeg"
+    mesh.BodyPart = Enum.BodyPart.RightLeg
+    mesh.MeshId = 101851696
+    mesh.OverlayTextureId = 115727863
+    mesh.Parent = character
+    trackCreated("Korblox", mesh)
 
-    local mesh = Instance.new("SpecialMesh")
-    mesh.Name = "KorbloxMesh"
-    mesh.MeshType = Enum.MeshType.FileMesh
-    mesh.MeshId = meshId
-    mesh.TextureId = textureId
-
-    -- Classic body meshes are authored around a 1x2x1 limb.
-    -- Scale proportionally to the current R15 lower leg.
-    mesh.Scale = Vector3.new(
-        math.max(lower.Size.X, 0.05),
-        math.max(lower.Size.Y / 2, 0.05),
-        math.max(lower.Size.Z, 0.05)
-    )
-    mesh.Parent = visual
-
-    local weld = Instance.new("WeldConstraint")
-    weld.Name = "iLunX_Korblox_ForcedWeld"
-    weld.Part0 = lower
-    weld.Part1 = visual
-    weld.Parent = visual
-
-    trackCreated("Korblox", visual)
-
-    return true, "forced SpecialMesh R15"
+    return true, "R6 CharacterMesh replacement"
 end
 
 local function setKorblox(enabled)
     local character, humanoid = getCharacter()
+
     if not character or not humanoid then
         return false, "sin personaje"
     end
 
+    -- IMPORTANTE:
+    -- Ya no usamos ApplyDescription aquí. En la versión anterior un pcall
+    -- podía devolver success aunque el servidor/juego no reflejara el cambio,
+    -- y eso impedía ejecutar el fallback que sí necesitábamos.
     clearCreated("Korblox")
     restoreRemembered("Korblox")
 
     if not enabled then
-        return true, "restaurado"
+        return true, "pierna original restaurada"
     end
 
-    -- 1) Probamos ApplyDescription por si el entorno sí permite AvatarAppearance.
-    local okDesc, errDesc = pcall(function()
-        local description = humanoid:GetAppliedDescription()
-        description.RightLeg = ASSETS.Korblox.Id
-
-        if humanoid.ApplyDescriptionAsync then
-            humanoid:ApplyDescriptionAsync(description)
-        else
-            humanoid:ApplyDescription(description)
-        end
-
-        safeDestroy(description)
-    end)
-
-    if okDesc then
-        return true, "HumanoidDescription"
+    if humanoid.RigType == Enum.HumanoidRigType.R15 then
+        return setKorbloxR15Direct(character)
     end
 
-    addLog("Korblox ApplyDescription bloqueado:", errDesc)
-
-    -- 2) Nuevo: construir un rig LOCAL temporal con la pierna oficial,
-    -- extraer sus MeshParts y soldarlas sobre nuestro rig.
-    local okDummy, infoDummy =
-        tryKorbloxViaDummy(character, humanoid)
-
-    if okDummy then
-        return true, infoDummy
-    end
-
-    addLog("Korblox dummy fallo:", infoDummy)
-
-    -- 3) Fallback directo al contenido del body asset.
-    local okAsset, infoAsset =
-        tryKorbloxViaAsset(character, humanoid)
-
-    if okAsset then
-        return true, infoAsset
-    end
-
-    addLog("Korblox asset fallback fallo:", infoAsset)
-
-    local okForced, infoForced =
-        tryKorbloxForcedVisual(character, humanoid)
-
-    if okForced then
-        return true, infoForced
-    end
-
-    return false,
-        "dummy=" .. tostring(infoDummy)
-        .. " | asset=" .. tostring(infoAsset)
-        .. " | forced=" .. tostring(infoForced)
+    return setKorbloxR6Direct(character)
 end
 
 --==================================================
@@ -1732,7 +1656,7 @@ Instance.new("UICorner", Bottom).CornerRadius = UDim.new(0, 13)
 
 StatusLabel = Instance.new("TextLabel")
 StatusLabel.Position = UDim2.fromOffset(12, 6)
-StatusLabel.Size = UDim2.new(1, -238, 0, 16)
+StatusLabel.Size = UDim2.new(1, -318, 0, 16)
 StatusLabel.BackgroundTransparency = 1
 StatusLabel.Text = "Listo."
 StatusLabel.TextColor3 = Color3.fromRGB(201, 204, 211)
@@ -1744,7 +1668,7 @@ StatusLabel.Parent = Bottom
 
 LogLabel = Instance.new("TextLabel")
 LogLabel.Position = UDim2.fromOffset(12, 23)
-LogLabel.Size = UDim2.new(1, -238, 0, 16)
+LogLabel.Size = UDim2.new(1, -318, 0, 16)
 LogLabel.BackgroundTransparency = 1
 LogLabel.Text = "Los efectos originales del asset se conservan."
 LogLabel.TextColor3 = Color3.fromRGB(90, 93, 101)
@@ -1790,7 +1714,7 @@ makeBottomButton("Reaplicar", 84, 68, function()
     end)
 end)
 
-makeBottomButton("Log", 159, 52, function()
+makeBottomButton("Log", 239, 52, function()
     local text = table.concat(Runtime.Logs, "\n")
 
     if setclipboard then
@@ -1799,6 +1723,394 @@ makeBottomButton("Log", 159, 52, function()
     else
         setStatus("setclipboard no disponible.", false)
     end
+end)
+
+
+--==================================================
+-- ACCESSORY POSITION EDITOR UI
+--==================================================
+
+local EditorOverlay = Instance.new("Frame")
+EditorOverlay.Name = "AccessoryEditor"
+EditorOverlay.Size = UDim2.fromScale(1, 1)
+EditorOverlay.BackgroundColor3 = Color3.fromRGB(5, 5, 7)
+EditorOverlay.BackgroundTransparency = 0.22
+EditorOverlay.BorderSizePixel = 0
+EditorOverlay.Visible = false
+EditorOverlay.ZIndex = 50
+EditorOverlay.Parent = Main
+
+local EditorPanel = Instance.new("Frame")
+EditorPanel.AnchorPoint = Vector2.new(0.5, 0.5)
+EditorPanel.Position = UDim2.fromScale(0.5, 0.5)
+EditorPanel.Size = UDim2.fromOffset(430, 438)
+EditorPanel.BackgroundColor3 = Color3.fromRGB(20, 20, 24)
+EditorPanel.BorderSizePixel = 0
+EditorPanel.ZIndex = 51
+EditorPanel.Parent = EditorOverlay
+Instance.new("UICorner", EditorPanel).CornerRadius = UDim.new(0, 18)
+
+local editorStroke = Instance.new("UIStroke")
+editorStroke.Color = Color3.fromRGB(77, 79, 87)
+editorStroke.Transparency = 0.35
+editorStroke.Parent = EditorPanel
+
+local EditorTitle = Instance.new("TextLabel")
+EditorTitle.Position = UDim2.fromOffset(17, 13)
+EditorTitle.Size = UDim2.new(1, -34, 0, 24)
+EditorTitle.BackgroundTransparency = 1
+EditorTitle.Text = "Acomodar accesorio"
+EditorTitle.TextColor3 = Color3.fromRGB(243, 244, 247)
+EditorTitle.Font = Enum.Font.GothamBold
+EditorTitle.TextSize = 15
+EditorTitle.TextXAlignment = Enum.TextXAlignment.Left
+EditorTitle.ZIndex = 52
+EditorTitle.Parent = EditorPanel
+
+local EditorDesc = Instance.new("TextLabel")
+EditorDesc.Position = UDim2.fromOffset(17, 38)
+EditorDesc.Size = UDim2.new(1, -34, 0, 17)
+EditorDesc.BackgroundTransparency = 1
+EditorDesc.Text =
+    "X = lados  •  Y = altura  •  Z = frente/atrás  •  sólo local"
+EditorDesc.TextColor3 = Color3.fromRGB(112, 115, 124)
+EditorDesc.Font = Enum.Font.Gotham
+EditorDesc.TextSize = 9
+EditorDesc.TextXAlignment = Enum.TextXAlignment.Left
+EditorDesc.ZIndex = 52
+EditorDesc.Parent = EditorPanel
+
+local Selector = Instance.new("Frame")
+Selector.Position = UDim2.fromOffset(16, 64)
+Selector.Size = UDim2.new(1, -32, 0, 48)
+Selector.BackgroundColor3 = Color3.fromRGB(29, 29, 34)
+Selector.BorderSizePixel = 0
+Selector.ZIndex = 52
+Selector.Parent = EditorPanel
+Instance.new("UICorner", Selector).CornerRadius = UDim.new(0, 12)
+
+local EditorSelectedLabel = Instance.new("TextLabel")
+EditorSelectedLabel.AnchorPoint = Vector2.new(0.5, 0.5)
+EditorSelectedLabel.Position = UDim2.fromScale(0.5, 0.5)
+EditorSelectedLabel.Size = UDim2.new(1, -92, 1, 0)
+EditorSelectedLabel.BackgroundTransparency = 1
+EditorSelectedLabel.Text = "Equipa un accesorio primero"
+EditorSelectedLabel.TextColor3 = Color3.fromRGB(228, 229, 233)
+EditorSelectedLabel.Font = Enum.Font.GothamMedium
+EditorSelectedLabel.TextSize = 11
+EditorSelectedLabel.TextTruncate = Enum.TextTruncate.AtEnd
+EditorSelectedLabel.ZIndex = 53
+EditorSelectedLabel.Parent = Selector
+
+local function makeEditorButton(parent, text, position, size)
+    local b = Instance.new("TextButton")
+    b.Position = position
+    b.Size = size
+    b.BackgroundColor3 = Color3.fromRGB(38, 38, 44)
+    b.BorderSizePixel = 0
+    b.Text = text
+    b.TextColor3 = Color3.fromRGB(228, 229, 233)
+    b.Font = Enum.Font.GothamMedium
+    b.TextSize = 11
+    b.AutoButtonColor = false
+    b.ZIndex = 54
+    b.Parent = parent
+    Instance.new("UICorner", b).CornerRadius = UDim.new(0, 9)
+    return b
+end
+
+local PrevAccessory =
+    makeEditorButton(
+        Selector,
+        "‹",
+        UDim2.fromOffset(7, 7),
+        UDim2.fromOffset(34, 34)
+    )
+
+local NextAccessory =
+    makeEditorButton(
+        Selector,
+        "›",
+        UDim2.new(1, -41, 0, 7),
+        UDim2.fromOffset(34, 34)
+    )
+
+local EditorValues = {}
+
+local function formatVectorValue(value, degrees)
+    if degrees then
+        return string.format("%.0f°", value)
+    end
+    return string.format("%.2f", value)
+end
+
+local function refreshEditorValues()
+    local key = Runtime.EditorSelectedKey
+    local asset = key and ASSETS[key] or nil
+
+    if not key or not asset or not Runtime.Enabled[key] then
+        EditorSelectedLabel.Text = "Equipa un accesorio primero"
+
+        for _, label in pairs(EditorValues) do
+            label.Text = "--"
+        end
+        return
+    end
+
+    EditorSelectedLabel.Text = asset.Name
+
+    local state = getAccessoryOffset(key)
+
+    EditorValues.X.Text =
+        formatVectorValue(state.Position.X, false)
+    EditorValues.Y.Text =
+        formatVectorValue(state.Position.Y, false)
+    EditorValues.Z.Text =
+        formatVectorValue(state.Position.Z, false)
+
+    EditorValues.RX.Text =
+        formatVectorValue(state.Rotation.X, true)
+    EditorValues.RY.Text =
+        formatVectorValue(state.Rotation.Y, true)
+    EditorValues.RZ.Text =
+        formatVectorValue(state.Rotation.Z, true)
+end
+
+local function chooseEditorAccessory(direction)
+    local equipped = getEquippedAccessoryKeys()
+
+    if #equipped == 0 then
+        Runtime.EditorSelectedKey = nil
+        refreshEditorValues()
+        return
+    end
+
+    local currentIndex = 1
+
+    for i, key in ipairs(equipped) do
+        if key == Runtime.EditorSelectedKey then
+            currentIndex = i
+            break
+        end
+    end
+
+    if direction then
+        currentIndex =
+            ((currentIndex - 1 + direction) % #equipped) + 1
+    elseif not table.find(equipped, Runtime.EditorSelectedKey) then
+        currentIndex = 1
+    end
+
+    Runtime.EditorSelectedKey = equipped[currentIndex]
+    refreshEditorValues()
+end
+
+PrevAccessory.MouseButton1Click:Connect(function()
+    chooseEditorAccessory(-1)
+end)
+
+NextAccessory.MouseButton1Click:Connect(function()
+    chooseEditorAccessory(1)
+end)
+
+local Controls = Instance.new("Frame")
+Controls.Position = UDim2.fromOffset(16, 122)
+Controls.Size = UDim2.new(1, -32, 0, 242)
+Controls.BackgroundTransparency = 1
+Controls.ZIndex = 52
+Controls.Parent = EditorPanel
+
+local ControlsLayout = Instance.new("UIListLayout")
+ControlsLayout.Padding = UDim.new(0, 6)
+ControlsLayout.SortOrder = Enum.SortOrder.LayoutOrder
+ControlsLayout.Parent = Controls
+
+local function adjustAccessoryOffset(component, delta)
+    local key = Runtime.EditorSelectedKey
+
+    if not key
+        or not Runtime.Enabled[key]
+        or not ASSETS[key]
+        or ASSETS[key].Kind ~= "Accessory"
+    then
+        setStatus("Equipa y selecciona un accesorio.", false)
+        return
+    end
+
+    local state = getAccessoryOffset(key)
+
+    if component == "X" then
+        state.Position += Vector3.new(delta, 0, 0)
+    elseif component == "Y" then
+        state.Position += Vector3.new(0, delta, 0)
+    elseif component == "Z" then
+        state.Position += Vector3.new(0, 0, delta)
+    elseif component == "RX" then
+        state.Rotation += Vector3.new(delta, 0, 0)
+    elseif component == "RY" then
+        state.Rotation += Vector3.new(0, delta, 0)
+    elseif component == "RZ" then
+        state.Rotation += Vector3.new(0, 0, delta)
+    end
+
+    local ok, info = applyAccessoryOffset(key)
+
+    refreshEditorValues()
+
+    if not ok then
+        setStatus("No pude mover el accesorio • " .. tostring(info), false)
+    end
+end
+
+local function makeAxisRow(title, component, rotation)
+    local row = Instance.new("Frame")
+    row.Size = UDim2.new(1, 0, 0, 34)
+    row.BackgroundColor3 = Color3.fromRGB(27, 27, 32)
+    row.BorderSizePixel = 0
+    row.ZIndex = 52
+    row.Parent = Controls
+    Instance.new("UICorner", row).CornerRadius = UDim.new(0, 10)
+
+    local name = Instance.new("TextLabel")
+    name.Position = UDim2.fromOffset(11, 0)
+    name.Size = UDim2.fromOffset(96, 34)
+    name.BackgroundTransparency = 1
+    name.Text = title
+    name.TextColor3 = Color3.fromRGB(188, 190, 197)
+    name.Font = Enum.Font.GothamMedium
+    name.TextSize = 9
+    name.TextXAlignment = Enum.TextXAlignment.Left
+    name.ZIndex = 53
+    name.Parent = row
+
+    local minus =
+        makeEditorButton(
+            row,
+            "−",
+            UDim2.new(1, -126, 0, 4),
+            UDim2.fromOffset(32, 26)
+        )
+
+    local value = Instance.new("TextLabel")
+    value.Position = UDim2.new(1, -90, 0, 0)
+    value.Size = UDim2.fromOffset(50, 34)
+    value.BackgroundTransparency = 1
+    value.Text = "0"
+    value.TextColor3 = Color3.fromRGB(238, 239, 242)
+    value.Font = Enum.Font.Code
+    value.TextSize = 9
+    value.ZIndex = 53
+    value.Parent = row
+
+    local plus =
+        makeEditorButton(
+            row,
+            "+",
+            UDim2.new(1, -36, 0, 4),
+            UDim2.fromOffset(32, 26)
+        )
+
+    EditorValues[component] = value
+
+    minus.MouseButton1Click:Connect(function()
+        adjustAccessoryOffset(
+            component,
+            rotation and -5 or -Runtime.EditorStep
+        )
+    end)
+
+    plus.MouseButton1Click:Connect(function()
+        adjustAccessoryOffset(
+            component,
+            rotation and 5 or Runtime.EditorStep
+        )
+    end)
+end
+
+makeAxisRow("X • Izq / Der", "X", false)
+makeAxisRow("Y • Abajo / Arriba", "Y", false)
+makeAxisRow("Z • Atrás / Frente", "Z", false)
+makeAxisRow("Rotación X", "RX", true)
+makeAxisRow("Rotación Y", "RY", true)
+makeAxisRow("Rotación Z", "RZ", true)
+
+local StepLabel = Instance.new("TextLabel")
+StepLabel.Position = UDim2.fromOffset(17, 372)
+StepLabel.Size = UDim2.fromOffset(125, 24)
+StepLabel.BackgroundTransparency = 1
+StepLabel.Text = "Paso: 0.10 studs"
+StepLabel.TextColor3 = Color3.fromRGB(118, 121, 129)
+StepLabel.Font = Enum.Font.GothamMedium
+StepLabel.TextSize = 9
+StepLabel.TextXAlignment = Enum.TextXAlignment.Left
+StepLabel.ZIndex = 52
+StepLabel.Parent = EditorPanel
+
+local StepButton =
+    makeEditorButton(
+        EditorPanel,
+        "Cambiar paso",
+        UDim2.fromOffset(142, 369),
+        UDim2.fromOffset(92, 28)
+    )
+
+StepButton.MouseButton1Click:Connect(function()
+    local steps = {0.05, 0.10, 0.25, 0.50}
+    local nextIndex = 1
+
+    for i, value in ipairs(steps) do
+        if math.abs(value - Runtime.EditorStep) < 0.001 then
+            nextIndex = (i % #steps) + 1
+            break
+        end
+    end
+
+    Runtime.EditorStep = steps[nextIndex]
+    StepLabel.Text =
+        string.format("Paso: %.2f studs", Runtime.EditorStep)
+end)
+
+local ResetAccessory =
+    makeEditorButton(
+        EditorPanel,
+        "Reset accesorio",
+        UDim2.fromOffset(243, 369),
+        UDim2.fromOffset(92, 28)
+    )
+
+ResetAccessory.MouseButton1Click:Connect(function()
+    local key = Runtime.EditorSelectedKey
+    if not key then return end
+
+    Runtime.AccessoryOffsets[key] = {
+        Position = Vector3.new(),
+        Rotation = Vector3.new(),
+    }
+
+    applyAccessoryOffset(key)
+    refreshEditorValues()
+    setStatus("Posición restaurada • " .. ASSETS[key].Name, true)
+end)
+
+local CloseEditor =
+    makeEditorButton(
+        EditorPanel,
+        "Cerrar",
+        UDim2.new(1, -84, 1, -38),
+        UDim2.fromOffset(68, 28)
+    )
+
+CloseEditor.MouseButton1Click:Connect(function()
+    EditorOverlay.Visible = false
+end)
+
+local function openAccessoryEditor()
+    EditorOverlay.Visible = true
+    chooseEditorAccessory(nil)
+end
+
+makeBottomButton("Acomodar", 159, 72, function()
+    openAccessoryEditor()
 end)
 
 --==================================================

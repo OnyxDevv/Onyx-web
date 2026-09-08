@@ -4,7 +4,7 @@
     | |/ |/ / / _ \/ _  / /_/ // /  
     |__/|__/_/_//_/\_,_/\____/___/
     
-    v1.6.65-iLunXPRO  |  2026-09-08  |  Roblox UI Library for scripts
+    v1.6.65-iLunXPRO-MAXPERF  |  2026-09-08  |  Roblox UI Library for scripts
     
     To view the source code, see the `src/` folder on the official GitHub repository.
     
@@ -756,9 +756,10 @@ return x
 end
 
 function r.DisconnectAll()
-for u,v in next,r.Signals do
-local x=table.remove(r.Signals,u)
-x:Disconnect()
+for u=#r.Signals,1,-1 do
+local x=r.Signals[u]
+r.Signals[u]=nil
+if x then x:Disconnect()end
 end
 end
 
@@ -7523,7 +7524,7 @@ aA=CalculateValue(al.Value.Min+d*(al.Value.Max-al.Value.Min))
 aA=math.clamp(aA,al.Value.Min or 0,al.Value.Max or 100)
 
 if aA~=aq then
-ag(al.UIElements.SliderIcon.Frame,0.05,{Size=UDim2.new(d,0,1,0)}):Play()
+al.UIElements.SliderIcon.Frame.Size=UDim2.new(d,0,1,0)
 al.UIElements.SliderContainer.TextBox.Text=FormatValue(aA)
 if ax then
 ax.TitleFrame.Text=FormatValue(aA)
@@ -7544,7 +7545,7 @@ local g=math.clamp(
 aA=CalculateValue(al.Value.Min+g*(al.Value.Max-al.Value.Min))
 
 if aA~=aq then
-ag(al.UIElements.SliderIcon.Frame,0.05,{Size=UDim2.new(g,0,1,0)}):Play()
+al.UIElements.SliderIcon.Frame.Size=UDim2.new(g,0,1,0)
 al.UIElements.SliderContainer.TextBox.Text=FormatValue(aA)
 if ax then
 ax.TitleFrame.Text=FormatValue(aA)
@@ -7570,7 +7571,7 @@ ay.ScrollingEnabled=true
 
 ak.WindUI.CurrentInput=nil
 
-if ak.Window.NewElements then
+if ak.Window.NewElements and not ak.Window.ReduceMotion then
 ag(al.UIElements.SliderIcon.Frame.Thumb,0.2,{
 ImageTransparency=0,
 Size=UDim2.new(
@@ -13150,6 +13151,8 @@ NewElements=av.NewElements or false,
 IgnoreAlerts=av.IgnoreAlerts or false,
 HidePanelBackground=av.HidePanelBackground or false,
 AutoScale=av.AutoScale~=false,
+ReduceMotion=av.ReduceMotion==true,
+EntryAnimation=av.EntryAnimation~=false,
 OpenButton=av.OpenButton,
 DragFrameSize=160,
 
@@ -14299,7 +14302,8 @@ function aw.SetSize(A,B)
 if typeof(B)=="UDim2"then
 aw.Size=B
 
-ap(aw.UIElements.Main,0.08,{Size=B},Enum.EasingStyle.Quint,Enum.EasingDirection.Out):Play()
+if aw.ReduceMotion then aw.UIElements.Main.Size=B
+else ap(aw.UIElements.Main,0.08,{Size=B},Enum.EasingStyle.Quint,Enum.EasingDirection.Out):Play() end
 end
 end
 
@@ -14337,22 +14341,20 @@ aw.Topbar.ButtonsType=="Mac"and 9 or nil
 )
 
 local function SetSize(C)
-ap(aw.UIElements.Main,0.45,{
-Size=not aw.IsFullscreen and B or UDim2.new(
+local targetSize=not aw.IsFullscreen and B or UDim2.new(
 0,
 (av.WindUI.ScreenGui.AbsoluteSize.X-20)/av.WindUI.UIScale,
 0,
 (av.WindUI.ScreenGui.AbsoluteSize.Y-20-52)/av.WindUI.UIScale
-),
-},Enum.EasingStyle.Quint,Enum.EasingDirection.Out):Play()
-
-ap(
-aw.UIElements.Main,
-0.45,
-{Position=not aw.IsFullscreen and A or UDim2.new(0.5,0,0.5,26)},
-Enum.EasingStyle.Quint,
-Enum.EasingDirection.Out
-):Play()
+)
+local targetPosition=not aw.IsFullscreen and A or UDim2.new(0.5,0,0.5,26)
+if aw.ReduceMotion then
+aw.UIElements.Main.Size=targetSize
+aw.UIElements.Main.Position=targetPosition
+else
+ap(aw.UIElements.Main,0.45,{Size=targetSize},Enum.EasingStyle.Quint,Enum.EasingDirection.Out):Play()
+ap(aw.UIElements.Main,0.45,{Position=targetPosition},Enum.EasingStyle.Quint,Enum.EasingDirection.Out):Play()
+end
 end
 
 function aw.ToggleFullscreen(C)
@@ -14440,214 +14442,88 @@ end
 end
 
 function aw.Open(C)
-if aw.Destroyed then
-return
-end
+if aw.Destroyed then return end
 task.spawn(function()
-if aw.OnOpenCallback then
-task.spawn(function()
-an.SafeCallback(aw.OnOpenCallback)
-end)
-end
-
-task.wait(0.06)
+if aw.OnOpenCallback then task.spawn(function() an.SafeCallback(aw.OnOpenCallback) end) end
+if aw.EntryAnimation and not aw.ReduceMotion then task.wait(0.06) end
 aw.Closed=false
 
-aw.UIElements.Main.Size=UDim2.new(aw.Size.X.Scale,aw.Size.X.Offset,0,100)
-
-ap(aw.UIElements.Main,0,{
-
-Size=aw.Size,
-},Enum.EasingStyle.Quint,Enum.EasingDirection.Out):Play()
-
-if aw.UIElements.BackgroundGradient then
-ap(aw.UIElements.BackgroundGradient,0.2,{
-ImageTransparency=0,
-},Enum.EasingStyle.Quint,Enum.EasingDirection.Out):Play()
-end
-
-aw.UIElements.Main.Background.ImageTransparency=1
-ap(aw.UIElements.Main.Background,0.4,{
-
-ImageTransparency=aw.Transparent and av.WindUI.TransparencyValue or 0,
-},Enum.EasingStyle.Exponential,Enum.EasingDirection.Out):Play()
-
-if i then
-if i:IsA"VideoFrame"then
-i.Visible=true
-else
-ap(i,0.2,{
-ImageTransparency=aw.BackgroundImageTransparency,
-},Enum.EasingStyle.Quint,Enum.EasingDirection.Out):Play()
-end
-end
-
-if aw.OpenButtonMain and aw.IsOpenButtonEnabled then
-aw.OpenButtonMain:Visible(false)
-end
-
-
-
-
-
-
-
-
-
-ap(
-b,
-0.25,
-{ImageTransparency=aw.ShadowTransparency},
-Enum.EasingStyle.Quint,
-Enum.EasingDirection.Out
-):Play()
-
-
-
-
-ap(
-r,
-0.45,
-{Size=UDim2.new(0,aw.DragFrameSize,0,4),ImageTransparency=0.8},
-Enum.EasingStyle.Exponential,
-Enum.EasingDirection.Out
-):Play()
+if aw.OpenButtonMain and aw.IsOpenButtonEnabled then aw.OpenButtonMain:Visible(false) end
+aw.UIElements.Main.Visible=true
+aw.UIElements.Main:WaitForChild"Main".Visible=true
+aw.CanDropdown=true
+if aw.Resizable then aw.CanResize=true end
 z:Set(true)
 
-if aw.Resizable then
-ap(
-az.ImageLabel,
-0.45,
-{ImageTransparency=0.8},
-Enum.EasingStyle.Exponential,
-Enum.EasingDirection.Out
-):Play()
-aw.CanResize=true
+if aw.ReduceMotion or not aw.EntryAnimation then
+aw.UIElements.Main.Size=aw.Size
+if aw.UIElements.BackgroundGradient then aw.UIElements.BackgroundGradient.ImageTransparency=0 end
+aw.UIElements.Main.Background.ImageTransparency=aw.Transparent and av.WindUI.TransparencyValue or 0
+if i then
+if i:IsA"VideoFrame"then i.Visible=true else i.ImageTransparency=aw.BackgroundImageTransparency end
 end
-
-aw.CanDropdown=true
-aw.UIElements.Main.Visible=true
-
-
-
-aw.UIElements.Main:WaitForChild"Main".Visible=true
-
+b.ImageTransparency=aw.ShadowTransparency
+r.Size=UDim2.new(0,aw.DragFrameSize,0,4)
+r.ImageTransparency=0.8
+if aw.Resizable then az.ImageLabel.ImageTransparency=0.8 end
+else
+aw.UIElements.Main.Size=UDim2.new(aw.Size.X.Scale,aw.Size.X.Offset,0,100)
+ap(aw.UIElements.Main,0,{Size=aw.Size},Enum.EasingStyle.Quint,Enum.EasingDirection.Out):Play()
+if aw.UIElements.BackgroundGradient then ap(aw.UIElements.BackgroundGradient,0.2,{ImageTransparency=0},Enum.EasingStyle.Quint,Enum.EasingDirection.Out):Play() end
+aw.UIElements.Main.Background.ImageTransparency=1
+ap(aw.UIElements.Main.Background,0.4,{ImageTransparency=aw.Transparent and av.WindUI.TransparencyValue or 0},Enum.EasingStyle.Exponential,Enum.EasingDirection.Out):Play()
+if i then
+if i:IsA"VideoFrame"then i.Visible=true else ap(i,0.2,{ImageTransparency=aw.BackgroundImageTransparency},Enum.EasingStyle.Quint,Enum.EasingDirection.Out):Play() end
+end
+ap(b,0.25,{ImageTransparency=aw.ShadowTransparency},Enum.EasingStyle.Quint,Enum.EasingDirection.Out):Play()
+ap(r,0.45,{Size=UDim2.new(0,aw.DragFrameSize,0,4),ImageTransparency=0.8},Enum.EasingStyle.Exponential,Enum.EasingDirection.Out):Play()
+if aw.Resizable then ap(az.ImageLabel,0.45,{ImageTransparency=0.8},Enum.EasingStyle.Exponential,Enum.EasingDirection.Out):Play() end
+end
 av.WindUI:ToggleAcrylic(true)
-
 end)
 end
+
 function aw.Close(C)
-if aw.Destroyed then
-return
-end
-
+if aw.Destroyed then return end
 local F={}
-
-if aw.OnCloseCallback then
-task.spawn(function()
-an.SafeCallback(aw.OnCloseCallback)
-end)
-end
-
+if aw.OnCloseCallback then task.spawn(function() an.SafeCallback(aw.OnCloseCallback) end) end
 av.WindUI:ToggleAcrylic(false)
-
-if aw.UIElements.Main and aw.UIElements.Main:WaitForChild"Main"then
-aw.UIElements.Main.Main.Visible=false
-end
-
+if aw.UIElements.Main and aw.UIElements.Main:FindFirstChild"Main"then aw.UIElements.Main.Main.Visible=false end
 aw.CanDropdown=false
 aw.Closed=true
 
-ap(aw.UIElements.Main,0,{
-
-Size=UDim2.new(aw.Size.X.Scale,aw.Size.X.Offset,0,0),
-},Enum.EasingStyle.Quint,Enum.EasingDirection.Out):Play()
-if aw.UIElements.BackgroundGradient then
-ap(aw.UIElements.BackgroundGradient,0.2,{
-ImageTransparency=1,
-},Enum.EasingStyle.Quint,Enum.EasingDirection.InOut):Play()
-end
-
-ap(aw.UIElements.Main.Background,0.3,{
-
-ImageTransparency=1,
-},Enum.EasingStyle.Exponential,Enum.EasingDirection.InOut):Play()
-
-
-
-
-
-
-
-
-if i then
-if i:IsA"VideoFrame"then
-i.Visible=false
+if aw.ReduceMotion then
+aw.UIElements.Main.Size=UDim2.new(aw.Size.X.Scale,aw.Size.X.Offset,0,0)
+if aw.UIElements.BackgroundGradient then aw.UIElements.BackgroundGradient.ImageTransparency=1 end
+aw.UIElements.Main.Background.ImageTransparency=1
+if i then if i:IsA"VideoFrame"then i.Visible=false else i.ImageTransparency=1 end end
+b.ImageTransparency=1
 else
-ap(i,0.3,{
-ImageTransparency=1,
-},Enum.EasingStyle.Quint,Enum.EasingDirection.Out):Play()
-end
+ap(aw.UIElements.Main,0,{Size=UDim2.new(aw.Size.X.Scale,aw.Size.X.Offset,0,0)},Enum.EasingStyle.Quint,Enum.EasingDirection.Out):Play()
+if aw.UIElements.BackgroundGradient then ap(aw.UIElements.BackgroundGradient,0.2,{ImageTransparency=1},Enum.EasingStyle.Quint,Enum.EasingDirection.InOut):Play() end
+ap(aw.UIElements.Main.Background,0.3,{ImageTransparency=1},Enum.EasingStyle.Exponential,Enum.EasingDirection.InOut):Play()
+if i then
+if i:IsA"VideoFrame"then i.Visible=false else ap(i,0.3,{ImageTransparency=1},Enum.EasingStyle.Quint,Enum.EasingDirection.Out):Play() end
 end
 ap(b,0.25,{ImageTransparency=1},Enum.EasingStyle.Quint,Enum.EasingDirection.Out):Play()
+end
 
-
-
-
-ap(
-r,
-0.3,
-{Size=UDim2.new(0,0,0,4),ImageTransparency=1},
-Enum.EasingStyle.Exponential,
-Enum.EasingDirection.InOut
-):Play()
-ap(
-az.ImageLabel,
-0.3,
-{ImageTransparency=1},
-Enum.EasingStyle.Exponential,
-Enum.EasingDirection.Out
-):Play()
-z:Set(false)
 aw.CanResize=false
-
-task.spawn(function()
-task.wait(0)
-
-if not aw.Closed then
-return
-end
-
+z:Set(false)
+if aw.OpenButtonMain and not aw.Destroyed and not aw.IsPC and aw.IsOpenButtonEnabled then aw.OpenButtonMain:Visible(true) end
 aw.UIElements.Main.Visible=false
-
-if aw.OpenButtonMain and not aw.Destroyed and not aw.IsPC and aw.IsOpenButtonEnabled then
-aw.OpenButtonMain:Visible(true)
-end
-end)
 
 function F.Destroy(G)
 task.spawn(function()
-if aw.OnDestroyCallback then
-task.spawn(function()
-an.SafeCallback(aw.OnDestroyCallback)
-end)
-end
-
-if aw.AcrylicPaint and aw.AcrylicPaint.Model then
-aw.AcrylicPaint.Model:Destroy()
-end
-
+if aw.OnDestroyCallback then task.spawn(function() an.SafeCallback(aw.OnDestroyCallback) end) end
+if aw.AcrylicPaint and aw.AcrylicPaint.Model then aw.AcrylicPaint.Model:Destroy() end
 aw.Destroyed=true
-
-task.wait(0.4)
-
+if not aw.ReduceMotion then task.wait(0.4) end
 av.WindUI.ScreenGui:Destroy()
 av.WindUI.NotificationGui:Destroy()
 av.WindUI.DropdownGui:Destroy()
 av.WindUI.TooltipGui:Destroy()
-
 an.DisconnectAll()
-
 return
 end)
 end
@@ -14718,18 +14594,14 @@ end
 
 function aw.SetUIScale(C,F)
 av.WindUI.UIScale=F
-ap(av.WindUI.UIScaleObj,0.2,{Scale=F},Enum.EasingStyle.Quint,Enum.EasingDirection.Out):Play()
+if aw.ReduceMotion then av.WindUI.UIScaleObj.Scale=F
+else ap(av.WindUI.UIScaleObj,0.2,{Scale=F},Enum.EasingStyle.Quint,Enum.EasingDirection.Out):Play() end
 return aw
 end
 
 function aw.SetToTheCenter(C)
-ap(
-aw.UIElements.Main,
-0.45,
-{Position=UDim2.new(0.5,0,0.5,0)},
-Enum.EasingStyle.Quint,
-Enum.EasingDirection.Out
-):Play()
+if aw.ReduceMotion then aw.UIElements.Main.Position=UDim2.new(0.5,0,0.5,0)
+else ap(aw.UIElements.Main,0.45,{Position=UDim2.new(0.5,0,0.5,0)},Enum.EasingStyle.Quint,Enum.EasingDirection.Out):Play() end
 return aw
 end
 

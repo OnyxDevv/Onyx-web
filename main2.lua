@@ -4,7 +4,7 @@
     | |/ |/ / / _ \/ _  / /_/ // /  
     |__/|__/_/_//_/\_,_/\____/___/
     
-    v1.6.67-iLunXPRO  |  2026-09-08  |  Roblox UI Library for scripts
+    v1.6.68-iLunXPRO  |  2026-09-08  |  Roblox UI Library for scripts
     
     To view the source code, see the `src/` folder on the official GitHub repository.
     
@@ -4023,10 +4023,11 @@ local ilunxSilver=aa:Gradient({
 },{Rotation=24})
 
 local ilunxBackground=aa:Gradient({
-["0"]={Color=Color3.fromHex"#020202",Transparency=0},
-["52"]={Color=Color3.fromHex"#0B0C0E",Transparency=0},
-["100"]={Color=Color3.fromHex"#040405",Transparency=0},
-},{Rotation=125})
+["0"]={Color=Color3.fromHex"#030407",Transparency=0},
+["32"]={Color=Color3.fromHex"#10151D",Transparency=0},
+["64"]={Color=Color3.fromHex"#090C12",Transparency=0},
+["100"]={Color=Color3.fromHex"#020304",Transparency=0},
+},{Rotation=128})
 
 local ilunxSurface=aa:Gradient({
 ["0"]={Color=Color3.fromHex"#191B1E",Transparency=0},
@@ -13839,35 +13840,32 @@ ClipsDescendants=true,
 },{
 aw.AmbientBackground and ao("Frame",{
     Name="AmbientDepth",
-    Size=UDim2.new(0.96,0,0.94,0),
+    Size=UDim2.new(1,0,1,0),
     Position=UDim2.new(0.5,0,0.5,0),
     AnchorPoint=Vector2.new(0.5,0.5),
-    BackgroundColor3=Color3.fromRGB(20,22,26),
-    BackgroundTransparency=0.34,
+    BackgroundColor3=Color3.fromRGB(10,13,18),
+    BackgroundTransparency=0.08,
     BorderSizePixel=0,
     ZIndex=1,
 },{
     ao("UIGradient",{
-        Rotation=118,
+        Rotation=128,
         Color=ColorSequence.new{
-            ColorSequenceKeypoint.new(0,Color3.fromRGB(8,9,11)),
-            ColorSequenceKeypoint.new(0.48,Color3.fromRGB(28,31,36)),
-            ColorSequenceKeypoint.new(1,Color3.fromRGB(5,6,8)),
-        },
-        Transparency=NumberSequence.new{
-            NumberSequenceKeypoint.new(0,0.08),
-            NumberSequenceKeypoint.new(0.52,0.25),
-            NumberSequenceKeypoint.new(1,0.02),
+            ColorSequenceKeypoint.new(0,Color3.fromRGB(4,5,8)),
+            ColorSequenceKeypoint.new(0.30,Color3.fromRGB(18,24,33)),
+            ColorSequenceKeypoint.new(0.58,Color3.fromRGB(11,15,22)),
+            ColorSequenceKeypoint.new(1,Color3.fromRGB(3,4,6)),
         },
     }),
 }) or nil,
+
 aw.AmbientBackground and ao("Frame",{
-    Name="AmbientSheen",
-    Size=UDim2.new(0.92,0,0,150),
-    Position=UDim2.new(0.04,0,0,-48),
-    Rotation=-7,
-    BackgroundColor3=Color3.fromRGB(128,137,150),
-    BackgroundTransparency=0.84,
+    Name="AmbientGlowTop",
+    Size=UDim2.new(0.82,0,0,230),
+    Position=UDim2.new(0.48,0,0,-82),
+    Rotation=-9,
+    BackgroundColor3=Color3.fromRGB(125,143,166),
+    BackgroundTransparency=0.76,
     BorderSizePixel=0,
     ZIndex=2,
 },{
@@ -13875,23 +13873,114 @@ aw.AmbientBackground and ao("Frame",{
         Rotation=0,
         Transparency=NumberSequence.new{
             NumberSequenceKeypoint.new(0,1),
-            NumberSequenceKeypoint.new(0.35,0.78),
-            NumberSequenceKeypoint.new(0.52,0.55),
-            NumberSequenceKeypoint.new(0.70,0.82),
+            NumberSequenceKeypoint.new(0.25,0.72),
+            NumberSequenceKeypoint.new(0.52,0.38),
+            NumberSequenceKeypoint.new(0.78,0.78),
             NumberSequenceKeypoint.new(1,1),
         },
     }),
 }) or nil,
+
+aw.AmbientBackground and ao("Frame",{
+    Name="AmbientGlowBottom",
+    Size=UDim2.new(0.72,0,0,210),
+    Position=UDim2.new(-0.08,0,1,-105),
+    Rotation=11,
+    BackgroundColor3=Color3.fromRGB(69,82,101),
+    BackgroundTransparency=0.82,
+    BorderSizePixel=0,
+    ZIndex=2,
+},{
+    ao("UIGradient",{
+        Rotation=0,
+        Transparency=NumberSequence.new{
+            NumberSequenceKeypoint.new(0,1),
+            NumberSequenceKeypoint.new(0.30,0.80),
+            NumberSequenceKeypoint.new(0.54,0.48),
+            NumberSequenceKeypoint.new(0.82,0.84),
+            NumberSequenceKeypoint.new(1,1),
+        },
+    }),
+}) or nil,
+
+aw.AmbientBackground and ao("Frame",{
+    Name="AmbientXLeft",
+    AnchorPoint=Vector2.new(0.5,0.5),
+    Size=UDim2.new(1.18,0,0,56),
+    Position=UDim2.new(0.53,0,0.46,0),
+    Rotation=-23,
+    BackgroundColor3=Color3.fromRGB(174,187,204),
+    BackgroundTransparency=0.87,
+    BorderSizePixel=0,
+    ZIndex=2,
+},{
+    ao("UIGradient",{
+        Rotation=0,
+        Transparency=NumberSequence.new{
+            NumberSequenceKeypoint.new(0,1),
+            NumberSequenceKeypoint.new(0.20,0.92),
+            NumberSequenceKeypoint.new(0.50,0.58),
+            NumberSequenceKeypoint.new(0.80,0.92),
+            NumberSequenceKeypoint.new(1,1),
+        },
+    }),
+}) or nil,
+
+aw.AmbientBackground and ao("Frame",{
+    Name="AmbientXRight",
+    AnchorPoint=Vector2.new(0.5,0.5),
+    Size=UDim2.new(1.10,0,0,42),
+    Position=UDim2.new(0.53,0,0.54,0),
+    Rotation=22,
+    BackgroundColor3=Color3.fromRGB(100,116,137),
+    BackgroundTransparency=0.90,
+    BorderSizePixel=0,
+    ZIndex=2,
+},{
+    ao("UIGradient",{
+        Rotation=0,
+        Transparency=NumberSequence.new{
+            NumberSequenceKeypoint.new(0,1),
+            NumberSequenceKeypoint.new(0.23,0.94),
+            NumberSequenceKeypoint.new(0.50,0.62),
+            NumberSequenceKeypoint.new(0.77,0.94),
+            NumberSequenceKeypoint.new(1,1),
+        },
+    }),
+}) or nil,
+
+aw.AmbientBackground and ao("Frame",{
+    Name="AmbientEdgeLight",
+    Size=UDim2.new(0.72,0,0,1),
+    Position=UDim2.new(0.24,0,0,74),
+    BackgroundColor3=Color3.fromRGB(190,201,214),
+    BackgroundTransparency=0.70,
+    BorderSizePixel=0,
+    ZIndex=3,
+},{
+    ao("UIGradient",{
+        Rotation=0,
+        Transparency=NumberSequence.new{
+            NumberSequenceKeypoint.new(0,1),
+            NumberSequenceKeypoint.new(0.22,0.72),
+            NumberSequenceKeypoint.new(0.50,0.18),
+            NumberSequenceKeypoint.new(0.78,0.72),
+            NumberSequenceKeypoint.new(1,1),
+        },
+    }),
+}) or nil,
+
 aw.AmbientBackground and ao("ImageLabel",{
     Name="AmbientNoise",
-    Size=UDim2.new(0.96,0,0.94,0),
+    Size=UDim2.new(1,0,1,0),
     Position=UDim2.new(0.5,0,0.5,0),
     AnchorPoint=Vector2.new(0.5,0.5),
     BackgroundTransparency=1,
     Image="rbxassetid://9968344105",
-    ImageTransparency=0.975,
+    ImageTransparency=0.94,
+    ImageColor3=Color3.fromRGB(165,174,186),
     ScaleType=Enum.ScaleType.Tile,
-    TileSize=UDim2.new(0,128,0,128),
+    TileSize=UDim2.new(0,144,0,144),
     ZIndex=3,
 }) or nil,
 i,

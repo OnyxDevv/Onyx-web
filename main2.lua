@@ -4,7 +4,7 @@
     | |/ |/ / / _ \/ _  / /_/ // /  
     |__/|__/_/_//_/\_,_/\____/___/
     
-    v1.6.66-iLunXPRO-MAXPERF3  |  2026-09-08  |  Roblox UI Library for scripts
+    v1.6.67-iLunXPRO  |  2026-09-08  |  Roblox UI Library for scripts
     
     To view the source code, see the `src/` folder on the official GitHub repository.
     
@@ -756,7 +756,7 @@ return x
 end
 
 function r.DisconnectAll()
--- MAXPERF2: limpieza blindada; ninguna conexión vieja queda viva tras destruir/re-ejecutar.
+-- OPT: limpieza blindada; ninguna conexión vieja queda viva tras destruir/re-ejecutar.
 for u=#r.Signals,1,-1 do
 local x=r.Signals[u]
 r.Signals[u]=nil
@@ -13164,6 +13164,7 @@ HidePanelBackground=av.HidePanelBackground or false,
 AutoScale=av.AutoScale~=false,
 ReduceMotion=av.ReduceMotion==true,
 EntryAnimation=av.EntryAnimation~=false,
+AmbientBackground=av.AmbientBackground~=false,
 OpenButton=av.OpenButton,
 DragFrameSize=160,
 
@@ -13833,8 +13834,66 @@ Name="Background",
 ThemeTag={
 ImageColor3="WindowBackground",
 },
+ClipsDescendants=true,
 
 },{
+aw.AmbientBackground and ao("Frame",{
+    Name="AmbientDepth",
+    Size=UDim2.new(0.96,0,0.94,0),
+    Position=UDim2.new(0.5,0,0.5,0),
+    AnchorPoint=Vector2.new(0.5,0.5),
+    BackgroundColor3=Color3.fromRGB(20,22,26),
+    BackgroundTransparency=0.34,
+    BorderSizePixel=0,
+    ZIndex=1,
+},{
+    ao("UIGradient",{
+        Rotation=118,
+        Color=ColorSequence.new{
+            ColorSequenceKeypoint.new(0,Color3.fromRGB(8,9,11)),
+            ColorSequenceKeypoint.new(0.48,Color3.fromRGB(28,31,36)),
+            ColorSequenceKeypoint.new(1,Color3.fromRGB(5,6,8)),
+        },
+        Transparency=NumberSequence.new{
+            NumberSequenceKeypoint.new(0,0.08),
+            NumberSequenceKeypoint.new(0.52,0.25),
+            NumberSequenceKeypoint.new(1,0.02),
+        },
+    }),
+}) or nil,
+aw.AmbientBackground and ao("Frame",{
+    Name="AmbientSheen",
+    Size=UDim2.new(0.92,0,0,150),
+    Position=UDim2.new(0.04,0,0,-48),
+    Rotation=-7,
+    BackgroundColor3=Color3.fromRGB(128,137,150),
+    BackgroundTransparency=0.84,
+    BorderSizePixel=0,
+    ZIndex=2,
+},{
+    ao("UIGradient",{
+        Rotation=0,
+        Transparency=NumberSequence.new{
+            NumberSequenceKeypoint.new(0,1),
+            NumberSequenceKeypoint.new(0.35,0.78),
+            NumberSequenceKeypoint.new(0.52,0.55),
+            NumberSequenceKeypoint.new(0.70,0.82),
+            NumberSequenceKeypoint.new(1,1),
+        },
+    }),
+}) or nil,
+aw.AmbientBackground and ao("ImageLabel",{
+    Name="AmbientNoise",
+    Size=UDim2.new(0.96,0,0.94,0),
+    Position=UDim2.new(0.5,0,0.5,0),
+    AnchorPoint=Vector2.new(0.5,0.5),
+    BackgroundTransparency=1,
+    Image="rbxassetid://9968344105",
+    ImageTransparency=0.975,
+    ScaleType=Enum.ScaleType.Tile,
+    TileSize=UDim2.new(0,128,0,128),
+    ZIndex=3,
+}) or nil,
 i,
 r,
 az,

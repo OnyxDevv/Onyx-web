@@ -4,7 +4,7 @@
     | |/ |/ / / _ \/ _  / /_/ // /  
     |__/|__/_/_//_/\_,_/\____/___/
     
-    v1.6.65  |  2026-07-01  |  Roblox UI Library for scripts
+    v1.6.65-iLunXPRO  |  2026-09-08  |  Roblox UI Library for scripts
     
     To view the source code, see the `src/` folder on the official GitHub repository.
     
@@ -1144,24 +1144,7 @@ end
 return z
 end
 
-local instantTweenMethods={}
-local instantTweenMeta={__index=instantTweenMethods}
-
-function instantTweenMethods.Play(u)
-if u.Cancelled then return end
-for v,x in next,u.Goals do
-u.Object[v]=x
-end
-end
-
-function instantTweenMethods.Cancel(u)
-u.Cancelled=true
-end
-
 function r.Tween(u,v,x,...)
-if p and p.ReduceMotion then
-return setmetatable({Object=u,Goals=x,Cancelled=false},instantTweenMeta)
-end
 return f:Create(u,TweenInfo.new(v,...),x)
 end
 
@@ -4034,19 +4017,19 @@ local ilunxSilver=aa:Gradient({
 },{Rotation=24})
 
 local ilunxBackground=aa:Gradient({
-["0"]={Color=Color3.fromHex"#000000",Transparency=0},
-["52"]={Color=Color3.fromHex"#0B0B0D",Transparency=0},
-["100"]={Color=Color3.fromHex"#050506",Transparency=0},
+["0"]={Color=Color3.fromHex"#020202",Transparency=0},
+["52"]={Color=Color3.fromHex"#0B0C0E",Transparency=0},
+["100"]={Color=Color3.fromHex"#040405",Transparency=0},
 },{Rotation=125})
 
 local ilunxSurface=aa:Gradient({
-["0"]={Color=Color3.fromHex"#2C2C2E",Transparency=0},
-["100"]={Color=Color3.fromHex"#1C1C1E",Transparency=0},
+["0"]={Color=Color3.fromHex"#191B1E",Transparency=0},
+["100"]={Color=Color3.fromHex"#0D0E10",Transparency=0},
 },{Rotation=90})
 
 local ilunxHover=aa:Gradient({
-["0"]={Color=Color3.fromHex"#3A3A3C",Transparency=0},
-["100"]={Color=Color3.fromHex"#2C2C2E",Transparency=0},
+["0"]={Color=Color3.fromHex"#292C31",Transparency=0},
+["100"]={Color=Color3.fromHex"#17191C",Transparency=0},
 },{Rotation=90})
 
 return{
@@ -4057,9 +4040,9 @@ Accent=ilunxSurface,
 Dialog=ilunxSurface,
 Outline=ilunxSilver,
 Text=Color3.fromHex"#F7F8F9",
-Placeholder=Color3.fromHex"#8E8E93",
+Placeholder=Color3.fromHex"#858B93",
 Background=ilunxBackground,
-Button=Color3.fromHex"#3A3A3C",
+Button=Color3.fromHex"#555B63",
 Icon=ilunxSilver,
 Toggle=ilunxSilver,
 ToggleBar=Color3.fromHex"#090A0B",
@@ -4071,7 +4054,7 @@ Primary=ilunxSilver,
 
 WindowShadow=Color3.fromHex"#000000",
 WindowTopbarTitle=Color3.fromHex"#FFFFFF",
-WindowTopbarAuthor=Color3.fromHex"#8E8E93",
+WindowTopbarAuthor=Color3.fromHex"#A4A9B0",
 WindowTopbarIcon=ilunxSilver,
 WindowTopbarButtonIcon=Color3.fromHex"#E4E7EA",
 
@@ -4094,32 +4077,32 @@ TabBorderTransparency=0.94,
 TabBorderTransparencyActive=0.58,
 
 ElementBackground=ilunxSurface,
-ElementBackgroundTransparency=0.05,
+ElementBackgroundTransparency=0.08,
 ElementBackgroundHover=ilunxHover,
 ElementTitle=Color3.fromHex"#F5F6F7",
-ElementDesc=Color3.fromHex"#AEAEB2",
+ElementDesc=Color3.fromHex"#B2B7BE",
 ElementIcon=ilunxSilver,
 
 SectionBox=Color3.fromHex"#D9DDE1",
-SectionBoxTransparency=0.94,
+SectionBoxTransparency=0.92,
 SectionBoxBorder=ilunxSilver,
-SectionBoxBorderTransparency=0.72,
-SectionBoxBackground=Color3.fromHex"#1C1C1E",
+SectionBoxBorderTransparency=0.66,
+SectionBoxBackground=Color3.fromHex"#111214",
 SectionBoxBackgroundTransparency=0.04,
 
 DropdownTabBorder=ilunxSilver,
 DropdownTabBackground=ilunxSurface,
-DropdownBackground=Color3.fromHex"#1C1C1E",
-LabelBackground=Color3.fromHex"#2C2C2E",
+DropdownBackground=Color3.fromHex"#090A0B",
+LabelBackground=Color3.fromHex"#15171A",
 LabelBackgroundTransparency=0.08,
 
-Notification=Color3.fromHex"#1C1C1E",
+Notification=Color3.fromHex"#08090A",
 Notification2=ilunxSilver,
 Notification2Transparency=0.90,
 NotificationBorder=ilunxSilver,
 NotificationBorderTransparency=0.55,
 NotificationDuration=ilunxSilver,
-Tooltip=Color3.fromHex"#2C2C2E",
+Tooltip=Color3.fromHex"#0A0B0D",
 TooltipSecondary=ilunxSilver,
 },
 
@@ -9025,11 +9008,11 @@ workspace.CurrentCamera
 
 local am={
 UICorner=10,
-UIPadding=12,
-MenuCorner=15,
-MenuPadding=5,
+UIPadding=13,
+MenuCorner=16,
+MenuPadding=6,
 TabPadding=10,
-SearchBarHeight=39,
+SearchBarHeight=40,
 TabIcon=18,
 }
 
@@ -12353,11 +12336,20 @@ ImageTransparency="TabIconTransparencyActive",
 end
 ao.Tabs[aq].Selected=true
 
+task.spawn(function()
 for ar,as in next,ao.Containers do
+as.AnchorPoint=Vector2.new(0,0.05)
 as.Visible=false
 end
 ao.Containers[aq].Visible=true
-ao.Containers[aq].AnchorPoint=Vector2.new(0,0)
+local ar=game:GetService"TweenService"
+
+local as=TweenInfo.new(0.15,Enum.EasingStyle.Quart,Enum.EasingDirection.Out)
+local at=ar:Create(ao.Containers[aq],as,{
+AnchorPoint=Vector2.new(0,0),
+})
+at:Play()
+end)
 
 ao.OnChangeFunc(aq)
 end
@@ -13141,14 +13133,14 @@ Topbar=av.Topbar or{Height=52,ButtonsType="Default"},
 
 Size=av.Size,
 
-MinSize=av.MinSize or Vector2.new(560,350),
-MaxSize=av.MaxSize or Vector2.new(850,560),
+MinSize=av.MinSize or Vector2.new(580,370),
+MaxSize=av.MaxSize or Vector2.new(920,680),
 
 TopBarButtonIconSize=av.TopBarButtonIconSize,
 
 ToggleKey=av.ToggleKey,
 ElementsRadius=av.ElementsRadius,
-Radius=av.Radius or 20,
+Radius=av.Radius or 16,
 Transparent=av.Transparent or false,
 HideSearchBar=av.HideSearchBar~=false,
 ScrollBarEnabled=av.ScrollBarEnabled or false,
@@ -13158,15 +13150,12 @@ NewElements=av.NewElements or false,
 IgnoreAlerts=av.IgnoreAlerts or false,
 HidePanelBackground=av.HidePanelBackground or false,
 AutoScale=av.AutoScale~=false,
-ReduceMotion=av.ReduceMotion==true,
-EntryAnimation=av.EntryAnimation~=false,
-EntryAnimationDuration=av.EntryAnimationDuration or 0.28,
 OpenButton=av.OpenButton,
 DragFrameSize=160,
 
 Position=UDim2.new(0.5,0,0.5,0),
-UICorner=20,
-UIPadding=14,
+UICorner=16,
+UIPadding=15,
 UIElements={},
 CanDropdown=true,
 Closed=false,
@@ -13188,7 +13177,7 @@ OnDestroyCallback=nil,
 
 IsPC=false,
 
-Gap=5,
+Gap=7,
 
 TopBarButtons={},
 AllElements={},
@@ -13205,8 +13194,8 @@ aw.UICorner=aw.Radius
 aw.TopBarButtonIconSize=aw.TopBarButtonIconSize or(aw.Topbar.ButtonsType=="Mac"and 11 or 16)
 
 aw.ElementConfig={
-UIPadding=(aw.NewElements and 10 or 13),
-UICorner=aw.ElementsRadius or(aw.NewElements and 23 or 14),
+UIPadding=(aw.NewElements and 11 or 14),
+UICorner=aw.ElementsRadius or(aw.NewElements and 23 or 16),
 }
 
 local ax=aw.Size or UDim2.new(0,580,0,460)
@@ -14461,36 +14450,15 @@ an.SafeCallback(aw.OnOpenCallback)
 end)
 end
 
-task.wait()
+task.wait(0.06)
 aw.Closed=false
 
-if aw.ReduceMotion and aw.EntryAnimation then
-aw.UIElements.Main.Size=UDim2.new(
-aw.Size.X.Scale*0.94,
-math.floor(aw.Size.X.Offset*0.94),
-aw.Size.Y.Scale*0.94,
-math.floor(aw.Size.Y.Offset*0.94)
-)
-aw.UIElements.Main.Position=UDim2.new(
-aw.Position.X.Scale,
-aw.Position.X.Offset,
-aw.Position.Y.Scale,
-aw.Position.Y.Offset+10
-)
-aw.UIElements.Main.Visible=true
-aw.UIElements.Main.Main.Visible=true
-
-game:GetService("TweenService"):Create(
-aw.UIElements.Main,
-TweenInfo.new(aw.EntryAnimationDuration,Enum.EasingStyle.Quart,Enum.EasingDirection.Out),
-{Size=aw.Size,Position=aw.Position}
-):Play()
-else
 aw.UIElements.Main.Size=UDim2.new(aw.Size.X.Scale,aw.Size.X.Offset,0,100)
+
 ap(aw.UIElements.Main,0,{
+
 Size=aw.Size,
 },Enum.EasingStyle.Quint,Enum.EasingDirection.Out):Play()
-end
 
 if aw.UIElements.BackgroundGradient then
 ap(aw.UIElements.BackgroundGradient,0.2,{
@@ -15387,7 +15355,6 @@ LocalizationModule=a.load'e',
 NotificationModule=a.load'f',
 Themes=nil,
 Transparent=false,
-ReduceMotion=false,
 
 TransparencyValue=0.15,
 
@@ -15793,8 +15760,6 @@ repeat
 task.wait()
 until b
 end
-
-aa.ReduceMotion=aA.ReduceMotion==true
 
 local h=aB(aA)
 

@@ -228,15 +228,10 @@ end
 local startupSplashState = {StartedAt = os.clock()}
 
 do
-    -- WindUI vive normalmente en CoreGui. Usamos la misma capa (o gethui)
-    -- y el DisplayOrder máximo para que el hub nunca tape el splash.
+    -- Splash MAXPERF: negro real, nítido y cubriendo todo el viewport.
     local splashParent = playerGui
     pcall(function()
-        if gethui then
-            splashParent = gethui()
-        else
-            splashParent = game:GetService("CoreGui")
-        end
+        if gethui then splashParent = gethui() else splashParent = game:GetService("CoreGui") end
     end)
 
     local previousSplash = splashParent and splashParent:FindFirstChild("iLunXHub_Startup")
@@ -248,6 +243,8 @@ do
     startupGui.IgnoreGuiInset = true
     startupGui.DisplayOrder = 2147483647
     startupGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+    pcall(function() startupGui.ScreenInsets = Enum.ScreenInsets.None end)
+    pcall(function() startupGui.ClipToDeviceSafeArea = false end)
 
     pcall(function()
         if syn and syn.protect_gui then syn.protect_gui(startupGui) end
@@ -260,78 +257,69 @@ do
     local splash = Instance.new("CanvasGroup")
     splash.Name = "Splash"
     splash.Size = UDim2.fromScale(1, 1)
-    splash.BackgroundColor3 = Color3.fromHex("#08080A")
-    splash.BackgroundTransparency = 0.08
+    splash.Position = UDim2.fromScale(0, 0)
+    splash.BackgroundColor3 = Color3.new(0, 0, 0)
+    splash.BackgroundTransparency = 0
+    splash.BorderSizePixel = 0
     splash.GroupTransparency = 1
     splash.Active = true
     splash.ZIndex = 1
     splash.Parent = startupGui
 
-    local card = Instance.new("Frame")
-    card.Name = "LoadingCard"
-    card.AnchorPoint = Vector2.new(0.5, 0.5)
-    card.Position = UDim2.new(0.5, 0, 0.5, 18)
-    card.Size = UDim2.fromOffset(300, 124)
-    card.BackgroundColor3 = Color3.fromHex("#1C1C1E")
-    card.BorderSizePixel = 0
-    card.ZIndex = 2
-    card.Parent = splash
+    local content = Instance.new("Frame")
+    content.Name = "LoaderContent"
+    content.AnchorPoint = Vector2.new(0.5, 0.5)
+    content.Position = UDim2.fromScale(0.5, 0.5)
+    content.Size = UDim2.fromOffset(460, 128)
+    content.BackgroundTransparency = 1
+    content.ZIndex = 2
+    content.Parent = splash
 
-    local cardScale = Instance.new("UIScale")
-    cardScale.Scale = 0.88
-    cardScale.Parent = card
-
-    Instance.new("UICorner", card).CornerRadius = UDim.new(0, 22)
-
-    local cardStroke = Instance.new("UIStroke")
-    cardStroke.Color = Color3.fromHex("#6B7078")
-    cardStroke.Transparency = 0.4
-    cardStroke.Thickness = 1
-    cardStroke.Parent = card
-
-    local cardGradient = Instance.new("UIGradient")
-    cardGradient.Color = ColorSequence.new({
-        ColorSequenceKeypoint.new(0, Color3.fromHex("#2C2C2E")),
-        ColorSequenceKeypoint.new(1, Color3.fromHex("#151517"))
-    })
-    cardGradient.Rotation = 90
-    cardGradient.Parent = card
+    local contentScale = Instance.new("UIScale")
+    contentScale.Scale = 0.965
+    contentScale.Parent = content
 
     local brand = Instance.new("TextLabel")
-    brand.Size = UDim2.new(1, -32, 0, 34)
-    brand.Position = UDim2.fromOffset(16, 20)
+    brand.AnchorPoint = Vector2.new(0.5, 0)
+    brand.Size = UDim2.new(1, 0, 0, 46)
+    brand.Position = UDim2.new(0.5, 0, 0, 10)
     brand.BackgroundTransparency = 1
     brand.RichText = true
     brand.Text = '<font color="#FFFFFF">iLun</font><font color="#D8DCE1">X</font><font color="#A7ACB3">Hub</font>'
     brand.TextColor3 = Color3.new(1, 1, 1)
+    brand.TextTransparency = 0
     brand.Font = Enum.Font.GothamBold
-    brand.TextSize = 24
+    brand.TextSize = 32
+    brand.TextXAlignment = Enum.TextXAlignment.Center
     brand.ZIndex = 3
-    brand.Parent = card
+    brand.Parent = content
 
     local status = Instance.new("TextLabel")
-    status.Size = UDim2.new(1, -32, 0, 24)
-    status.Position = UDim2.fromOffset(16, 62)
+    status.AnchorPoint = Vector2.new(0.5, 0)
+    status.Size = UDim2.new(1, -48, 0, 22)
+    status.Position = UDim2.new(0.5, 0, 0, 62)
     status.BackgroundTransparency = 1
     status.Text = "Cargando iLunXHub..."
-    status.TextColor3 = Color3.fromHex("#B8BDC5")
+    status.TextColor3 = Color3.fromHex("#9B9FA6")
     status.Font = Enum.Font.GothamMedium
     status.TextSize = 13
+    status.TextXAlignment = Enum.TextXAlignment.Center
     status.ZIndex = 3
-    status.Parent = card
+    status.Parent = content
 
     local progressTrack = Instance.new("Frame")
-    progressTrack.Size = UDim2.new(1, -48, 0, 3)
-    progressTrack.Position = UDim2.new(0, 24, 1, -22)
-    progressTrack.BackgroundColor3 = Color3.fromHex("#38383A")
+    progressTrack.AnchorPoint = Vector2.new(0.5, 0)
+    progressTrack.Size = UDim2.fromOffset(230, 2)
+    progressTrack.Position = UDim2.new(0.5, 0, 0, 98)
+    progressTrack.BackgroundColor3 = Color3.fromHex("#242528")
     progressTrack.BorderSizePixel = 0
     progressTrack.ZIndex = 3
-    progressTrack.Parent = card
+    progressTrack.Parent = content
     Instance.new("UICorner", progressTrack).CornerRadius = UDim.new(1, 0)
 
     local progress = Instance.new("Frame")
-    progress.Size = UDim2.fromScale(0.05, 1)
-    progress.BackgroundColor3 = Color3.fromHex("#E6E9EC")
+    progress.Size = UDim2.fromScale(0.04, 1)
+    progress.BackgroundColor3 = Color3.fromHex("#E7E9EC")
     progress.BorderSizePixel = 0
     progress.ZIndex = 4
     progress.Parent = progressTrack
@@ -339,36 +327,14 @@ do
 
     startupSplashState.Gui = startupGui
     startupSplashState.Group = splash
-    startupSplashState.Card = card
+    startupSplashState.Card = content
     startupSplashState.Status = status
 
-    -- Forzamos un frame real antes de iniciar los tweens. Sin este yield,
-    -- un loader rápido puede construir y ocultar todo sin dibujar el splash.
     RunService.RenderStepped:Wait()
-
-    TweenService:Create(
-        splash,
-        TweenInfo.new(0.26, Enum.EasingStyle.Quart, Enum.EasingDirection.Out),
-        {GroupTransparency = 0}
-    ):Play()
-    TweenService:Create(
-        card,
-        TweenInfo.new(0.32, Enum.EasingStyle.Quart, Enum.EasingDirection.Out),
-        {Position = UDim2.fromScale(0.5, 0.5)}
-    ):Play()
-    TweenService:Create(
-        cardScale,
-        TweenInfo.new(0.32, Enum.EasingStyle.Back, Enum.EasingDirection.Out),
-        {Scale = 1}
-    ):Play()
-    TweenService:Create(
-        progress,
-        TweenInfo.new(1.05, Enum.EasingStyle.Quint, Enum.EasingDirection.Out),
-        {Size = UDim2.fromScale(1, 1)}
-    ):Play()
-
-    -- Garantiza que la entrada se vea completa antes de construir WindUI.
-    task.wait(0.34)
+    TweenService:Create(splash, TweenInfo.new(0.16, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {GroupTransparency = 0}):Play()
+    TweenService:Create(contentScale, TweenInfo.new(0.24, Enum.EasingStyle.Quart, Enum.EasingDirection.Out), {Scale = 1}):Play()
+    TweenService:Create(progress, TweenInfo.new(0.95, Enum.EasingStyle.Quint, Enum.EasingDirection.Out), {Size = UDim2.fromScale(1, 1)}):Play()
+    task.wait(0.22)
 end
 
 function startupSplashState.Finish(message)
@@ -387,7 +353,7 @@ function startupSplashState.Finish(message)
     RunService.RenderStepped:Wait()
     local fadeOut = TweenService:Create(
         splash,
-        TweenInfo.new(0.22, Enum.EasingStyle.Quad, Enum.EasingDirection.In),
+        TweenInfo.new(0.16, Enum.EasingStyle.Quad, Enum.EasingDirection.In),
         {GroupTransparency = 1}
     )
     fadeOut:Play()
@@ -472,7 +438,7 @@ end
 -- INICIALIZACIÓN WINDUI (CON CACHÉ 24HRS)
 -- ==========================================
 local WindUI
-local _version = "1.7.12_ILUNX_ACCESSORY_SCALE_NOIDS"
+local _version = "1.8.0_ILUNX_MAXPERF"
 local uiFileName = "iLunXHubUI_Cache_v" .. _version .. ".txt"
 local timeFileName = "iLunXHubUI_Cache_v" .. _version .. "_Time.txt"
 
@@ -491,9 +457,15 @@ local ok, result = pcall(function()
         -- Cargar desde almacenamiento local (Carga instantánea sin lag)
         return loadstring(readfile(uiFileName))()
     else
-        -- Descargar y guardar para la próxima vez (o forzar update)
-        -- AQUÍ ESTÁ TU ENLACE RAW DE GIST CON LA VERSIÓN OPTIMIZADA
-        local codigoUi = game:HttpGet("https://raw.githubusercontent.com/OnyxDevv/Onyx-web/refs/heads/main/main2.lua")
+        -- Si guardas ambos archivos juntos, prioriza la UI MAXPERF local.
+        -- Si no existe, conserva el fallback remoto actual.
+        local localUiFile = "main_iLunX_PRO_MAXPERF.lua"
+        local codigoUi
+        if isfile and readfile and isfile(localUiFile) then
+            codigoUi = readfile(localUiFile)
+        else
+            codigoUi = game:HttpGet("https://raw.githubusercontent.com/OnyxDevv/Onyx-web/refs/heads/main/main2.lua")
+        end
         
         if writefile then 
             writefile(uiFileName, codigoUi) 
@@ -1540,7 +1512,7 @@ function setupPlayerEvents(p)
     runtime.Track(p:GetAttributeChangedSignal("Team"):Connect(function() updateEnemy(p) end))
 end
 
-for _, p in ipairs(Players:GetPlayers()) do
+for _, p in ipairs(listaJugadores) do
     if p ~= player then setupPlayerEvents(p) end
 end
 runtime.Track(Players.PlayerAdded:Connect(function(p) setupPlayerEvents(p) end))
@@ -1604,6 +1576,32 @@ runtime.TargetSelections = {
     AutoShoot = { ["Cabeza"] = true },
     SilentAim = { ["Cabeza"] = true },
 }
+runtime.TargetPartNameCache = {
+    AutoShoot = {"Head"},
+    SilentAim = {"Head"},
+}
+
+function runtime.RebuildTargetPartNameCache(mode)
+    local selected = runtime.TargetSelections[mode] or {}
+    local result = runtime.TargetPartNameCache[mode] or {}
+    table.clear(result)
+    local seenNames = {}
+    for _, groupName in ipairs(runtime.TargetBodyOrder) do
+        if selected[groupName] then
+            local names = runtime.TargetBodyGroups[groupName]
+            for i = 1, #names do
+                local name = names[i]
+                if not seenNames[name] then
+                    seenNames[name] = true
+                    result[#result + 1] = name
+                end
+            end
+        end
+    end
+    if #result == 0 then result[1] = "Head" end
+    runtime.TargetPartNameCache[mode] = result
+    return result
+end
 
 function runtime.GetTargetSelectionArray(mode)
     local result = {}
@@ -1637,6 +1635,7 @@ function runtime.SetTargetSelection(mode, value)
     end
 
     if not next(selected) then selected["Cabeza"] = true end
+    runtime.RebuildTargetPartNameCache(mode)
     local names = runtime.GetTargetSelectionArray(mode)
     if mode == "AutoShoot" then
         autoShootTargetPart = table.concat(names, ", ")
@@ -1652,17 +1651,12 @@ end
 function runtime.CollectTargetParts(char, mode, out, seen)
     table.clear(out)
     table.clear(seen)
-    local selected = runtime.TargetSelections[mode]
-    for _, groupName in ipairs(runtime.TargetBodyOrder) do
-        if selected and selected[groupName] then
-            local partNames = runtime.TargetBodyGroups[groupName]
-            for i = 1, #partNames do
-                local part = ffc(char, partNames[i])
-                if part and part:IsA("BasePart") and not seen[part] then
-                    seen[part] = true
-                    table_insert(out, part)
-                end
-            end
+    local partNames = runtime.TargetPartNameCache[mode] or runtime.RebuildTargetPartNameCache(mode)
+    for i = 1, #partNames do
+        local part = ffc(char, partNames[i])
+        if part and part:IsA("BasePart") and not seen[part] then
+            seen[part] = true
+            out[#out + 1] = part
         end
     end
     if #out == 0 then
@@ -1878,6 +1872,7 @@ function runtime.EnsureBodySelector()
 
     function runtime.BodySelector.Refresh()
         if not runtime.BodySelector then return end
+        runtime.RebuildTargetPartNameCache(runtime.BodySelector.Mode)
         local selected = runtime.TargetSelections[runtime.BodySelector.Mode] or {}
         for _, name in ipairs(runtime.TargetBodyOrder) do
             local active = selected[name] == true
@@ -2018,11 +2013,16 @@ runtime.Appearance = {
     OriginalKorblox = setmetatable({}, {__mode = "k"}),
     BodyGuardConnections = {},
     AccessoryOffsets = {},
+    -- Cachés débiles: evitan buscar el mismo accesorio/weld/attachment en cada tick del slider.
+    ActiveAccessories = {},
+    AccessoryWeld = setmetatable({}, {__mode = "k"}),
     AccessoryBaseWeld = setmetatable({}, {__mode = "k"}),
+    AttachmentCache = setmetatable({}, {__mode = "k"}),
     -- Snapshot visual por clon para escalar sin acumular cambios al mover el slider.
     AccessoryBaseVisual = setmetatable({}, {__mode = "k"}),
     EditorSelectedKey = nil,
     EditorSyncing = false,
+    BatchLoading = false,
     EditorDisplayToKey = {},
     EditorControls = {},
     EditorSlots = {},
@@ -2248,8 +2248,17 @@ end
 
 function runtime.RemoveAppearanceAccessory(key, char)
     if not char then return end
+    local cached = runtime.Appearance.ActiveAccessories[key]
+    if cached and cached.Parent == char then
+        runtime.Appearance.ActiveAccessories[key] = nil
+        runtime.Appearance.AccessoryWeld[cached] = nil
+        cached:Destroy()
+        return
+    end
+    runtime.Appearance.ActiveAccessories[key] = nil
     for _, obj in ipairs(char:GetChildren()) do
         if obj:IsA("Accoutrement") and obj:GetAttribute("iLunXAppearanceKey") == key then
+            runtime.Appearance.AccessoryWeld[obj] = nil
             obj:Destroy()
         end
     end
@@ -2286,8 +2295,22 @@ function runtime.GetAppearanceTemplate(key)
 end
 
 local function findAppearanceAttachment(char, name)
+    local cache = runtime.Appearance.AttachmentCache[char]
+    if not cache then
+        cache = {}
+        runtime.Appearance.AttachmentCache[char] = cache
+        for _, d in ipairs(char:GetDescendants()) do
+            if d:IsA("Attachment") and d.Parent and d.Parent:IsA("BasePart") then
+                cache[d.Name] = cache[d.Name] or d
+            end
+        end
+    end
+    local found = cache[name]
+    if found and found.Parent then return found end
+    -- Fallback por si el juego reemplazó una pieza/attachment después del snapshot.
     for _, d in ipairs(char:GetDescendants()) do
-        if d:IsA("Attachment") and d.Name == name and d.Parent:IsA("BasePart") then
+        if d:IsA("Attachment") and d.Name == name and d.Parent and d.Parent:IsA("BasePart") then
+            cache[name] = d
             return d
         end
     end
@@ -2340,12 +2363,21 @@ local function manualAttachAppearanceAccessory(char, accessory)
 end
 
 function runtime.FindAppearanceWeld(accessory)
-    local handle = accessory and accessory:FindFirstChild("Handle")
+    if not accessory then return nil end
+    local cached = runtime.Appearance.AccessoryWeld[accessory]
+    if cached and cached.Parent then return cached end
+    local handle = accessory:FindFirstChild("Handle")
     if not handle then return nil end
     local preferred = handle:FindFirstChild("AccessoryWeld") or handle:FindFirstChild("iLunXAppearanceWeld")
-    if preferred and preferred:IsA("Weld") then return preferred end
+    if preferred and preferred:IsA("Weld") then
+        runtime.Appearance.AccessoryWeld[accessory] = preferred
+        return preferred
+    end
     for _, d in ipairs(handle:GetChildren()) do
-        if d:IsA("Weld") then return d end
+        if d:IsA("Weld") then
+            runtime.Appearance.AccessoryWeld[accessory] = d
+            return d
+        end
     end
 end
 
@@ -2366,13 +2398,21 @@ function runtime.ApplyAppearanceScaleToInstance(key, accessory)
 
     local snapshot = runtime.Appearance.AccessoryBaseVisual[accessory]
     if not snapshot then
-        snapshot = {Parts = setmetatable({}, {__mode = "k"}), Meshes = setmetatable({}, {__mode = "k"})}
+        snapshot = {
+            Parts = setmetatable({}, {__mode = "k"}),
+            Meshes = setmetatable({}, {__mode = "k"}),
+            LastScale = nil,
+        }
 
+        -- Clasificamos una sola vez. Durante el drag ya no buscamos SpecialMesh por pieza.
         for _, obj in ipairs(accessory:GetDescendants()) do
             if obj:IsA("BasePart") then
-                snapshot.Parts[obj] = obj.Size
                 local mesh = obj:FindFirstChildOfClass("SpecialMesh")
-                if mesh then snapshot.Meshes[mesh] = mesh.Scale end
+                if mesh then
+                    snapshot.Meshes[mesh] = mesh.Scale
+                else
+                    snapshot.Parts[obj] = obj.Size
+                end
             elseif obj:IsA("SpecialMesh") and snapshot.Meshes[obj] == nil then
                 snapshot.Meshes[obj] = obj.Scale
             end
@@ -2382,30 +2422,21 @@ function runtime.ApplyAppearanceScaleToInstance(key, accessory)
     end
 
     local scale = math.clamp(tonumber(runtime.GetAppearanceOffset(key).Scale) or 1, 0.25, 3)
+    if snapshot.LastScale == scale then return true end
+    snapshot.LastScale = scale
 
-    -- MeshPart/Part sin SpecialMesh: escalar Size.
-    -- Part con SpecialMesh: escalar sólo Mesh.Scale para evitar doble escalado visual.
     for part, baseSize in pairs(snapshot.Parts) do
-        if part and part.Parent then
-            local mesh = part:FindFirstChildOfClass("SpecialMesh")
-            if not mesh then
-                pcall(function() part.Size = baseSize * scale end)
-            end
-        end
+        if part and part.Parent then part.Size = baseSize * scale end
     end
-
     for mesh, baseScale in pairs(snapshot.Meshes) do
-        if mesh and mesh.Parent then
-            pcall(function() mesh.Scale = baseScale * scale end)
-        end
+        if mesh and mesh.Parent then mesh.Scale = baseScale * scale end
     end
-
     return true
 end
 
-function runtime.ApplyAppearanceOffsetToInstance(key, accessory)
+function runtime.ApplyAppearanceOffsetToInstance(key, accessory, applyScale)
     if not accessory or not accessory.Parent then return false end
-    runtime.ApplyAppearanceScaleToInstance(key, accessory)
+    if applyScale ~= false then runtime.ApplyAppearanceScaleToInstance(key, accessory) end
 
     local weld = runtime.FindAppearanceWeld(accessory)
     if not weld then
@@ -2430,16 +2461,22 @@ function runtime.ApplyAppearanceOffsetToInstance(key, accessory)
     return true
 end
 
-function runtime.ApplyAppearanceOffset(key, char)
+function runtime.ApplyAppearanceOffset(key, char, applyScale)
     char = char or player.Character
     if not char then return false end
-    local applied = false
+
+    local cached = runtime.Appearance.ActiveAccessories[key]
+    if cached and cached.Parent == char then
+        return runtime.ApplyAppearanceOffsetToInstance(key, cached, applyScale)
+    end
+
     for _, obj in ipairs(char:GetChildren()) do
         if obj:IsA("Accoutrement") and obj:GetAttribute("iLunXAppearanceKey") == key then
-            if runtime.ApplyAppearanceOffsetToInstance(key, obj) then applied = true end
+            runtime.Appearance.ActiveAccessories[key] = obj
+            return runtime.ApplyAppearanceOffsetToInstance(key, obj, applyScale)
         end
     end
-    return applied
+    return false
 end
 
 function runtime.ApplyAppearanceAccessory(key, char)
@@ -2456,12 +2493,14 @@ function runtime.ApplyAppearanceAccessory(key, char)
     local accessory = template:Clone()
     accessory:SetAttribute("iLunXAppearanceKey", key)
     accessory.Parent = char
+    runtime.Appearance.ActiveAccessories[key] = accessory
 
     local ok = pcall(function() humanoid:AddAccessory(accessory) end)
     if not ok then
         ok = manualAttachAppearanceAccessory(char, accessory)
     end
     if not ok then
+        runtime.Appearance.ActiveAccessories[key] = nil
         accessory:Destroy()
         return false
     end
@@ -2515,7 +2554,7 @@ function runtime.SetAppearance(key, state)
         end
     end
 
-    if runtime.RefreshAppearanceEditor then runtime.RefreshAppearanceEditor() end
+    if not runtime.Appearance.BatchLoading and runtime.RefreshAppearanceEditor then runtime.RefreshAppearanceEditor() end
 end
 
 function runtime.RestoreAppearance()
@@ -2531,6 +2570,7 @@ function runtime.RestoreAppearance()
     end
     runtime.ClearAppearanceBodyGuards()
     table.clear(runtime.Appearance.AccessoryOffsets)
+    table.clear(runtime.Appearance.ActiveAccessories)
     runtime.Appearance.EditorSelectedKey = nil
 end
 
@@ -2584,14 +2624,28 @@ function runtime.LoadAppearanceConfig(data)
 
     local wasSuppressed = runtime.SuppressNotifications
     runtime.SuppressNotifications = true
+    runtime.Appearance.BatchLoading = true
     for _, key in ipairs(runtime.AppearanceOrder) do
-        local toggle = runtime.Appearance.ToggleElements[key]
-        if toggle then
-            pcall(function() toggle:Set(desired[key] == true) end)
-        else
-            runtime.SetAppearance(key, desired[key] == true)
+        local wanted = desired[key] == true
+        local current = runtime.Appearance.Enabled[key] == true
+        if current ~= wanted then
+            local toggle = runtime.Appearance.ToggleElements[key]
+            if toggle then
+                pcall(function() toggle:Set(wanted) end)
+            else
+                runtime.SetAppearance(key, wanted)
+            end
+        elseif wanted then
+            -- Mismo toggle, nuevos offsets: actualiza sin destruir/reclonar el accesorio.
+            local asset = runtime.AppearanceCatalog[key]
+            if asset and asset.Kind == "Accessory" then
+                runtime.ApplyAppearanceOffset(key, nil, true)
+            else
+                runtime.EnforceBodyAppearance(player.Character)
+            end
         end
     end
+    runtime.Appearance.BatchLoading = false
     runtime.SuppressNotifications = wasSuppressed
 
     if runtime.RefreshAppearanceEditor then runtime.RefreshAppearanceEditor() end
@@ -2607,6 +2661,8 @@ runtime.AppearanceCleanup = function()
 end
 
 runtime.Track(player.CharacterAdded:Connect(function(char)
+    runtime.Appearance.AttachmentCache[char] = nil
+    table.clear(runtime.Appearance.ActiveAccessories)
     task.delay(0.85, function()
         if not runtime.Alive or not char.Parent then return end
         runtime.EnforceBodyAppearance(char)
@@ -2623,6 +2679,7 @@ end))
 
 pcall(function()
     runtime.Track(player.CharacterAppearanceLoaded:Connect(function(char)
+        runtime.Appearance.AttachmentCache[char] = nil
         task.delay(0.12, function()
             if runtime.Alive and char.Parent then
                 runtime.EnforceBodyAppearance(char)
@@ -2703,7 +2760,7 @@ local function updateInlineAccessoryOffset(key, component, value)
         state.Scale = math.clamp(tonumber(value) or 1, 0.25, 3)
     end
 
-    runtime.ApplyAppearanceOffset(key)
+    runtime.ApplyAppearanceOffset(key, nil, component == "SCALE")
 end
 
 function runtime.EnsureInlineAppearanceControls(key)
@@ -2744,7 +2801,7 @@ function runtime.EnsureInlineAppearanceControls(key)
                 Rotation = Vector3.new(),
                 Scale = 1,
             }
-            runtime.ApplyAppearanceOffset(key)
+            runtime.ApplyAppearanceOffset(key, nil, true)
             runtime.RefreshAppearanceControls()
             showBottomMessage("Ajustes restaurados: " .. runtime.AppearanceCatalog[key].Name)
         end,
@@ -2937,7 +2994,10 @@ local mState = {
     igAS = {}, objAS = {}, scAS = {}, seenAS = {},
     poolAS = {},
     igSA = {}, scSA = {}, seenSA = {},
-    hbBlockedColor = Color3_fromRGB(255, 50, 50)
+    hbBlockedColor = Color3_fromRGB(255, 50, 50),
+    hbByChar = setmetatable({}, {__mode = "k"}),
+    vpX = -1, vpY = -1, centerX = 0, centerY = 0,
+    maxEspDistanceSq = MAX_ESP_DISTANCE * MAX_ESP_DISTANCE,
 }
 mState.pHB.FilterType = Enum.RaycastFilterType.Exclude
 mState.pAS.FilterType = Enum.RaycastFilterType.Exclude
@@ -2993,12 +3053,16 @@ runtime.Track(RunService.Heartbeat:Connect(function(deltaTime)
                     
                     if hrp and targetHum and targetHum.Health > 0 and isEnemy(v) then
                         -- 1. BUSCAMOS O CREAMOS EL BLOQUE FALSO
-                        local fakeHitbox = nil
-                        for _, p in ipairs(targetChar:GetChildren()) do
-                            if p:GetAttribute("EsAstraHitbox") then
-                                fakeHitbox = p
-                                break
+                        local fakeHitbox = mState.hbByChar[targetChar]
+                        if not (fakeHitbox and fakeHitbox.Parent == targetChar) then
+                            fakeHitbox = nil
+                            for _, child in ipairs(targetChar:GetChildren()) do
+                                if child:GetAttribute("EsAstraHitbox") then
+                                    fakeHitbox = child
+                                    break
+                                end
                             end
+                            mState.hbByChar[targetChar] = fakeHitbox
                         end
 
                         if not fakeHitbox then
@@ -3024,7 +3088,8 @@ runtime.Track(RunService.Heartbeat:Connect(function(deltaTime)
                             box.Adornee = fakeHitbox 
                             box.AlwaysOnTop = true 
                             box.ZIndex = 5 
-                            box.Parent = fakeHitbox 
+                            box.Parent = fakeHitbox
+                            mState.hbByChar[targetChar] = fakeHitbox
                         end
                         
                         -- 2. ACTUALIZAMOS TAMAÑO FÍSICO
@@ -3057,9 +3122,14 @@ runtime.Track(RunService.Heartbeat:Connect(function(deltaTime)
                             if box.Visible ~= not hitboxInvisible then box.Visible = not hitboxInvisible end
                         end -- 🔥 AQUÍ ESTÁ EL END QUE FALTABA
                     elseif targetChar then
-                        -- 🔥 LIMPIEZA AUTOMÁTICA: SI MUERE O YA NO ES ENEMIGO
-                        for _, p in ipairs(targetChar:GetChildren()) do
-                            if p:GetAttribute("EsAstraHitbox") then p:Destroy() end
+                        -- Limpieza automática con caché; el escaneo queda sólo como fallback legacy.
+                        local cachedHitbox = mState.hbByChar[targetChar]
+                        if cachedHitbox and cachedHitbox.Parent then cachedHitbox:Destroy() end
+                        mState.hbByChar[targetChar] = nil
+                        if not cachedHitbox then
+                            for _, child in ipairs(targetChar:GetChildren()) do
+                                if child:GetAttribute("EsAstraHitbox") then child:Destroy() end
+                            end
                         end
                     end
                 end
@@ -3068,8 +3138,13 @@ runtime.Track(RunService.Heartbeat:Connect(function(deltaTime)
                 for i = 1, #listaJugadores do
                     local v = listaJugadores[i]
                     if v ~= player and v.Character then
-                        for _, p in ipairs(v.Character:GetChildren()) do
-                            if p:GetAttribute("EsAstraHitbox") then p:Destroy() end
+                        local cachedHitbox = mState.hbByChar[v.Character]
+                        if cachedHitbox and cachedHitbox.Parent then cachedHitbox:Destroy() end
+                        mState.hbByChar[v.Character] = nil
+                        if not cachedHitbox then
+                            for _, child in ipairs(v.Character:GetChildren()) do
+                                if child:GetAttribute("EsAstraHitbox") then child:Destroy() end
+                            end
                         end
                     end
                 end
@@ -3082,8 +3157,13 @@ runtime.Track(RunService.Heartbeat:Connect(function(deltaTime)
         for i = 1, #listaJugadores do
             local v = listaJugadores[i]
             if v ~= player and v.Character then
-                for _, p in ipairs(v.Character:GetChildren()) do
-                    if p:GetAttribute("EsAstraHitbox") then p:Destroy() end
+                local cachedHitbox = mState.hbByChar[v.Character]
+                if cachedHitbox and cachedHitbox.Parent then cachedHitbox:Destroy() end
+                mState.hbByChar[v.Character] = nil
+                if not cachedHitbox then
+                    for _, child in ipairs(v.Character:GetChildren()) do
+                        if child:GetAttribute("EsAstraHitbox") then child:Destroy() end
+                    end
                 end
                 
                 -- Limpieza por si quedó basura del script anterior
@@ -3126,9 +3206,11 @@ runtime.Track(RunService.Heartbeat:Connect(function(deltaTime)
                         local targetHum = char and ffc(char, "Humanoid")
                         local targetHead = char and ffc(char, "Head")
                         if myPos and targetHum and targetHum.Health > 0 and targetHead and isEnemy(p) and not enemigoEnLobby(char) then
-                            local dist = myPos and (targetHead.Position - myPos).Magnitude or 0
+                            local delta = targetHead.Position - myPos
+                            local distSq = delta:Dot(delta)
                             
-                            if dist <= MAX_ESP_DISTANCE then
+                            if distSq <= mState.maxEspDistanceSq then
+                                local dist = math.sqrt(distSq)
                                 if activeESPs[p] and activeESPs[p].Char ~= char then cleanESP(p) end
                                 
                                 if not activeESPs[p] then
@@ -3334,7 +3416,11 @@ runtime.Track(RunService.Heartbeat:Connect(function(deltaTime)
                         local myPos = hrp.Position
                         local headPos = char:FindFirstChild("Head") and char.Head.Position or myPos
                         local viewport = camera.ViewportSize
-                        local centerX, centerY = viewport.X / 2, viewport.Y / 2
+                        if viewport.X ~= mState.vpX or viewport.Y ~= mState.vpY then
+                            mState.vpX, mState.vpY = viewport.X, viewport.Y
+                            mState.centerX, mState.centerY = viewport.X * 0.5, viewport.Y * 0.5
+                        end
+                        local centerX, centerY = mState.centerX, mState.centerY
                         local fovSq = fovRadius * fovRadius
                         local broadFov = fovRadius + 150
                         local broadFovSq = broadFov * broadFov
@@ -5577,7 +5663,7 @@ UIElements.TogKillAll =
 
                     for _, targetPlayer
                         in ipairs(
-                            Players:GetPlayers()
+                            listaJugadores
                         )
                     do
 
@@ -5934,7 +6020,7 @@ function updateSystem()
 
     -- Escaneo de un solo toque (Súper ligero)
     task.spawn(function() 
-        for _, p in pairs(Players:GetPlayers()) do
+        for _, p in ipairs(listaJugadores) do
             if p.Character then
                 for _, v in pairs(p.Character:GetDescendants()) do
                     if v:IsA("TextLabel") or v:IsA("TextBox") then processText(v, myName, myDisp) end
@@ -6094,6 +6180,7 @@ local centroVector = Vector2_new(0, 0)
 local tracerOrigin = Vector2_new(0, 0)
 local fovIdleColor = Color3_fromRGB(255, 255, 255)
 local fovTargetColor = Color3_fromRGB(0, 255, 0)
+local esp2dClean = true
 runtime.ESP2D = {}
 
 function runtime.HideESP2DEntry(entry)
@@ -6104,7 +6191,9 @@ function runtime.HideESP2DEntry(entry)
 end
 
 function runtime.HideAllESP2D()
+    if esp2dClean then return end
     for _, entry in pairs(runtime.ESP2D) do runtime.HideESP2DEntry(entry) end
+    esp2dClean = true
 end
 
 function runtime.GetESP2DEntry(p)
@@ -6224,6 +6313,7 @@ runtime.Track(RunService.RenderStepped:Connect(function(deltaTime)
 
             local entry = runtime.ESP2D[p]
             if wantsESP2D and valid then
+                esp2dClean = false
                 entry = entry or runtime.GetESP2DEntry(p)
                 local cf, size = char:GetBoundingBox()
                 local top = camera:WorldToViewportPoint(cf:PointToWorldSpace(Vector3_new(0, size.Y * 0.5, 0)))
@@ -7620,7 +7710,7 @@ local function GetFilteredSpoofItems()
     return pagedList
 end
 
-BuildSpoofDatabase()
+task.delay(1.25, BuildSpoofDatabase)
 
 TabSpoof:Dropdown({ 
     Title = "Filtrar por Tipo", 

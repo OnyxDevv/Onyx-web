@@ -31,7 +31,10 @@ local Humanoid = Character:WaitForChild("Humanoid")
 
 local CATEGORIES = {
     "Especiales",
-    "Horns & Crown",
+    "8-Bit",
+    "Fairies",
+    "Queen Night",
+    "Horns",
     "Valkyries",
     "Dominus",
     "Sparkle Time",
@@ -59,32 +62,175 @@ local ASSETS = {
         Desc = "Korblox Deathspeaker",
     },
 
+    -- 8-BIT SERIES (ORIGINAL ROBLOX ITEMS)
+    BitTabby = {
+        Name = "8-Bit Tabby Cat",
+        Id = 10159617728,
+        Category = "8-Bit",
+        Kind = "Accessory",
+        Badge = "LIMITED",
+        Desc = "Shoulder • Roblox original",
+    },
+    BitCoin = {
+        Name = "8-Bit Roblox Coin",
+        Id = 10159622004,
+        Category = "8-Bit",
+        Kind = "Accessory",
+        Badge = "LIMITED • FX",
+        Desc = "Roblox original",
+    },
+    BitExtraLife = {
+        Name = "8-Bit Extra Life",
+        Id = 10159606132,
+        Category = "8-Bit",
+        Kind = "Accessory",
+        Badge = "LIMITED • FX",
+        Desc = "Roblox original",
+    },
+    BitHP = {
+        Name = "8-Bit HP Bar",
+        Id = 10159610478,
+        Category = "8-Bit",
+        Kind = "Accessory",
+        Badge = "LIMITED • FX",
+        Desc = "Heart particles",
+    },
+    BitClockwork = {
+        Name = "8-Bit Clockwork Shades",
+        Id = 450557238,
+        Category = "8-Bit",
+        Kind = "Accessory",
+        Badge = "LIMITED",
+        Desc = "Clockwork series",
+    },
+    BitEyeball = {
+        Name = "8-Bit Eyeball",
+        Id = 507791112,
+        Category = "8-Bit",
+        Kind = "Accessory",
+        Badge = "LIMITED",
+    },
+    BitTentacles = {
+        Name = "8-Bit Mr. Tentacles",
+        Id = 507795810,
+        Category = "8-Bit",
+        Kind = "Accessory",
+        Badge = "LIMITED • RARE",
+    },
+    BitBowler = {
+        Name = "8-Bit Rainbow Bowler",
+        Id = 323417020,
+        Category = "8-Bit",
+        Kind = "Accessory",
+        Badge = "LIMITED",
+    },
+    BitSwordpack = {
+        Name = "8-Bit SwordPack",
+        Id = 121925647,
+        Category = "8-Bit",
+        Kind = "Accessory",
+        Badge = "LIMITED",
+        Desc = "Back accessory",
+    },
+
+    -- SPARKLING FAIRY SERIES
+    FallFairy = {
+        Name = "Fall Fairy",
+        Id = 128217885,
+        Category = "Fairies",
+        Kind = "Accessory",
+        Badge = "LIMITED • FX",
+        Desc = "Orange sparkles",
+    },
+    WinterFairy = {
+        Name = "Winter Fairy",
+        Id = 141742418,
+        Category = "Fairies",
+        Kind = "Accessory",
+        Badge = "LIMITED • FX",
+        Desc = "Winter sparkles",
+    },
+    PatrickFairy = {
+        Name = "St Patrick's Day Fairy",
+        Id = 226189871,
+        Category = "Fairies",
+        Kind = "Accessory",
+        Badge = "LIMITED • FX",
+        Desc = "Green sparkles",
+    },
+    SpringFairy = {
+        Name = "Spring Fairy",
+        Id = 150381051,
+        Category = "Fairies",
+        Kind = "Accessory",
+        Badge = "FX",
+        Desc = "Spring sparkles",
+    },
+
+    -- QUEEN OF THE NIGHT / CROWNS OF THE NIGHT
+    GreenQueen = {
+        Name = "Green Queen of the Night",
+        Id = 553970961,
+        Category = "Queen Night",
+        Kind = "Accessory",
+        Badge = "LIMITED",
+    },
+    BlueQueen = {
+        Name = "Blue Queen of the Night",
+        Id = 553970606,
+        Category = "Queen Night",
+        Kind = "Accessory",
+        Badge = "LIMITED",
+    },
+    PurpleQueen = {
+        Name = "Purple Queen of the Night",
+        Id = 553971858,
+        Category = "Queen Night",
+        Kind = "Accessory",
+        Badge = "LIMITED • RARE",
+    },
+    PinkQueen = {
+        Name = "Pink Queen of the Night",
+        Id = 553971558,
+        Category = "Queen Night",
+        Kind = "Accessory",
+        Badge = "LIMITED • RARE",
+    },
+    NavyQueen = {
+        Name = "Navy Queen of the Night",
+        Id = 501966049,
+        Category = "Queen Night",
+        Kind = "Accessory",
+        Badge = "TOY EXCLUSIVE",
+        Desc = "Galaxy Girl toy code",
+    },
+
     -- HORNS / CROWN
     RCCrown = {
         Name = "8-Bit Royal Crown",
         Id = 10159600649,
-        Category = "Horns & Crown",
+        Category = "8-Bit",
         Kind = "Accessory",
         Badge = "LIMITED",
     },
     Fiery = {
         Name = "Fiery Horns",
         Id = 215718515,
-        Category = "Horns & Crown",
+        Category = "Horns",
         Kind = "Accessory",
         Badge = "LIMITED • FX",
     },
     Poisoned = {
         Name = "Poisoned Horns",
         Id = 1744060292,
-        Category = "Horns & Crown",
+        Category = "Horns",
         Kind = "Accessory",
         Badge = "LIMITED • FX",
     },
     Frozen = {
         Name = "Frozen Horns",
         Id = 74891470,
-        Category = "Horns & Crown",
+        Category = "Horns",
         Kind = "Accessory",
         Badge = "LIMITED • FX",
     },
@@ -96,6 +242,15 @@ local ASSETS = {
         Category = "Valkyries",
         Kind = "Accessory",
         Badge = "LIMITED",
+    },
+
+    SparkleValk = {
+        Name = "Sparkle Time Valkyrie",
+        Id = 1180433861,
+        Category = "Valkyries",
+        Kind = "Accessory",
+        Badge = "LIMITED U • ULTRA RARE",
+        Desc = "Original Roblox STV",
     },
     Blackvalk = {
         Name = "Blackvalk",
@@ -308,12 +463,27 @@ local ASSETS = {
 
 local ORDERED_KEYS = {
     "Headless","Korblox",
-    "RCCrown","Fiery","Poisoned","Frozen",
-    "Valk","Blackvalk","EmeraldValk","VioletValk",
+
+    "RCCrown","BitTabby","BitCoin","BitExtraLife","BitHP",
+    "BitClockwork","BitEyeball","BitTentacles","BitBowler","BitSwordpack",
+
+    "FallFairy","WinterFairy","PatrickFairy","SpringFairy",
+
+    "GreenQueen","BlueQueen","PurpleQueen","PinkQueen","NavyQueen",
+
+    "Fiery","Poisoned","Frozen",
+
+    "Valk","SparkleValk","Blackvalk","EmeraldValk","VioletValk",
+
     "DomEmpyreus","DomInfernus","DomFrigidus","DomAstra",
-    "STF","RSTF","MBSTF","BSTF","PSTF","GSTF","TSTF","SBSTF","PISTF","WSTF","OSTF",
+
+    "STF","RSTF","MBSTF","BSTF","PSTF","GSTF","TSTF",
+    "SBSTF","PISTF","WSTF","OSTF",
+
     "Swordpack","Daemonshank","MoltenWings","Requiem",
+
     "KorbloxPauldrons","Raven","ORLY","Headrow","SparkleBuddy",
+
     "BloxyCreator",
 }
 
@@ -954,6 +1124,86 @@ local function tryKorbloxViaAsset(character, humanoid)
     return false, "asset body sin visual util"
 end
 
+
+local function tryKorbloxForcedVisual(character, humanoid)
+    -- Last-resort local visual:
+    -- official classic Korblox Deathspeaker right-leg mesh.
+    local meshId = "rbxassetid://101851696"
+    local textureId = "rbxassetid://115727863"
+
+    if humanoid.RigType == Enum.HumanoidRigType.R6 then
+        local cm = Instance.new("CharacterMesh")
+        cm.Name = "iLunX_Korblox_Forced_R6"
+        cm.BodyPart = Enum.BodyPart.RightLeg
+        cm.MeshId = 101851696
+        cm.OverlayTextureId = 101851254
+        cm.Parent = character
+        trackCreated("Korblox", cm)
+        return true, "forced CharacterMesh R6"
+    end
+
+    local lower = character:FindFirstChild("RightLowerLeg")
+    local foot = character:FindFirstChild("RightFoot")
+
+    if not lower or not lower:IsA("BasePart") then
+        return false, "RightLowerLeg no existe"
+    end
+
+    if foot and foot:IsA("BasePart") then
+        setRemembered(
+            "Korblox",
+            foot,
+            "LocalTransparencyModifier",
+            1
+        )
+    end
+
+    setRemembered(
+        "Korblox",
+        lower,
+        "LocalTransparencyModifier",
+        1
+    )
+
+    local visual = Instance.new("Part")
+    visual.Name = "iLunX_Korblox_ForcedVisual"
+    visual.Size = lower.Size
+    visual.CFrame = lower.CFrame
+    visual.Transparency = 0
+    visual.Anchored = false
+    visual.CanCollide = false
+    visual.CanTouch = false
+    visual.CanQuery = false
+    visual.Massless = true
+    visual.CastShadow = true
+    visual.Parent = character
+
+    local mesh = Instance.new("SpecialMesh")
+    mesh.Name = "KorbloxMesh"
+    mesh.MeshType = Enum.MeshType.FileMesh
+    mesh.MeshId = meshId
+    mesh.TextureId = textureId
+
+    -- Classic body meshes are authored around a 1x2x1 limb.
+    -- Scale proportionally to the current R15 lower leg.
+    mesh.Scale = Vector3.new(
+        math.max(lower.Size.X, 0.05),
+        math.max(lower.Size.Y / 2, 0.05),
+        math.max(lower.Size.Z, 0.05)
+    )
+    mesh.Parent = visual
+
+    local weld = Instance.new("WeldConstraint")
+    weld.Name = "iLunX_Korblox_ForcedWeld"
+    weld.Part0 = lower
+    weld.Part1 = visual
+    weld.Parent = visual
+
+    trackCreated("Korblox", visual)
+
+    return true, "forced SpecialMesh R15"
+end
+
 local function setKorblox(enabled)
     local character, humanoid = getCharacter()
     if not character or not humanoid then
@@ -1006,9 +1256,19 @@ local function setKorblox(enabled)
         return true, infoAsset
     end
 
+    addLog("Korblox asset fallback fallo:", infoAsset)
+
+    local okForced, infoForced =
+        tryKorbloxForcedVisual(character, humanoid)
+
+    if okForced then
+        return true, infoForced
+    end
+
     return false,
         "dummy=" .. tostring(infoDummy)
         .. " | asset=" .. tostring(infoAsset)
+        .. " | forced=" .. tostring(infoForced)
 end
 
 --==================================================

@@ -776,11 +776,11 @@ function Nox:CreateWindow(options)
     local pages=new("Frame",{Name="Pages",BackgroundTransparency=1,Position=UDim2.fromOffset(0,34),Size=UDim2.new(1,0,1,-34)},content)
     local footer=label(root,"XEROHUB",8,C.Faint,{Position=UDim2.new(0,18,1,-24),Size=UDim2.new(.6,0,0,14),Font=Enum.Font.Code})
     local shortcut=label(root,"RSHIFT  /  MOSTRAR U OCULTAR",8,C.Faint,{Position=UDim2.new(.4,0,1,-24),Size=UDim2.new(.6,-18,0,14),TextXAlignment=Enum.TextXAlignment.Right,Font=Enum.Font.Code})
-    local openButton=button(launcherSurface,"",{Name="OpenXeroHub",Position=UDim2.new(0,18,.5,-20),Size=UDim2.fromOffset(154,40),BackgroundColor3=C.Window,ZIndex=20})
+    local openButton=button(launcherSurface,"",{Name="OpenXeroHub",Position=UDim2.new(.5,-77,0,0),Size=UDim2.fromOffset(154,40),BackgroundColor3=C.Window,ZIndex=20})
     round(openButton,12); local openStroke=stroke(openButton,Color3.fromRGB(66,66,66))
     local openIcon=mark(openButton,24); openIcon.Position=UDim2.fromOffset(8,8)
     local openLabel=label(openButton,"Abrir XeroHub",12,C.Text,{Position=UDim2.fromOffset(40,0),Size=UDim2.new(1,-47,1,0),Font=MEDIUM})
-    w.OpenButton=openButton; w.UIElements={Main=root,Title=brand,ActiveStatus=statusLabel,SideBar=sidebar,MainBar=content,Pages=pages,Search=searchBox,Topbar=top}
+    w.OpenButton=openButton; w._launcherMoved=false; w.UIElements={Main=root,Title=brand,ActiveStatus=statusLabel,SideBar=sidebar,MainBar=content,Pages=pages,Search=searchBox,Topbar=top}
     local desired=o.Size or UDim2.fromOffset(680,430)
     w._desiredWidth=desired.X.Offset>0 and desired.X.Offset or 680
     w._desiredHeight=desired.Y.Offset>0 and desired.Y.Offset or 430
@@ -1080,6 +1080,10 @@ function Nox:CreateWindow(options)
             openLabel.Text="Abrir XeroHub"
             openLabel.TextSize=12
         end
+        if not w._launcherMoved then
+            local launcherWidth=openButton.Size.X.Offset
+            openButton.Position=UDim2.fromOffset(math.max(0,math.floor((bounds.X-launcherWidth)/2)),0)
+        end
 
         w:_drawer(false)
         clampRoot()
@@ -1261,6 +1265,7 @@ function Nox:CreateWindow(options)
             if moved then
                 target.Position=UDim2.fromOffset(startX+delta.X,startY+delta.Y)
                 if centered then clampRoot() else
+                    w._launcherMoved=true
                     w._skipOpen=true
                     clampLauncher()
                 end

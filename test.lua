@@ -136,6 +136,9 @@ function runtime.Cleanup()
     end
 
     if runtime.AppearanceStudioGui then
+        if runtime.AppearanceStudio and runtime.AppearanceStudio.BaseAvatarTemplate then
+            pcall(function() runtime.AppearanceStudio.BaseAvatarTemplate:Destroy() end)
+        end
         pcall(function() runtime.AppearanceStudioGui:Destroy() end)
         runtime.AppearanceStudioGui = nil
         runtime.AppearanceStudio = nil
@@ -1700,6 +1703,12 @@ function runtime.EnsureBodySelector()
     gui.IgnoreGuiInset = true
     gui.DisplayOrder = 2147483647
     gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+    pcall(function()
+        gui.ScreenInsets = Enum.ScreenInsets.None
+        gui.ClipToDeviceSafeArea = false
+        gui.SafeAreaCompatibility = Enum.SafeAreaCompatibility.None
+        gui.OnTopOfCoreBlur = true
+    end)
     gui.Parent = parent
     runtime.BodySelectorGui = gui
 
@@ -1787,7 +1796,19 @@ function runtime.EnsureBodySelector()
     figure.Parent = card
     Instance.new("UICorner", figure).CornerRadius = UDim.new(0, 14)
 
-    runtime.BodySelector = {Mode = "AutoShoot", Segments = {}, Rows = {}, Overlay = overlay, Card = card, Scale = scale, Title = title}
+    runtime.BodySelector = {
+        Mode = "AutoShoot",
+        Segments = {},
+        Rows = {},
+        Overlay = overlay,
+        Card = card,
+        Scale = scale,
+        Title = title,
+        Subtitle = subtitle,
+        CloseButton = closeSelector,
+        Figure = figure,
+        List = nil,
+    }
 
     local function toggle(name)
         local selected = runtime.TargetSelections[runtime.BodySelector.Mode]
@@ -1824,12 +1845,20 @@ function runtime.EnsureBodySelector()
     segment("Pierna izquierda", 49, 143, 25, 66, 11)
     segment("Pierna derecha", 86, 143, 25, 66, 11)
 
-    local list = Instance.new("Frame")
+    local list = Instance.new("ScrollingFrame")
+    list.Name = "BodyPartList"
     list.Size = UDim2.fromOffset(232, 220)
     list.Position = UDim2.fromOffset(190, 74)
     list.BackgroundTransparency = 1
+    list.BorderSizePixel = 0
+    list.ScrollBarThickness = 2
+    list.ScrollBarImageColor3 = Color3.fromHex("#6E737A")
+    list.CanvasSize = UDim2.fromOffset(0, 210)
+    list.ScrollingDirection = Enum.ScrollingDirection.Y
+    list.ElasticBehavior = Enum.ElasticBehavior.Never
     list.ZIndex = 402
     list.Parent = card
+    runtime.BodySelector.List = list
 
     for index, name in ipairs(runtime.TargetBodyOrder) do
         local row = Instance.new("TextButton")
@@ -1870,12 +1899,12 @@ function runtime.EnsureBodySelector()
         return b
     end
 
-    action("Todo", 18, 74, function()
+    local selectAllButton = action("Todo", 18, 74, function()
         local selected = runtime.TargetSelections[runtime.BodySelector.Mode]
         for _, name in ipairs(runtime.TargetBodyOrder) do selected[name] = true end
         runtime.BodySelector.Refresh()
     end)
-    action("Limpiar", 98, 78, function()
+    local clearButton = action("Limpiar", 98, 78, function()
         table.clear(runtime.TargetSelections[runtime.BodySelector.Mode])
         runtime.BodySelector.Refresh()
     end)
@@ -1889,6 +1918,125 @@ function runtime.EnsureBodySelector()
     end)
     done.BackgroundColor3 = Color3.fromHex("#E6E9EC")
     done.TextColor3 = Color3.fromHex("#111214")
+    runtime.BodySelector.SelectAllButton = selectAllButton
+    runtime.BodySelector.ClearButton = clearButton
+    runtime.BodySelector.DoneButton = done
+
+    -- Reflow real del selector. En portrait apila el muñeco y la lista; en
+    -- landscape/desktop conserva las dos columnas. Sólo usa UIScale como último
+    -- recurso si el viewport es físicamente menor que el layout base.
+    function runtime.ApplyBodySelectorResponsiveLayout()
+        local selector = runtime.BodySelector
+        if not selector then return 1 end
+        local bounds = selector.Overlay.AbsoluteSize
+        if bounds.X < 1 or bounds.Y < 1 then
+            local currentCamera = workspace.CurrentCamera
+            bounds = currentCamera and currentCamera.ViewportSize or Vector2.new(800, 600)
+        end
+
+        local margin = math.clamp(math.floor(math.min(bounds.X, bounds.Y) * 0.025), 6, 14)
+        local rawAvailableW = math.max(1, bounds.X - margin * 2)
+        local rawAvailableH = math.max(1, bounds.Y - margin * 2)
+        local availableW = math.max(240, rawAvailableW)
+        local availableH = math.max(260, rawAvailableH)
+        local portrait = availableW < 470 or (availableW / math.max(1, availableH)) < 1.05
+
+        if not portrait then
+            selector.Card.Size = UDim2.fromOffset(440, 360)
+            selector.Title.Position = UDim2.fromOffset(18, 14)
+            selector.Title.Size = UDim2.new(1, -88, 0, 24)
+            selector.Title.TextSize = 15
+            selector.Subtitle.Position = UDim2.fromOffset(18, 39)
+            selector.Subtitle.Size = UDim2.new(1, -36, 0, 28)
+            selector.Subtitle.TextSize = 10
+            selector.CloseButton.Position = UDim2.new(1, -42, 0, 12)
+            selector.Figure.Position = UDim2.fromOffset(18, 74)
+            selector.Figure.Size = UDim2.fromOffset(160, 220)
+            selector.List.Position = UDim2.fromOffset(190, 74)
+            selector.List.Size = UDim2.fromOffset(232, 220)
+            selector.List.CanvasSize = UDim2.fromOffset(0, 210)
+
+            for index, name in ipairs(runtime.TargetBodyOrder) do
+                local row = selector.Rows[name]
+                if row then
+                    row.Size = UDim2.new(1, 0, 0, 27)
+                    row.Position = UDim2.fromOffset(0, (index - 1) * 30)
+                    row.TextSize = 10
+                end
+            end
+
+            selector.SelectAllButton.Size = UDim2.fromOffset(74, 32)
+            selector.SelectAllButton.Position = UDim2.new(0, 18, 1, -42)
+            selector.ClearButton.Size = UDim2.fromOffset(78, 32)
+            selector.ClearButton.Position = UDim2.new(0, 98, 1, -42)
+            selector.DoneButton.Size = UDim2.fromOffset(92, 32)
+            selector.DoneButton.Position = UDim2.new(0, 330, 1, -42)
+
+            local targetScale = math.min(1, availableW / 440, availableH / 360)
+            selector.Scale.Scale = targetScale
+            selector.LayoutMode = "wide"
+            selector.TargetScale = targetScale
+            return targetScale
+        end
+
+        local cardW = math.min(420, availableW)
+        local cardH = math.min(620, availableH)
+        cardH = math.max(360, cardH)
+        selector.Card.Size = UDim2.fromOffset(cardW, cardH)
+        local portraitScale = math.min(1, rawAvailableW / cardW, rawAvailableH / cardH)
+        portraitScale = math.max(0.55, portraitScale)
+        selector.Scale.Scale = portraitScale
+        selector.TargetScale = portraitScale
+        selector.LayoutMode = "portrait"
+
+        selector.Title.Position = UDim2.fromOffset(14, 12)
+        selector.Title.Size = UDim2.new(1, -58, 0, 22)
+        selector.Title.TextSize = cardW < 330 and 12 or 14
+        selector.Title.TextTruncate = Enum.TextTruncate.AtEnd
+        selector.Subtitle.Position = UDim2.fromOffset(14, 35)
+        selector.Subtitle.Size = UDim2.new(1, -28, 0, 32)
+        selector.Subtitle.TextSize = cardW < 330 and 9 or 10
+        selector.CloseButton.Position = UDim2.new(1, -40, 0, 10)
+
+        local figureY = 72
+        selector.Figure.Size = UDim2.fromOffset(160, 220)
+        selector.Figure.Position = UDim2.fromOffset(math.floor((cardW - 160) / 2), figureY)
+
+        local listY = figureY + 228
+        local actionsY = cardH - 42
+        local listH = math.max(58, actionsY - listY - 8)
+        selector.List.Position = UDim2.fromOffset(14, listY)
+        selector.List.Size = UDim2.new(1, -28, 0, listH)
+
+        local rowHeight = cardH < 520 and 25 or 27
+        local rowStep = rowHeight + 3
+        selector.List.CanvasSize = UDim2.fromOffset(0, #runtime.TargetBodyOrder * rowStep)
+        for index, name in ipairs(runtime.TargetBodyOrder) do
+            local row = selector.Rows[name]
+            if row then
+                row.Size = UDim2.new(1, -3, 0, rowHeight)
+                row.Position = UDim2.fromOffset(0, (index - 1) * rowStep)
+                row.TextSize = 10
+            end
+        end
+
+        local gap = 7
+        local buttonW = math.floor((cardW - 28 - gap * 2) / 3)
+        selector.SelectAllButton.Size = UDim2.fromOffset(buttonW, 32)
+        selector.SelectAllButton.Position = UDim2.fromOffset(14, actionsY)
+        selector.ClearButton.Size = UDim2.fromOffset(buttonW, 32)
+        selector.ClearButton.Position = UDim2.fromOffset(14 + buttonW + gap, actionsY)
+        selector.DoneButton.Size = UDim2.fromOffset(buttonW, 32)
+        selector.DoneButton.Position = UDim2.fromOffset(14 + (buttonW + gap) * 2, actionsY)
+
+        return portraitScale
+    end
+
+    runtime.Track(overlay:GetPropertyChangedSignal("AbsoluteSize"):Connect(function()
+        if overlay.Visible and runtime.BodySelector then
+            runtime.ApplyBodySelectorResponsiveLayout()
+        end
+    end))
 
     function runtime.BodySelector.Refresh()
         if not runtime.BodySelector then return end
@@ -1914,29 +2062,27 @@ end
 
 function runtime.OpenBodySelector(mode)
     runtime.EnsureBodySelector()
+    if runtime.BodySelectorGui then
+        runtime.BodySelectorGui.DisplayOrder = 2147483647
+    end
     runtime.BodySelector.Mode = mode
     runtime.BodySelector.Title.Text = "Selector corporal · " .. (mode == "AutoShoot" and "Auto Shoot" or "Silent Aim")
     runtime.BodySelector.Refresh()
     runtime.BodySelector.Overlay.Visible = true
 
-    -- Escala adaptativa: la ventana completa, la X y los botones inferiores
-    -- permanecen dentro del viewport incluso en móviles/pantallas pequeñas.
-    local currentCamera = workspace.CurrentCamera
-    local viewport = currentCamera and currentCamera.ViewportSize or Vector2.new(800, 600)
-    local fitScale = math.min(
-        1,
-        math.max(0.52, (viewport.X - 20) / 440),
-        math.max(0.52, (viewport.Y - 20) / 360)
-    )
-
-    runtime.BodySelector.Scale.Scale = fitScale * 0.94
+    local targetScale = runtime.ApplyBodySelectorResponsiveLayout()
+    runtime.BodySelector.Scale.Scale = targetScale * 0.965
     runtime.BodySelector.Card.GroupTransparency = 0.12
     TweenService:Create(
         runtime.BodySelector.Scale,
         TweenInfo.new(0.16, Enum.EasingStyle.Quint, Enum.EasingDirection.Out),
-        {Scale = fitScale}
+        {Scale = targetScale}
     ):Play()
-    TweenService:Create(runtime.BodySelector.Card, TweenInfo.new(0.14, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {GroupTransparency = 0}):Play()
+    TweenService:Create(
+        runtime.BodySelector.Card,
+        TweenInfo.new(0.14, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+        {GroupTransparency = 0}
+    ):Play()
 end
 
 runtime.AppearanceCatalog = {
@@ -4287,7 +4433,7 @@ placeAppearanceElement(bodySection, nextAppearanceOrder())
 
 local appearanceStudioButton = Tabs.Apariencia:Button({
     Title = "Abrir editor visual",
-    Desc = "Abre una ventana aparte con fondo negro para previsualizar y ajustar tus limiteds activos.",
+    Desc = "Abre el editor aislado para mover, rotar y cambiar el tamaño de tus limiteds activos.",
     Callback = function()
         if runtime.OpenAppearanceStudio then
             runtime.OpenAppearanceStudio()
@@ -4372,7 +4518,6 @@ function runtime.EnsureInlineAppearanceControls(key)
         RX = make("Rotación X", "RX", -180, 180, 1, 4),
         RY = make("Rotación Y", "RY", -180, 180, 1, 5),
         RZ = make("Rotación Z", "RZ", -180, 180, 1, 6),
-        SCALE = make("Tamaño del accesorio", "SCALE", 0.25, 3, 0.05, 7, 1),
     }
 
     local reset = Tabs.Apariencia:Button({
@@ -4405,8 +4550,8 @@ function runtime.RefreshAppearanceControls()
         local enabled = runtime.Appearance.Enabled[key] == true
         local controls = slot.Controls
 
-        -- Lazy creation: 7 sliders sólo existen después de usar ese limited
-        -- por primera vez, evitando cientos de controles al iniciar el hub.
+        -- Lazy creation: posición/rotación inline sólo aparecen al usar ese limited;
+        -- el tamaño vive únicamente en el editor visual.
         if enabled and not controls then
             controls = runtime.EnsureInlineAppearanceControls(key)
         end
@@ -4466,6 +4611,12 @@ function runtime.EnsureAppearanceStudio()
     gui.IgnoreGuiInset = true
     gui.DisplayOrder = 2147483647
     gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+    pcall(function()
+        gui.ScreenInsets = Enum.ScreenInsets.None
+        gui.ClipToDeviceSafeArea = false
+        gui.SafeAreaCompatibility = Enum.SafeAreaCompatibility.None
+        gui.OnTopOfCoreBlur = true
+    end)
     gui.Parent = parent
     runtime.AppearanceStudioGui = gui
 
@@ -4515,7 +4666,7 @@ function runtime.EnsureAppearanceStudio()
     subtitle.BackgroundTransparency = 1
     subtitle.Position = UDim2.fromOffset(22, 44)
     subtitle.Size = UDim2.new(1, -120, 0, 18)
-    subtitle.Text = "Previsualiza tu avatar sobre fondo negro y ajusta cada limited activo con más comodidad."
+    subtitle.Text = "Modelo independiente de tu avatar. Ajusta limiteds sin usar al personaje que está dentro del juego."
     subtitle.TextColor3 = Color3.fromRGB(160, 160, 165)
     subtitle.Font = Enum.Font.Gotham
     subtitle.TextSize = 11
@@ -4556,9 +4707,9 @@ function runtime.EnsureAppearanceStudio()
 
     local previewLabel = Instance.new("TextLabel")
     previewLabel.BackgroundTransparency = 1
-    previewLabel.Position = UDim2.fromOffset(14, 10)
-    previewLabel.Size = UDim2.new(1, -28, 0, 18)
-    previewLabel.Text = "Vista previa"
+    previewLabel.Position = UDim2.fromOffset(14, 9)
+    previewLabel.Size = UDim2.new(1, -76, 0, 18)
+    previewLabel.Text = "Vista previa · avatar aislado"
     previewLabel.TextColor3 = Color3.fromRGB(240, 240, 240)
     previewLabel.Font = Enum.Font.GothamBold
     previewLabel.TextSize = 12
@@ -4566,16 +4717,45 @@ function runtime.EnsureAppearanceStudio()
     previewLabel.ZIndex = 604
     previewLabel.Parent = previewFrame
 
+    local resetView = Instance.new("TextButton")
+    resetView.Name = "ResetView"
+    resetView.AnchorPoint = Vector2.new(1, 0)
+    resetView.Position = UDim2.new(1, -12, 0, 8)
+    resetView.Size = UDim2.fromOffset(32, 24)
+    resetView.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
+    resetView.BorderSizePixel = 0
+    resetView.Text = "↺"
+    resetView.TextColor3 = Color3.fromRGB(225, 225, 225)
+    resetView.Font = Enum.Font.GothamBold
+    resetView.TextSize = 14
+    resetView.AutoButtonColor = false
+    resetView.ZIndex = 605
+    resetView.Parent = previewFrame
+    Instance.new("UICorner", resetView).CornerRadius = UDim.new(0, 8)
+
+    local previewHint = Instance.new("TextLabel")
+    previewHint.BackgroundTransparency = 1
+    previewHint.Position = UDim2.fromOffset(14, 29)
+    previewHint.Size = UDim2.new(1, -28, 0, 16)
+    previewHint.Text = "Arrastra: rotar  ·  rueda/pellizca: zoom  ·  clic derecho/2 dedos: mover"
+    previewHint.TextColor3 = Color3.fromRGB(126, 126, 132)
+    previewHint.Font = Enum.Font.Gotham
+    previewHint.TextSize = 9
+    previewHint.TextXAlignment = Enum.TextXAlignment.Left
+    previewHint.ZIndex = 604
+    previewHint.Parent = previewFrame
+
     local viewport = Instance.new("ViewportFrame")
     viewport.Name = "Viewport"
-    viewport.Position = UDim2.fromOffset(12, 34)
-    viewport.Size = UDim2.new(1, -24, 1, -46)
+    viewport.Position = UDim2.fromOffset(12, 48)
+    viewport.Size = UDim2.new(1, -24, 1, -60)
     viewport.BackgroundTransparency = 1
     viewport.BorderSizePixel = 0
     viewport.Ambient = Color3.fromRGB(190, 190, 190)
     viewport.LightColor = Color3.fromRGB(255, 255, 255)
     viewport.LightDirection = Vector3.new(-1, -1, -0.75)
     viewport.ZIndex = 603
+    viewport.Active = true
     viewport.Parent = previewFrame
 
     local side = Instance.new("Frame")
@@ -4702,15 +4882,423 @@ function runtime.EnsureAppearanceStudio()
         Overlay = overlay,
         Card = card,
         Scale = studioScale,
+        TitleLabel = title,
+        SubtitleLabel = subtitle,
+        CloseButton = closeBtn,
+        PreviewFrame = previewFrame,
+        PreviewLabel = previewLabel,
+        PreviewHint = previewHint,
         Viewport = viewport,
+        ResetViewButton = resetView,
+        Side = side,
         AccessoryList = list,
         TargetTitle = targetTitle,
+        TargetHint = targetHint,
+        ControlTitle = controlTitle,
+        ControlsScroll = controlsScroll,
+        ResetButton = resetButton,
+        DoneButton = doneButton,
         NoActiveLabel = noActive,
         Controls = {},
         Buttons = {},
         Syncing = false,
         SelectedKey = nil,
+        PreviewCamera = nil,
+        PreviewModel = nil,
+        BaseAvatarTemplate = nil,
+        CameraState = {
+            Yaw = 0,
+            Pitch = -0.06,
+            Distance = nil,
+            DefaultDistance = nil,
+            MinDistance = 2,
+            MaxDistance = 30,
+            Focus = Vector3.new(),
+            Pan = Vector3.new(),
+        },
     }
+
+    -- Editor responsive real: escritorio/landscape usa dos columnas; móvil
+    -- portrait apila preview + controles sin reducir toda la interfaz a miniatura.
+    function runtime.ApplyAppearanceStudioResponsiveLayout()
+        local studio = runtime.AppearanceStudio
+        if not studio then return 1 end
+
+        local bounds = studio.Overlay.AbsoluteSize
+        if bounds.X < 1 or bounds.Y < 1 then
+            local currentCamera = workspace.CurrentCamera
+            bounds = currentCamera and currentCamera.ViewportSize or Vector2.new(1280, 720)
+        end
+
+        local margin = math.clamp(math.floor(math.min(bounds.X, bounds.Y) * 0.02), 6, 14)
+        local rawAvailableW = math.max(1, bounds.X - margin * 2)
+        local rawAvailableH = math.max(1, bounds.Y - margin * 2)
+        local availableW = math.max(250, rawAvailableW)
+        local availableH = math.max(280, rawAvailableH)
+        local aspect = availableW / math.max(1, availableH)
+        local wide = availableW >= 690 or (availableW >= 460 and aspect >= 1.35)
+
+        local cardW
+        local cardH
+        if wide then
+            cardW = math.min(930, availableW)
+            cardH = math.min(560, availableH)
+        else
+            cardW = math.min(560, availableW)
+            cardH = math.min(760, availableH)
+        end
+
+        studio.Card.Size = UDim2.fromOffset(cardW, cardH)
+        studio.Scale.Scale = 1
+        studio.TargetScale = 1
+        studio.LayoutMode = wide and "wide" or "portrait"
+
+        local shortWide = wide and cardH < 430
+        local headerH = shortWide and 56 or ((not wide and cardW < 350) and 68 or 66)
+
+        studio.TitleLabel.Position = UDim2.fromOffset(wide and 20 or 16, shortWide and 12 or 16)
+        studio.TitleLabel.Size = UDim2.new(1, wide and -88 or -70, 0, 24)
+        studio.TitleLabel.TextSize = (cardW < 340) and 14 or (shortWide and 15 or 18)
+        studio.TitleLabel.TextTruncate = Enum.TextTruncate.AtEnd
+
+        studio.CloseButton.Size = UDim2.fromOffset(shortWide and 30 or 34, shortWide and 30 or 34)
+        studio.CloseButton.Position = UDim2.new(1, shortWide and -42 or -50, 0, shortWide and 10 or 14)
+
+        studio.SubtitleLabel.Visible = not shortWide
+        studio.SubtitleLabel.Position = UDim2.fromOffset(wide and 20 or 16, 40)
+        studio.SubtitleLabel.Size = UDim2.new(1, -78, 0, (not wide and cardW < 360) and 28 or 20)
+        studio.SubtitleLabel.TextSize = (not wide and cardW < 360) and 9 or 10
+        studio.SubtitleLabel.TextWrapped = not wide and cardW < 430
+
+        if wide then
+            local gap = cardW < 760 and 14 or 18
+            local sideMin = math.min(300, math.max(220, math.floor(cardW * 0.34)))
+            local previewW = math.clamp(
+                math.floor(cardW * (cardW < 760 and 0.48 or 0.47)),
+                math.min(220, cardW - sideMin - gap - 36),
+                math.max(220, cardW - sideMin - gap - 36)
+            )
+            local previewX = 18
+            local bodyY = headerH + 8
+            local bodyH = math.max(190, cardH - bodyY - 18)
+            local sideX = previewX + previewW + gap
+            local sideW = math.max(190, cardW - sideX - 18)
+
+            studio.PreviewFrame.Position = UDim2.fromOffset(previewX, bodyY)
+            studio.PreviewFrame.Size = UDim2.fromOffset(previewW, bodyH)
+            studio.Side.Position = UDim2.fromOffset(sideX, bodyY)
+            studio.Side.Size = UDim2.fromOffset(sideW, bodyH)
+
+            studio.PreviewLabel.Position = UDim2.fromOffset(12, 8)
+            studio.PreviewLabel.Size = UDim2.new(1, -58, 0, 18)
+            studio.PreviewLabel.TextSize = previewW < 300 and 10 or 12
+            studio.ResetViewButton.Position = UDim2.new(1, -10, 0, 7)
+            studio.ResetViewButton.Size = UDim2.fromOffset(30, 24)
+
+            local showHint = bodyH >= 250 and previewW >= 310
+            studio.PreviewHint.Visible = showHint
+            studio.PreviewHint.Position = UDim2.fromOffset(12, 28)
+            studio.PreviewHint.Size = UDim2.new(1, -24, 0, 15)
+            studio.PreviewHint.TextSize = 8
+
+            local viewportY = showHint and 46 or 34
+            studio.Viewport.Position = UDim2.fromOffset(8, viewportY)
+            studio.Viewport.Size = UDim2.new(1, -16, 1, -(viewportY + 8))
+
+            studio.TargetTitle.Position = UDim2.fromOffset(0, 0)
+            studio.TargetTitle.Size = UDim2.new(1, 0, 0, 20)
+            studio.TargetTitle.TextSize = sideW < 250 and 11 or 13
+
+            studio.TargetHint.Visible = bodyH >= 245
+            studio.TargetHint.Position = UDim2.fromOffset(0, 20)
+            studio.TargetHint.Size = UDim2.new(1, 0, 0, 16)
+            studio.TargetHint.TextSize = 9
+
+            local listY = studio.TargetHint.Visible and 42 or 25
+            local listH
+            if bodyH < 250 then listH = 48
+            elseif bodyH < 330 then listH = 64
+            else listH = math.min(104, math.floor(bodyH * 0.25)) end
+            studio.AccessoryList.Position = UDim2.fromOffset(0, listY)
+            studio.AccessoryList.Size = UDim2.new(1, 0, 0, listH)
+
+            local controlTitleY = listY + listH + 8
+            studio.ControlTitle.Position = UDim2.fromOffset(0, controlTitleY)
+            studio.ControlTitle.Size = UDim2.new(1, 0, 0, 18)
+            studio.ControlTitle.TextSize = 12
+
+            local buttonH = 34
+            local buttonsY = bodyH - buttonH
+            local controlsY = controlTitleY + 21
+            local controlsH = math.max(38, buttonsY - controlsY - 7)
+            studio.ControlsScroll.Position = UDim2.fromOffset(0, controlsY)
+            studio.ControlsScroll.Size = UDim2.new(1, 0, 0, controlsH)
+
+            studio.ResetButton.Size = UDim2.new(0.48, -5, 0, buttonH)
+            studio.ResetButton.Position = UDim2.fromOffset(0, buttonsY)
+            studio.DoneButton.Size = UDim2.new(0.52, -5, 0, buttonH)
+            studio.DoneButton.Position = UDim2.new(0.48, 10, 0, buttonsY)
+
+            studio.NoActiveLabel.Position = UDim2.fromOffset(0, listY + 8)
+            studio.NoActiveLabel.Size = UDim2.new(1, 0, 0, math.max(30, listH - 8))
+        else
+            local bodyY = headerH + 4
+            local bodyH = math.max(250, cardH - bodyY - 14)
+            local minSideH = math.min(250, math.max(200, math.floor(bodyH * 0.42)))
+            local previewH = math.clamp(
+                math.floor(bodyH * 0.48),
+                math.min(165, bodyH - minSideH - 10),
+                math.max(165, bodyH - minSideH - 10)
+            )
+            local sideY = bodyY + previewH + 10
+            local sideH = math.max(170, cardH - sideY - 12)
+
+            studio.PreviewFrame.Position = UDim2.fromOffset(12, bodyY)
+            studio.PreviewFrame.Size = UDim2.new(1, -24, 0, previewH)
+            studio.Side.Position = UDim2.fromOffset(12, sideY)
+            studio.Side.Size = UDim2.new(1, -24, 0, sideH)
+
+            studio.PreviewLabel.Position = UDim2.fromOffset(12, 7)
+            studio.PreviewLabel.Size = UDim2.new(1, -54, 0, 18)
+            studio.PreviewLabel.TextSize = cardW < 330 and 10 or 11
+            studio.ResetViewButton.Position = UDim2.new(1, -9, 0, 6)
+            studio.ResetViewButton.Size = UDim2.fromOffset(29, 23)
+
+            local showHint = previewH >= 215 and cardW >= 350
+            studio.PreviewHint.Visible = showHint
+            studio.PreviewHint.Position = UDim2.fromOffset(12, 27)
+            studio.PreviewHint.Size = UDim2.new(1, -24, 0, 15)
+            studio.PreviewHint.TextSize = 8
+
+            local viewportY = showHint and 44 or 32
+            studio.Viewport.Position = UDim2.fromOffset(7, viewportY)
+            studio.Viewport.Size = UDim2.new(1, -14, 1, -(viewportY + 7))
+
+            studio.TargetTitle.Position = UDim2.fromOffset(0, 0)
+            studio.TargetTitle.Size = UDim2.new(1, 0, 0, 19)
+            studio.TargetTitle.TextSize = 11
+            studio.TargetHint.Visible = sideH >= 220
+            studio.TargetHint.Position = UDim2.fromOffset(0, 19)
+            studio.TargetHint.Size = UDim2.new(1, 0, 0, 15)
+            studio.TargetHint.TextSize = 9
+
+            local listY = studio.TargetHint.Visible and 38 or 22
+            local listH = math.clamp(math.floor(sideH * 0.22), 42, 72)
+            studio.AccessoryList.Position = UDim2.fromOffset(0, listY)
+            studio.AccessoryList.Size = UDim2.new(1, 0, 0, listH)
+
+            local controlTitleY = listY + listH + 6
+            studio.ControlTitle.Position = UDim2.fromOffset(0, controlTitleY)
+            studio.ControlTitle.Size = UDim2.new(1, 0, 0, 17)
+            studio.ControlTitle.TextSize = 11
+
+            local buttonH = 32
+            local buttonsY = sideH - buttonH
+            local controlsY = controlTitleY + 19
+            local controlsH = math.max(34, buttonsY - controlsY - 6)
+            studio.ControlsScroll.Position = UDim2.fromOffset(0, controlsY)
+            studio.ControlsScroll.Size = UDim2.new(1, 0, 0, controlsH)
+
+            studio.ResetButton.Size = UDim2.new(0.48, -4, 0, buttonH)
+            studio.ResetButton.Position = UDim2.fromOffset(0, buttonsY)
+            studio.DoneButton.Size = UDim2.new(0.52, -4, 0, buttonH)
+            studio.DoneButton.Position = UDim2.new(0.48, 8, 0, buttonsY)
+
+            studio.NoActiveLabel.Position = UDim2.fromOffset(0, listY + 4)
+            studio.NoActiveLabel.Size = UDim2.new(1, 0, 0, math.max(28, listH - 4))
+        end
+
+        -- Sólo para viewports extremos (<~280 px), evitando overflow sin hacer
+        -- que un teléfono normal vea toda la UI diminuta.
+        local targetScale = math.min(1, rawAvailableW / math.max(1, cardW), rawAvailableH / math.max(1, cardH))
+        targetScale = math.max(0.55, targetScale)
+        studio.TargetScale = targetScale
+        studio.Scale.Scale = targetScale
+        return targetScale
+    end
+
+    runtime.Track(overlay:GetPropertyChangedSignal("AbsoluteSize"):Connect(function()
+        local studio = runtime.AppearanceStudio
+        if overlay.Visible and studio then
+            runtime.ApplyAppearanceStudioResponsiveLayout()
+            if runtime.UpdateAppearanceStudioCamera then
+                task.defer(runtime.UpdateAppearanceStudioCamera)
+            end
+        end
+    end))
+
+    local function updateStudioCamera()
+        local studio = runtime.AppearanceStudio
+        local state = studio and studio.CameraState
+        local cameraPreview = studio and studio.PreviewCamera
+        if not state or not cameraPreview then return end
+
+        local distance = math.clamp(
+            tonumber(state.Distance) or tonumber(state.DefaultDistance) or 8,
+            tonumber(state.MinDistance) or 2,
+            tonumber(state.MaxDistance) or 30
+        )
+        state.Distance = distance
+
+        local focus = state.Focus + state.Pan
+        local orbit = CFrame.Angles(state.Pitch, state.Yaw, 0) * Vector3.new(0, 0, distance)
+        cameraPreview.CFrame = CFrame.new(focus + orbit, focus)
+    end
+    runtime.UpdateAppearanceStudioCamera = updateStudioCamera
+
+    local function resetStudioCamera()
+        local studio = runtime.AppearanceStudio
+        if not studio then return end
+        local state = studio.CameraState
+        state.Yaw = 0
+        state.Pitch = -0.06
+        state.Pan = Vector3.new()
+        state.Distance = state.DefaultDistance or state.Distance or 8
+        updateStudioCamera()
+    end
+    resetView.Activated:Connect(resetStudioCamera)
+
+    local mouseMode = nil
+    local lastMouse = nil
+    local touches = {}
+    local touchGestureDistance = nil
+    local touchGestureCenter = nil
+
+    local function pointInsideViewport(point)
+        local pos = viewport.AbsolutePosition
+        local size = viewport.AbsoluteSize
+        return point.X >= pos.X and point.Y >= pos.Y
+            and point.X <= pos.X + size.X and point.Y <= pos.Y + size.Y
+    end
+
+    local function rotatePreview(delta)
+        local studio = runtime.AppearanceStudio
+        if not studio then return end
+        local state = studio.CameraState
+        state.Yaw -= delta.X * 0.008
+        state.Pitch = math.clamp(state.Pitch - delta.Y * 0.006, -1.25, 1.25)
+        updateStudioCamera()
+    end
+
+    local function panPreview(delta)
+        local studio = runtime.AppearanceStudio
+        local cameraPreview = studio and studio.PreviewCamera
+        if not studio or not cameraPreview then return end
+        local state = studio.CameraState
+        local factor = math.max(0.0025, (state.Distance or 8) / 1850)
+        state.Pan += (-cameraPreview.CFrame.RightVector * delta.X + cameraPreview.CFrame.UpVector * delta.Y) * factor
+        updateStudioCamera()
+    end
+
+    local function zoomPreview(multiplier)
+        local studio = runtime.AppearanceStudio
+        if not studio then return end
+        local state = studio.CameraState
+        state.Distance = math.clamp(
+            (state.Distance or state.DefaultDistance or 8) * multiplier,
+            state.MinDistance or 2,
+            state.MaxDistance or 30
+        )
+        updateStudioCamera()
+    end
+
+    local function getTwoTouches()
+        local firstInput, firstPos, secondInput, secondPos
+        for inputObject, position in pairs(touches) do
+            if not firstInput then
+                firstInput, firstPos = inputObject, position
+            else
+                secondInput, secondPos = inputObject, position
+                break
+            end
+        end
+        return firstInput, firstPos, secondInput, secondPos
+    end
+
+    viewport.InputBegan:Connect(function(input)
+        if not overlay.Visible then return end
+        if input.UserInputType == Enum.UserInputType.MouseButton1 then
+            mouseMode = "rotate"
+            lastMouse = input.Position
+        elseif input.UserInputType == Enum.UserInputType.MouseButton2
+            or input.UserInputType == Enum.UserInputType.MouseButton3 then
+            mouseMode = "pan"
+            lastMouse = input.Position
+        elseif input.UserInputType == Enum.UserInputType.Touch then
+            touches[input] = input.Position
+            local _, p1, _, p2 = getTwoTouches()
+            if p1 and p2 then
+                touchGestureDistance = (p2 - p1).Magnitude
+                touchGestureCenter = (p1 + p2) * 0.5
+            else
+                touchGestureDistance = nil
+                touchGestureCenter = nil
+            end
+        end
+    end)
+
+    runtime.Track(UserInputService.InputChanged:Connect(function(input)
+        if not runtime.Alive or not overlay.Visible then return end
+
+        if input.UserInputType == Enum.UserInputType.MouseMovement and mouseMode and lastMouse then
+            local now = input.Position
+            local delta = now - lastMouse
+            lastMouse = now
+            if mouseMode == "rotate" then rotatePreview(delta) else panPreview(delta) end
+            return
+        end
+
+        if input.UserInputType == Enum.UserInputType.MouseWheel then
+            local mouseLocation = UserInputService:GetMouseLocation()
+            if pointInsideViewport(mouseLocation) then
+                local wheel = input.Position.Z
+                if wheel ~= 0 then zoomPreview(wheel > 0 and 0.88 or 1.14) end
+            end
+            return
+        end
+
+        if input.UserInputType == Enum.UserInputType.Touch and touches[input] then
+            local previous = touches[input]
+            touches[input] = input.Position
+
+            local _, p1, _, p2 = getTwoTouches()
+            if p1 and p2 then
+                local currentDistance = math.max(1, (p2 - p1).Magnitude)
+                local currentCenter = (p1 + p2) * 0.5
+                if touchGestureDistance and touchGestureDistance > 1 then
+                    zoomPreview(math.clamp(touchGestureDistance / currentDistance, 0.78, 1.28))
+                end
+                if touchGestureCenter then
+                    panPreview(currentCenter - touchGestureCenter)
+                end
+                touchGestureDistance = currentDistance
+                touchGestureCenter = currentCenter
+            else
+                touchGestureDistance = nil
+                touchGestureCenter = nil
+                rotatePreview(input.Position - previous)
+            end
+        end
+    end))
+
+    runtime.Track(UserInputService.InputEnded:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1
+            or input.UserInputType == Enum.UserInputType.MouseButton2
+            or input.UserInputType == Enum.UserInputType.MouseButton3 then
+            mouseMode = nil
+            lastMouse = nil
+        elseif input.UserInputType == Enum.UserInputType.Touch and touches[input] then
+            touches[input] = nil
+            local _, p1, _, p2 = getTwoTouches()
+            if p1 and p2 then
+                touchGestureDistance = (p2 - p1).Magnitude
+                touchGestureCenter = (p1 + p2) * 0.5
+            else
+                touchGestureDistance = nil
+                touchGestureCenter = nil
+            end
+        end
+    end))
 
     local function setComponent(component, value)
         local studio = runtime.AppearanceStudio
@@ -4742,6 +5330,7 @@ function runtime.EnsureAppearanceStudio()
         row.Size = UDim2.new(1, 0, 0, 40)
         row.BackgroundColor3 = Color3.fromRGB(18, 18, 18)
         row.BorderSizePixel = 0
+        row.ClipsDescendants = true
         row.ZIndex = 603
         row.Parent = controlsScroll
         Instance.new("UICorner", row).CornerRadius = UDim.new(0, 12)
@@ -4753,7 +5342,7 @@ function runtime.EnsureAppearanceStudio()
         local titleLabel = Instance.new("TextLabel")
         titleLabel.BackgroundTransparency = 1
         titleLabel.Position = UDim2.fromOffset(12, 0)
-        titleLabel.Size = UDim2.new(0, 126, 1, 0)
+        titleLabel.Size = UDim2.new(1, -150, 1, 0)
         titleLabel.Text = titleText
         titleLabel.TextColor3 = Color3.fromRGB(236, 236, 236)
         titleLabel.Font = Enum.Font.GothamMedium
@@ -4866,47 +5455,255 @@ function runtime.EnsureAppearanceStudio()
     end)
 end
 
-function runtime.RefreshAppearanceStudioPreview()
-    local studio = runtime.AppearanceStudio
-    if not studio or not studio.Viewport then return end
-    local viewport = studio.Viewport
-    for _, child in ipairs(viewport:GetChildren()) do
-        child:Destroy()
-    end
+local function prepareAppearanceStudioBaseModel(model)
+    if not model or not model:IsA("Model") then return nil end
+    model.Name = "Xero_AvatarPreviewBase"
+    model.Archivable = true
 
-    local cameraPreview = Instance.new("Camera")
-    cameraPreview.Parent = viewport
-    viewport.CurrentCamera = cameraPreview
-
-    local worldModel = Instance.new("WorldModel")
-    worldModel.Parent = viewport
-
-    local char = player.Character
-    if not char or not char.Parent then return end
-
-    local previousArchivable = char.Archivable
-    pcall(function() char.Archivable = true end)
-    local ok, clone = pcall(function() return char:Clone() end)
-    pcall(function() char.Archivable = previousArchivable end)
-    if not ok or not clone then return end
-
-    for _, obj in ipairs(clone:GetDescendants()) do
-        if obj:IsA("Script") or obj:IsA("LocalScript") then
-            obj:Destroy()
+    for _, obj in ipairs(model:GetDescendants()) do
+        if obj:IsA("Script") or obj:IsA("LocalScript") or obj:IsA("ModuleScript")
+            or obj:IsA("Tool") or obj:IsA("ForceField") or obj:IsA("BillboardGui") then
+            pcall(function() obj:Destroy() end)
         elseif obj:IsA("BasePart") then
-            obj.Anchored = true
             obj.CanCollide = false
-        elseif obj:IsA("Humanoid") then
-            obj.DisplayDistanceType = Enum.HumanoidDisplayDistanceType.None
+            obj.CanTouch = false
+            obj.CanQuery = false
+            obj.Massless = true
         end
     end
 
-    clone.Parent = worldModel
+    local humanoid = model:FindFirstChildOfClass("Humanoid")
+    if humanoid then
+        pcall(function() humanoid.DisplayDistanceType = Enum.HumanoidDisplayDistanceType.None end)
+        pcall(function() humanoid.HealthDisplayType = Enum.HumanoidHealthDisplayType.AlwaysOff end)
+        pcall(function() humanoid.NameDisplayDistance = 0 end)
+        pcall(function() humanoid.HealthDisplayDistance = 0 end)
+        pcall(function() humanoid.AutoRotate = false end)
+        local animator = humanoid:FindFirstChildOfClass("Animator")
+        if animator then pcall(function() animator:Destroy() end) end
+    end
 
-    local cf, size = clone:GetBoundingBox()
-    local focus = cf.Position + Vector3.new(0, size.Y * 0.08, 0)
-    local distance = math.max(size.X, size.Y, size.Z) * 2.2
-    cameraPreview.CFrame = CFrame.new(focus + Vector3.new(0, size.Y * 0.06, distance), focus)
+    model.Parent = nil
+    return model
+end
+
+function runtime.GetAppearanceStudioBaseModel()
+    local studio = runtime.AppearanceStudio
+    if not studio then return nil end
+
+    local cached = studio.BaseAvatarTemplate
+    if cached and cached.Parent == nil then
+        local ok, cloned = pcall(function() return cached:Clone() end)
+        if ok then return cloned end
+    end
+
+    local rigType = Enum.HumanoidRigType.R15
+    local currentHumanoid = player.Character and player.Character:FindFirstChildOfClass("Humanoid")
+    if currentHumanoid then rigType = currentHumanoid.RigType end
+
+    -- Construye un avatar NUEVO desde el UserId/description. No clona el Character
+    -- que está caminando dentro del juego.
+    local model = runtime.CreateAvatarCloneTemplateFromUserId(player.UserId, rigType)
+    if not model then return nil end
+
+    model = prepareAppearanceStudioBaseModel(model)
+    if not model then return nil end
+
+    studio.BaseAvatarTemplate = model
+    local cloneOk, cloned = pcall(function() return model:Clone() end)
+    if cloneOk then return cloned end
+    return nil
+end
+
+local function applyAppearanceStudioBodyLayers(model)
+    if not model then return end
+
+    if runtime.Appearance.Enabled.Headless then
+        local head = model:FindFirstChild("Head")
+        if head and head:IsA("BasePart") then
+            head.Transparency = 1
+            head.LocalTransparencyModifier = 1
+            for _, d in ipairs(head:GetDescendants()) do
+                if d:IsA("Decal") or d:IsA("Texture") then d.Transparency = 1 end
+            end
+        end
+    end
+
+    if runtime.Appearance.Enabled.Korblox then
+        local humanoid = model:FindFirstChildOfClass("Humanoid")
+        local upper = model:FindFirstChild("RightUpperLeg")
+        local lower = model:FindFirstChild("RightLowerLeg")
+        local foot = model:FindFirstChild("RightFoot")
+        if humanoid and humanoid.RigType == Enum.HumanoidRigType.R15 and upper and upper:IsA("MeshPart") then
+            pcall(function() upper.MeshId = KORBLOX_UPPER_MESH end)
+            pcall(function() upper.TextureID = KORBLOX_TEXTURE end)
+            upper.Transparency = 0
+            upper.LocalTransparencyModifier = 0
+            if lower and lower:IsA("BasePart") then
+                lower.Transparency = 1
+                lower.LocalTransparencyModifier = 1
+            end
+            if foot and foot:IsA("BasePart") then
+                foot.Transparency = 1
+                foot.LocalTransparencyModifier = 1
+            end
+        end
+    end
+
+    if runtime.Appearance.Enabled.HideHair then
+        for _, accessory in ipairs(model:GetChildren()) do
+            if isHairAccessory(accessory) and accessory:GetAttribute("iLunXAppearanceKey") == nil then
+                for _, obj in ipairs(accessory:GetDescendants()) do
+                    if obj:IsA("BasePart") then
+                        obj.Transparency = 1
+                        obj.LocalTransparencyModifier = 1
+                    elseif obj:IsA("ParticleEmitter") or obj:IsA("Trail") or obj:IsA("Beam") then
+                        obj.Enabled = false
+                    end
+                end
+            end
+        end
+    end
+end
+
+local function scaleAppearanceStudioAccessory(key, accessory)
+    local state = runtime.GetAppearanceOffset(key)
+    local scale = math.clamp(tonumber(state.Scale) or 1, 0.25, 3)
+    if math.abs(scale - 1) < 0.0001 then return end
+
+    for _, obj in ipairs(accessory:GetDescendants()) do
+        if obj:IsA("BasePart") then
+            local mesh = obj:FindFirstChildOfClass("SpecialMesh")
+            if mesh then
+                mesh.Scale *= scale
+            else
+                obj.Size *= scale
+            end
+        elseif obj:IsA("SpecialMesh") and not obj.Parent:IsA("BasePart") then
+            obj.Scale *= scale
+        end
+    end
+end
+
+local function addAppearanceStudioAccessory(model, key)
+    local template = runtime.GetAppearanceTemplate(key)
+    local humanoid = model and model:FindFirstChildOfClass("Humanoid")
+    if not template or not humanoid then return end
+
+    local accessory = template:Clone()
+    accessory:SetAttribute("iLunXAppearanceKey", key)
+    accessory:SetAttribute("XeroPreviewOnly", true)
+    scaleAppearanceStudioAccessory(key, accessory)
+
+    local attached = pcall(function()
+        humanoid:AddAccessory(accessory)
+    end)
+
+    if not attached or accessory.Parent ~= model then
+        accessory.Parent = model
+        attached = manualAttachAppearanceAccessory(model, accessory)
+    end
+    if not attached then
+        if accessory.Parent then accessory:Destroy() end
+        return
+    end
+
+    local weld = runtime.FindAppearanceWeld(accessory)
+    if not weld then
+        manualAttachAppearanceAccessory(model, accessory)
+        runtime.Appearance.AccessoryWeld[accessory] = nil
+        weld = runtime.FindAppearanceWeld(accessory)
+    end
+
+    if weld then
+        local state = runtime.GetAppearanceOffset(key)
+        local p = state.Position
+        local r = state.Rotation
+        local base = weld.C1
+        weld.C1 = base
+            * CFrame.new(p.X, p.Y, p.Z)
+            * CFrame.Angles(math_rad(r.X), math_rad(r.Y), math_rad(r.Z))
+    end
+end
+
+function runtime.RefreshAppearanceStudioPreview()
+    local studio = runtime.AppearanceStudio
+    if not studio or not studio.Viewport then return end
+
+    studio.PreviewSerial = (studio.PreviewSerial or 0) + 1
+    local serial = studio.PreviewSerial
+
+    task.spawn(function()
+        local model = runtime.GetAppearanceStudioBaseModel()
+        if not model then return end
+        if not runtime.Alive or not runtime.AppearanceStudio
+            or runtime.AppearanceStudio.PreviewSerial ~= serial then
+            model:Destroy()
+            return
+        end
+
+        applyAppearanceStudioBodyLayers(model)
+        for _, key in ipairs(runtime.GetEnabledAppearanceEditorKeys()) do
+            addAppearanceStudioAccessory(model, key)
+        end
+
+        for _, obj in ipairs(model:GetDescendants()) do
+            if obj:IsA("BasePart") then
+                obj.Anchored = true
+                obj.CanCollide = false
+                obj.CanTouch = false
+                obj.CanQuery = false
+            end
+        end
+
+        local viewport = studio.Viewport
+        for _, child in ipairs(viewport:GetChildren()) do
+            child:Destroy()
+        end
+
+        local worldModel = Instance.new("WorldModel")
+        worldModel.Name = "PreviewWorld"
+        worldModel.Parent = viewport
+
+        model.Name = "Xero_AvatarPreview"
+        model.Parent = worldModel
+        studio.PreviewModel = model
+
+        local cameraPreview = Instance.new("Camera")
+        cameraPreview.Name = "PreviewCamera"
+        cameraPreview.FieldOfView = 36
+        cameraPreview.Parent = viewport
+        viewport.CurrentCamera = cameraPreview
+        studio.PreviewCamera = cameraPreview
+
+        local cf, size = model:GetBoundingBox()
+        local radius = math.max(size.X, size.Y, size.Z)
+        local focus = cf.Position + Vector3.new(0, size.Y * 0.06, 0)
+
+        -- Encuadre tipo editor: calcula distancia con el aspecto real del
+        -- ViewportFrame para que el avatar no quede cortado al rotar el teléfono.
+        local viewportSize = viewport.AbsoluteSize
+        local aspect = math.max(0.45, viewportSize.X / math.max(1, viewportSize.Y))
+        local verticalHalf = math.max(0.5, size.Y * 0.52)
+        local horizontalHalf = math.max(0.5, size.X * 0.58 / aspect)
+        local fitHalf = math.max(verticalHalf, horizontalHalf, size.Z * 0.52)
+        local halfFov = math_rad(cameraPreview.FieldOfView * 0.5)
+        local defaultDistance = math.max(3.8, (fitHalf / math.max(0.12, math.tan(halfFov))) * 1.18)
+
+        local state = studio.CameraState
+        state.Focus = focus
+        state.DefaultDistance = defaultDistance
+        state.MinDistance = math.max(1.6, defaultDistance * 0.34)
+        state.MaxDistance = math.max(18, defaultDistance * 5.5)
+        if state.Distance == nil then state.Distance = defaultDistance end
+        state.Distance = math.clamp(state.Distance, state.MinDistance, state.MaxDistance)
+
+        if runtime.UpdateAppearanceStudioCamera then
+            runtime.UpdateAppearanceStudioCamera()
+        else
+            cameraPreview.CFrame = CFrame.new(focus + Vector3.new(0, 0, defaultDistance), focus)
+        end
+    end)
 end
 
 function runtime.RefreshAppearanceStudio()
@@ -4992,13 +5789,21 @@ function runtime.OpenAppearanceStudio(initialKey)
         studio.SelectedKey = initialKey
     end
 
-    local currentCamera = workspace.CurrentCamera
-    local viewport = currentCamera and currentCamera.ViewportSize or Vector2.new(1280, 720)
-    local fitScale = math.min(1, math.max(0.58, (viewport.X - 20) / 930), math.max(0.58, (viewport.Y - 20) / 560))
-    studio.Scale.Scale = fitScale * 0.96
+    -- Siempre por encima del hub y con fondo negro; sólo se ve el avatar
+    -- generado dentro del ViewportFrame, no el Character del juego.
+    if runtime.AppearanceStudioGui then
+        runtime.AppearanceStudioGui.DisplayOrder = 2147483647
+    end
+
     studio.Overlay.Visible = true
+    local targetScale = runtime.ApplyAppearanceStudioResponsiveLayout()
+    studio.Scale.Scale = targetScale * 0.975
     runtime.RefreshAppearanceStudio()
-    TweenService:Create(studio.Scale, TweenInfo.new(0.16, Enum.EasingStyle.Quint, Enum.EasingDirection.Out), {Scale = fitScale}):Play()
+    TweenService:Create(
+        studio.Scale,
+        TweenInfo.new(0.16, Enum.EasingStyle.Quint, Enum.EasingDirection.Out),
+        {Scale = targetScale}
+    ):Play()
 end
 
 for _, category in ipairs(runtime.AppearanceCategories) do

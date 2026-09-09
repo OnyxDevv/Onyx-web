@@ -4825,17 +4825,24 @@ function runtime.EnsureAppearanceStudio()
     controlsScroll.Size = UDim2.new(1, 0, 1, -244)
     controlsScroll.BackgroundTransparency = 1
     controlsScroll.BorderSizePixel = 0
-    controlsScroll.ScrollBarThickness = 3
+    controlsScroll.ScrollBarThickness = 4
     controlsScroll.ScrollBarImageColor3 = Color3.fromRGB(92, 92, 98)
     controlsScroll.AutomaticCanvasSize = Enum.AutomaticSize.Y
     controlsScroll.CanvasSize = UDim2.fromOffset(0, 0)
     controlsScroll.ScrollingDirection = Enum.ScrollingDirection.Y
-    controlsScroll.ElasticBehavior = Enum.ElasticBehavior.Never
+    controlsScroll.ScrollingEnabled = true
+    controlsScroll.Active = true
+    controlsScroll.ElasticBehavior = Enum.ElasticBehavior.Always
     controlsScroll.ClipsDescendants = true
     controlsScroll.ZIndex = 603
     controlsScroll.Parent = side
+    local controlsPadding = Instance.new("UIPadding")
+    controlsPadding.PaddingTop = UDim.new(0, 2)
+    controlsPadding.PaddingBottom = UDim.new(0, 10)
+    controlsPadding.PaddingRight = UDim.new(0, 4)
+    controlsPadding.Parent = controlsScroll
     local controlsLayout = Instance.new("UIListLayout")
-    controlsLayout.Padding = UDim.new(0, 8)
+    controlsLayout.Padding = UDim.new(0, 10)
     controlsLayout.Parent = controlsScroll
 
     local resetButton = Instance.new("TextButton")
@@ -4979,11 +4986,11 @@ function runtime.EnsureAppearanceStudio()
 
         if wide then
             local gap = cardW < 760 and 12 or 16
-            local sideMin = math.min(340, math.max(240, math.floor(cardW * 0.40)))
+            local sideMin = math.min(390, math.max(280, math.floor(cardW * 0.46)))
             local previewW = math.clamp(
-                math.floor(cardW * (cardW < 760 and 0.43 or 0.44)),
-                math.min(210, cardW - sideMin - gap - 36),
-                math.max(210, cardW - sideMin - gap - 36)
+                math.floor(cardW * (cardW < 760 and 0.38 or 0.40)),
+                220,
+                math.max(220, cardW - sideMin - gap - 36)
             )
             local previewX = 18
             local bodyY = headerH + 8
@@ -5021,11 +5028,11 @@ function runtime.EnsureAppearanceStudio()
             studio.TargetHint.Size = UDim2.new(1, 0, 0, 16)
             studio.TargetHint.TextSize = 9
 
-            local listY = studio.TargetHint.Visible and 40 or 24
+            local listY = studio.TargetHint.Visible and 38 or 22
             local listH
-            if bodyH < 250 then listH = 40
-            elseif bodyH < 330 then listH = 48
-            else listH = math.min(76, math.floor(bodyH * 0.18)) end
+            if bodyH < 250 then listH = 36
+            elseif bodyH < 330 then listH = 42
+            else listH = math.min(60, math.floor(bodyH * 0.14)) end
             studio.AccessoryList.Position = UDim2.fromOffset(0, listY)
             studio.AccessoryList.Size = UDim2.new(1, 0, 0, listH)
 
@@ -5037,7 +5044,7 @@ function runtime.EnsureAppearanceStudio()
             local buttonH = 34
             local buttonsY = bodyH - buttonH
             local controlsY = controlTitleY + 21
-            local controlsH = math.max(38, buttonsY - controlsY - 7)
+            local controlsH = math.max(76, buttonsY - controlsY - 9)
             studio.ControlsScroll.Position = UDim2.fromOffset(0, controlsY)
             studio.ControlsScroll.Size = UDim2.new(1, 0, 0, controlsH)
 
@@ -5089,8 +5096,8 @@ function runtime.EnsureAppearanceStudio()
             studio.TargetHint.Size = UDim2.new(1, 0, 0, 15)
             studio.TargetHint.TextSize = 9
 
-            local listY = studio.TargetHint.Visible and 36 or 22
-            local listH = math.clamp(math.floor(sideH * 0.18), 38, 58)
+            local listY = studio.TargetHint.Visible and 34 or 20
+            local listH = math.clamp(math.floor(sideH * 0.14), 34, 48)
             studio.AccessoryList.Position = UDim2.fromOffset(0, listY)
             studio.AccessoryList.Size = UDim2.new(1, 0, 0, listH)
 
@@ -5102,7 +5109,7 @@ function runtime.EnsureAppearanceStudio()
             local buttonH = 32
             local buttonsY = sideH - buttonH
             local controlsY = controlTitleY + 19
-            local controlsH = math.max(34, buttonsY - controlsY - 6)
+            local controlsH = math.max(72, buttonsY - controlsY - 8)
             studio.ControlsScroll.Position = UDim2.fromOffset(0, controlsY)
             studio.ControlsScroll.Size = UDim2.new(1, 0, 0, controlsH)
 
@@ -5413,7 +5420,7 @@ function runtime.EnsureAppearanceStudio()
     local function makeStudioSlider(titleText, component, minValue, maxValue, stepValue, defaultValue)
         local row = Instance.new("Frame")
         row.Name = component .. "Slider"
-        row.Size = UDim2.new(1, -3, 0, 60)
+        row.Size = UDim2.new(1, -3, 0, 72)
         row.BackgroundColor3 = Color3.fromRGB(18, 18, 18)
         row.BorderSizePixel = 0
         row.ClipsDescendants = true
@@ -5428,8 +5435,8 @@ function runtime.EnsureAppearanceStudio()
 
         local titleLabel = Instance.new("TextLabel")
         titleLabel.BackgroundTransparency = 1
-        titleLabel.Position = UDim2.fromOffset(12, 5)
-        titleLabel.Size = UDim2.new(1, -100, 0, 22)
+        titleLabel.Position = UDim2.fromOffset(12, 6)
+        titleLabel.Size = UDim2.new(1, -104, 0, 22)
         titleLabel.Text = titleText
         titleLabel.TextColor3 = Color3.fromRGB(236, 236, 236)
         titleLabel.Font = Enum.Font.GothamMedium
@@ -5441,8 +5448,8 @@ function runtime.EnsureAppearanceStudio()
 
         local box = Instance.new("TextBox")
         box.AnchorPoint = Vector2.new(1, 0)
-        box.Size = UDim2.fromOffset(72, 24)
-        box.Position = UDim2.new(1, -8, 0, 5)
+        box.Size = UDim2.fromOffset(74, 24)
+        box.Position = UDim2.new(1, -10, 0, 5)
         box.BackgroundColor3 = Color3.fromRGB(9, 9, 9)
         box.BorderSizePixel = 0
         box.ClearTextOnFocus = false
@@ -5457,7 +5464,7 @@ function runtime.EnsureAppearanceStudio()
 
         local minus = Instance.new("TextButton")
         minus.Size = UDim2.fromOffset(28, 28)
-        minus.Position = UDim2.fromOffset(8, 29)
+        minus.Position = UDim2.fromOffset(10, 34)
         minus.BackgroundColor3 = Color3.fromRGB(27, 27, 27)
         minus.BorderSizePixel = 0
         minus.Text = "−"
@@ -5472,7 +5479,7 @@ function runtime.EnsureAppearanceStudio()
         local plus = Instance.new("TextButton")
         plus.AnchorPoint = Vector2.new(1, 0)
         plus.Size = UDim2.fromOffset(28, 28)
-        plus.Position = UDim2.new(1, -8, 0, 29)
+        plus.Position = UDim2.new(1, -10, 0, 34)
         plus.BackgroundColor3 = Color3.fromRGB(27, 27, 27)
         plus.BorderSizePixel = 0
         plus.Text = "+"
@@ -5486,8 +5493,8 @@ function runtime.EnsureAppearanceStudio()
 
         local track = Instance.new("Frame")
         track.Name = "Track"
-        track.Position = UDim2.fromOffset(46, 40)
-        track.Size = UDim2.new(1, -92, 0, 5)
+        track.Position = UDim2.fromOffset(48, 45)
+        track.Size = UDim2.new(1, -106, 0, 6)
         track.BackgroundColor3 = Color3.fromRGB(48, 48, 52)
         track.BorderSizePixel = 0
         track.ZIndex = 604
@@ -5522,8 +5529,8 @@ function runtime.EnsureAppearanceStudio()
         -- una línea de 5 px para deslizar.
         local sliderHit = Instance.new("TextButton")
         sliderHit.Name = "TouchTrack"
-        sliderHit.Position = UDim2.fromOffset(38, 28)
-        sliderHit.Size = UDim2.new(1, -76, 0, 31)
+        sliderHit.Position = UDim2.fromOffset(44, 36)
+        sliderHit.Size = UDim2.new(1, -100, 0, 20)
         sliderHit.BackgroundTransparency = 1
         sliderHit.Text = ""
         sliderHit.AutoButtonColor = false

@@ -776,7 +776,7 @@ function Nox:CreateWindow(options)
     local pages=new("Frame",{Name="Pages",BackgroundTransparency=1,Position=UDim2.fromOffset(0,34),Size=UDim2.new(1,0,1,-34)},content)
     local footer=label(root,"XEROHUB",8,C.Faint,{Position=UDim2.new(0,18,1,-24),Size=UDim2.new(.6,0,0,14),Font=Enum.Font.Code})
     local shortcut=label(root,"RSHIFT  /  MOSTRAR U OCULTAR",8,C.Faint,{Position=UDim2.new(.4,0,1,-24),Size=UDim2.new(.6,-18,0,14),TextXAlignment=Enum.TextXAlignment.Right,Font=Enum.Font.Code})
-    local openButton=button(launcherSurface,"",{Name="OpenXeroHub",Position=UDim2.new(.5,-77,0,0),Size=UDim2.fromOffset(154,40),BackgroundColor3=C.Window,ZIndex=20})
+    local openButton=button(launcherSurface,"",{Name="OpenXeroHub",Position=UDim2.new(.5,-77,0,16),Size=UDim2.fromOffset(154,40),BackgroundColor3=C.Window,ZIndex=20})
     round(openButton,12); local openStroke=stroke(openButton,Color3.fromRGB(66,66,66))
     local openIcon=mark(openButton,24); openIcon.Position=UDim2.fromOffset(8,8)
     local openLabel=label(openButton,"Abrir XeroHub",12,C.Text,{Position=UDim2.fromOffset(40,0),Size=UDim2.new(1,-47,1,0),Font=MEDIUM})
@@ -791,6 +791,32 @@ function Nox:CreateWindow(options)
     w._minHeight=math.max(260,tonumber(minSize.Y) or 320)
 
     local resizeHandles={}
+    local resizeVisuals={}
+
+    -- Guías visuales de resize: los hitboxes siguen siendo amplios e invisibles,
+    -- pero estas líneas blancas sutiles enseñan exactamente de dónde arrastrar.
+    local function addResizeVisual(name, position, anchor, size)
+        local grip = new("Frame", {
+            Name = name,
+            AnchorPoint = anchor,
+            Position = position,
+            Size = size,
+            BackgroundColor3 = C.Text,
+            BackgroundTransparency = 0.42,
+            BorderSizePixel = 0,
+            ZIndex = 39,
+            Visible = w.Resizable,
+        }, root)
+        round(grip, 2)
+        table.insert(resizeVisuals, grip)
+        return grip
+    end
+
+    addResizeVisual("ResizeGuideLeft", UDim2.fromScale(0, .5), Vector2.new(0, .5), UDim2.fromOffset(2, 44))
+    addResizeVisual("ResizeGuideRight", UDim2.fromScale(1, .5), Vector2.new(1, .5), UDim2.fromOffset(2, 44))
+    addResizeVisual("ResizeGuideTop", UDim2.fromScale(.5, 0), Vector2.new(.5, 0), UDim2.fromOffset(44, 2))
+    addResizeVisual("ResizeGuideBottom", UDim2.fromScale(.5, 1), Vector2.new(.5, 1), UDim2.fromOffset(44, 2))
+
     local function addResizeHandle(name,position,anchor,size,xFactor,yFactor,showGrip)
         local hit=button(root,"",{Name=name,AnchorPoint=anchor,Position=position,
             Size=size,BackgroundTransparency=1,ZIndex=40,Visible=w.Resizable})
@@ -1082,7 +1108,7 @@ function Nox:CreateWindow(options)
         end
         if not w._launcherMoved then
             local launcherWidth=openButton.Size.X.Offset
-            openButton.Position=UDim2.fromOffset(math.max(0,math.floor((bounds.X-launcherWidth)/2)),0)
+            openButton.Position=UDim2.fromOffset(math.max(0,math.floor((bounds.X-launcherWidth)/2)),16)
         end
 
         w:_drawer(false)
@@ -1175,6 +1201,7 @@ function Nox:CreateWindow(options)
     function w:SetResizable(value)
         self.Resizable=value~=false
         for _,info in ipairs(resizeHandles) do info.Hit.Visible=self.Resizable end
+        for _,grip in ipairs(resizeVisuals) do grip.Visible=self.Resizable end
         return self
     end
     function w:SetUIScale(value)

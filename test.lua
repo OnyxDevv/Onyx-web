@@ -466,7 +466,7 @@ else
 end
 
 local Window = WindUI:CreateWindow({
-    Title = "XeroHub / DUELS",
+    Title = "Xero | DUELS",
     Subtitle = "DUELS",
     Theme = "Xero",
     Author = "by Kev",
@@ -505,7 +505,7 @@ task.spawn(function()
         if success and response and response.StatusCode == 200 then
             local vivos = tonumber(response.Body)
             if vivos then
-                Window:SetTitle("XEROHUB / DUELS · " .. tostring(vivos) .. " activos")
+                Window:SetTitle("XERO | DUELS · " .. tostring(vivos) .. " activos")
             end
         end
         if runtime.Alive then task.wait(10) end
@@ -831,10 +831,16 @@ Tabs.Inicio:Paragraph({
         .. "\nCuenta: " .. tostring(player.AccountAge or 0) .. " días"
         .. "\nPlan: " .. tostring(accountPlan),
     Image = "rbxthumb://type=AvatarHeadShot&id=" .. tostring(player.UserId) .. "&w=150&h=150",
-    ImageSize = 40,
+    ImageSize = 64,
     CircleImage = true,
+    ImageAlign = "left",
+    ImageStrokeColor = Color3.fromRGB(244, 244, 244),
+    ImageStrokeThickness = 1,
+    Gothic = true,
+    DecorText = "PROFILE",
+    Color = Color3.fromRGB(11, 11, 14),
+    StrokeColor = Color3.fromRGB(44, 44, 50),
 })
-
 -- ==========================================
 -- CAMBIOS RECIENTES · INICIO
 -- ==========================================
@@ -880,13 +886,23 @@ Tabs.Creditos:Paragraph({
     Title = "Kev",
     Desc = "Creador de XeroHub\nTikTok: @kevzzx_",
     Image = XERO_CREDITS_PROFILE,
-    ImageSize = 52,
+    ImageSize = 72,
     CircleImage = true,
+    ImageAlign = "left",
+    ImageStrokeColor = Color3.fromRGB(244, 244, 244),
+    ImageStrokeThickness = 1,
+    Gothic = true,
+    DecorText = "KEV",
+    Color = Color3.fromRGB(11, 11, 14),
+    StrokeColor = Color3.fromRGB(44, 44, 50),
 })
-
 Tabs.Creditos:Paragraph({
     Title = "Proyecto",
-    Desc = "XeroHub UI minimalista y separada del script principal para actualizar el main con más facilidad.",
+    Desc = "XeroHub UI minimalista, compacta y separada del script principal para actualizar el main con más facilidad.",
+    Gothic = true,
+    DecorText = "XERO",
+    Color = Color3.fromRGB(11, 11, 14),
+    StrokeColor = Color3.fromRGB(44, 44, 50),
 })
 
 Tabs.Inicio:Section({ Title = "Juegos Soportados" })

@@ -1,5 +1,5 @@
 --[[
-    XeroHub UI / Obsidian 2.8 — profile polish + gothic cards
+    XeroHub UI / Obsidian 2.9 — polish + compact sliders + open-button ghost
     Creator: Kev
     Native Roblox interface. No WindUI runtime, icon downloads or render loops.
     Compatible with the control API used by the supplied DUELS hub.
@@ -12,7 +12,7 @@ local Input = game:GetService("UserInputService")
 local Workspace = game:GetService("Workspace")
 local RunService = game:GetService("RunService")
 local TextService = game:GetService("TextService")
-local Nox = { Version = "2.8.0", Brand = "XeroHub", Creator = "Kev", UIScale = 1 }
+local Nox = { Version = "2.9.0", Brand = "XeroHub", Creator = "Kev", UIScale = 1 }
 local C = {
     Window = Color3.fromRGB(9,9,9), Panel = Color3.fromRGB(14,14,14),
     Row = Color3.fromRGB(20,20,20), Field = Color3.fromRGB(11,11,11),
@@ -98,16 +98,13 @@ end
 local function mark(parent, size, color)
     local holder = new("Frame", {BackgroundTransparency=1, Size=UDim2.fromOffset(size,size)}, parent)
     local tone = color or C.Text
-    local ring = new("Frame", {BackgroundTransparency=1, AnchorPoint=Vector2.new(.5,.5),
-        Position=UDim2.fromScale(.5,.5), Size=UDim2.fromScale(.78,.78), Rotation=45}, holder)
-    round(ring, 4); stroke(ring, tone, 1.7)
-    local slashA = new("Frame", {AnchorPoint=Vector2.new(.5,.5),Position=UDim2.fromScale(.5,.5),
-        Size=UDim2.fromOffset(math.floor(size*0.46),2),Rotation=45,BackgroundColor3=tone}, holder)
-    local slashB = new("Frame", {AnchorPoint=Vector2.new(.5,.5),Position=UDim2.fromScale(.5,.5),
-        Size=UDim2.fromOffset(math.floor(size*0.46),2),Rotation=-45,BackgroundColor3=tone}, holder)
-    local core = new("Frame", {AnchorPoint=Vector2.new(.5,.5),Position=UDim2.fromScale(.5,.5),
-        Size=UDim2.fromOffset(math.max(3,math.floor(size*0.12)), math.max(3,math.floor(size*0.12))),BackgroundColor3=tone}, holder)
-    round(core, 3)
+    local shell = new("Frame", {BackgroundTransparency=1, AnchorPoint=Vector2.new(.5,.5),
+        Position=UDim2.fromScale(.5,.5), Size=UDim2.fromScale(.86,.86)}, holder)
+    round(shell, math.floor(size*0.28)); stroke(shell, tone, 1.4)
+    local leftTop = line(holder, math.floor(size*0.23), math.floor(size*0.24), math.floor(size*0.24), 2, 45, tone)
+    local leftBottom = line(holder, math.floor(size*0.23), math.floor(size*0.62), math.floor(size*0.24), 2, -45, tone)
+    local rightTop = line(holder, math.floor(size*0.53), math.floor(size*0.24), math.floor(size*0.24), 2, -45, tone)
+    local rightBottom = line(holder, math.floor(size*0.53), math.floor(size*0.62), math.floor(size*0.24), 2, 45, tone)
     return holder
 end
 local function icon(parent, kind)
@@ -178,11 +175,11 @@ function Control:_resize(width)
         y+=6+fieldHeight
     end
     if self.SliderArea then
-        self.SliderArea.Position=UDim2.fromOffset(px,y+4)
-        self.SliderArea.Size=UDim2.new(1,-px*2,0,20)
-        self.Limits.Position=UDim2.fromOffset(px,y+27)
-        self.Limits.Size=UDim2.new(1,-px*2,0,12)
-        y+=35
+        self.SliderArea.Position=UDim2.fromOffset(px,y+3)
+        self.SliderArea.Size=UDim2.new(1,-px*2,0,14)
+        self.Limits.Position=UDim2.fromOffset(px,y+19)
+        self.Limits.Size=UDim2.new(1,-px*2,0,10)
+        y+=26
     end
     if self.Rule then self.Rule.Position=UDim2.fromOffset(px,y+5); self.Rule.Size=UDim2.new(1,-px*2,0,1); y+=7 end
     local height=y+(section and 3 or py)
@@ -337,15 +334,13 @@ function Tab:Paragraph(options)
     end
     if o.Gothic then
         local decor=new("Frame",{Name="Decor",BackgroundTransparency=1,Size=UDim2.fromScale(1,1),ZIndex=0},c.ElementFrame)
-        local glow=new("Frame",{AnchorPoint=Vector2.new(1,.5),Position=UDim2.fromScale(1,.5),Size=UDim2.fromScale(.42,.95),
-            BackgroundColor3=Color3.fromRGB(28,28,32),BackgroundTransparency=.46,Rotation=-10,ZIndex=0},decor)
-        round(glow,22)
-        new("UIGradient",{Rotation=30,Transparency=NumberSequence.new({NumberSequenceKeypoint.new(0,.18),NumberSequenceKeypoint.new(1,1)})},glow)
-        local arch=new("Frame",{AnchorPoint=Vector2.new(1,.5),Position=UDim2.fromScale(1.02,.5),Size=UDim2.fromScale(.30,.80),BackgroundTransparency=1,ZIndex=0},decor)
-        round(arch,90); stroke(arch,Color3.fromRGB(80,80,88),1)
-        local bar=line(decor,16,0,1,400,0,Color3.fromRGB(46,46,50)); bar.BackgroundTransparency=.65; bar.ZIndex=0
-        local wm=label(decor,o.DecorText or "XERO",30,Color3.fromRGB(255,255,255),{AnchorPoint=Vector2.new(1,1),Position=UDim2.fromScale(.96,.96),
-            Size=UDim2.fromScale(.52,.32),Font=BOLD,TextTransparency=.94,TextXAlignment=Enum.TextXAlignment.Right,TextYAlignment=Enum.TextYAlignment.Bottom,ZIndex=0})
+        local glow=new("Frame",{AnchorPoint=Vector2.new(1,.5),Position=UDim2.fromScale(.98,.5),Size=UDim2.fromScale(.34,.92),
+            BackgroundColor3=Color3.fromRGB(26,26,32),BackgroundTransparency=.58,Rotation=-8,ZIndex=0},decor)
+        round(glow,20)
+        new("UIGradient",{Rotation=28,Transparency=NumberSequence.new({NumberSequenceKeypoint.new(0,.22),NumberSequenceKeypoint.new(1,1)})},glow)
+        local bar=line(decor,18,14,1,200,0,Color3.fromRGB(46,46,52)); bar.BackgroundTransparency=.72; bar.ZIndex=0
+        local wm=label(decor,o.DecorText or "XERO",26,Color3.fromRGB(255,255,255),{AnchorPoint=Vector2.new(1,1),Position=UDim2.fromScale(.965,.9),
+            Size=UDim2.fromScale(.44,.28),Font=BOLD,TextTransparency=.955,TextXAlignment=Enum.TextXAlignment.Right,TextYAlignment=Enum.TextYAlignment.Bottom,ZIndex=0})
         c.ElementFrame.BackgroundColor3=o.Color or Color3.fromRGB(11,11,14)
         c.RowStroke.Color=o.StrokeColor or Color3.fromRGB(42,42,48)
     end
@@ -427,16 +422,16 @@ function Tab:Slider(options)
     local decimals=0
     while decimals<6 and math.abs(step*10^decimals-math.floor(step*10^decimals+.5))>.000001 do decimals+=1 end
     c.Min,c.Max,c.Step=low,high,step
-    c.Reserve=58; c.HeadMinimum=28
-    local box=field(c.Head,""); box.Name="Value"; box.Size=UDim2.fromOffset(50,28)
-    box.Position=UDim2.new(1,-50,0,0); box.TextXAlignment=Enum.TextXAlignment.Center; box.BackgroundColor3=Color3.fromRGB(14,14,14)
+    c.Reserve=54; c.HeadMinimum=24
+    local box=field(c.Head,""); box.Name="Value"; box.Size=UDim2.fromOffset(46,24)
+    box.Position=UDim2.new(1,-46,0,0); box.TextXAlignment=Enum.TextXAlignment.Center; box.BackgroundColor3=Color3.fromRGB(14,14,14)
     local area=button(c.ElementFrame,"",{Name="SliderArea",BackgroundTransparency=1,
-        Size=UDim2.new(1,0,0,16),LayoutOrder=2})
+        Size=UDim2.new(1,0,0,12),LayoutOrder=2})
     local track=new("Frame",{Name="Track",Position=UDim2.new(0,6,.5,-1),Size=UDim2.new(1,-12,0,2),BackgroundColor3=Color3.fromRGB(38,38,38)},area)
     round(track,2)
     local fill=new("Frame",{Name="Fill",Size=UDim2.fromScale(0,1),BackgroundColor3=Color3.fromRGB(218,218,218)},track); round(fill,2)
     local thumb=new("Frame",{Name="Thumb",AnchorPoint=Vector2.new(.5,.5),Position=UDim2.fromScale(0,.5),
-        Size=UDim2.fromOffset(8,8),BackgroundColor3=Color3.fromRGB(245,245,245)},track); round(thumb,4); stroke(thumb,Color3.fromRGB(90,90,90),1)
+        Size=UDim2.fromOffset(7,7),BackgroundColor3=Color3.fromRGB(245,245,245)},track); round(thumb,4); stroke(thumb,Color3.fromRGB(90,90,90),1)
     local limits=new("Frame",{Name="Limits",BackgroundTransparency=1,Size=UDim2.new(1,0,0,8),LayoutOrder=3},c.ElementFrame)
     c.SliderArea=area; c.Limits=limits
     label(limits,tostring(low),8,C.Faint,{Size=UDim2.fromScale(.5,1),Font=Enum.Font.Code})
@@ -706,8 +701,8 @@ function Nox:CreateWindow(options)
     end
     local top=new("Frame",{Name="Topbar",BackgroundTransparency=1,Size=UDim2.new(1,0,0,58),ZIndex=5},root)
     local logo=mark(top,28); logo.Position=UDim2.fromOffset(16,12)
-    local brand=label(top,"XERO | DUELS",16,C.Text,{Position=UDim2.fromOffset(50,10),Size=UDim2.fromOffset(138,22),Font=BOLD})
-    local statusLabel=label(top,"-- activos",12,C.Text,{Position=UDim2.fromOffset(196,10),Size=UDim2.fromOffset(128,22),Font=BOLD})
+    local brand=label(top,"XERO | DUELS",16,C.Text,{Position=UDim2.fromOffset(50,10),Size=UDim2.fromOffset(132,22),Font=BOLD})
+    local statusLabel=label(top,"-- activos",13,C.Text,{Position=UDim2.fromOffset(186,10),Size=UDim2.fromOffset(110,22),Font=BOLD})
     local subtitle=label(top,"N O X  /  "..tostring(o.Subtitle or "DUELS"),8,C.Faint,{Position=UDim2.fromOffset(52,37),Size=UDim2.fromOffset(180,14)})
     local author=label(top,w.Author,11,C.Muted,{Position=UDim2.new(1,-248,0,27),Size=UDim2.fromOffset(104,20),TextXAlignment=Enum.TextXAlignment.Right})
     local controls=new("Frame",{BackgroundTransparency=1,Position=UDim2.new(1,-76,0,8),Size=UDim2.fromOffset(64,28)},top)
@@ -743,8 +738,8 @@ function Nox:CreateWindow(options)
     local footer=label(root,"XEROHUB",8,C.Faint,{Position=UDim2.new(0,18,1,-24),Size=UDim2.new(.6,0,0,14),Font=Enum.Font.Code})
     local shortcut=label(root,"RSHIFT  /  MOSTRAR U OCULTAR",8,C.Faint,{Position=UDim2.new(.4,0,1,-24),Size=UDim2.new(.6,-18,0,14),TextXAlignment=Enum.TextXAlignment.Right,Font=Enum.Font.Code})
     local openButton=button(launcherSurface,"",{Name="OpenXeroHub",Position=UDim2.new(0,18,.5,-20),Size=UDim2.fromOffset(154,40),BackgroundColor3=C.Window,ZIndex=20})
-    round(openButton,12); stroke(openButton,Color3.fromRGB(66,66,66))
-    mark(openButton,24).Position=UDim2.fromOffset(8,8)
+    round(openButton,12); local openStroke=stroke(openButton,Color3.fromRGB(66,66,66))
+    local openIcon=mark(openButton,24); openIcon.Position=UDim2.fromOffset(8,8)
     local openLabel=label(openButton,"Abrir XeroHub",12,C.Text,{Position=UDim2.fromOffset(40,0),Size=UDim2.new(1,-47,1,0),Font=MEDIUM})
     w.OpenButton=openButton; w.UIElements={Main=root,Title=brand,ActiveStatus=statusLabel,SideBar=sidebar,MainBar=content,Pages=pages,Search=searchBox,Topbar=top}
     local desired=o.Size or UDim2.fromOffset(680,430)
@@ -830,6 +825,23 @@ function Nox:CreateWindow(options)
         openButton.Position=UDim2.fromOffset(math.clamp(position.X.Scale*bounds.X+position.X.Offset,0,math.max(0,bounds.X-size.X)),
             math.clamp(position.Y.Scale*bounds.Y+position.Y.Offset,0,math.max(0,bounds.Y-size.Y)))
     end
+    function w:_applyOpenButtonState()
+        local ghosted=self._openButtonGhosted==true
+        local visibleWhenClosed=(self._openButtonEnabled~=false) or ghosted
+        local shouldShow=(not self.Opened) and visibleWhenClosed
+        openButton.Visible=shouldShow
+        openButton.Active=shouldShow
+        openButton.AutoButtonColor=shouldShow and (not ghosted)
+        openButton.BackgroundTransparency=ghosted and 1 or 0
+        openLabel.TextTransparency=ghosted and 1 or 0
+        if openStroke then openStroke.Transparency=ghosted and 1 or 0 end
+        if openIcon then
+            for _,d in ipairs(openIcon:GetDescendants()) do
+                if d:IsA("Frame") then d.BackgroundTransparency=ghosted and 1 or 0 end
+                if d:IsA("UIStroke") then d.Transparency=ghosted and 1 or 0 end
+            end
+        end
+    end
     local function fit(skipContentLayout)
         if w.Destroyed then return end
         local bounds=surface.AbsoluteSize
@@ -857,13 +869,13 @@ function Nox:CreateWindow(options)
         logo.Position=UDim2.fromOffset(tight and 10 or 14,tight and 8 or 10)
         brand.Text=(width<520) and "XERO" or "XERO | DUELS"
         brand.Position=UDim2.fromOffset(tight and 40 or 46,8)
-        brand.Size=UDim2.fromOffset((width<520) and 72 or 138,22)
+        brand.Size=UDim2.fromOffset((width<520) and 72 or 132,22)
         brand.TextSize=tight and 13 or 15
         brand.Visible=width>=350
-        statusLabel.Position=UDim2.fromOffset((width<520) and 106 or 192,tight and 7 or 7)
-        statusLabel.Size=UDim2.fromOffset((width<520) and 88 or 126,22)
-        statusLabel.TextSize=tight and 10 or 13
-        statusLabel.Visible=width>=430
+        statusLabel.Position=UDim2.fromOffset((width<520) and 106 or 172,tight and 7 or 7)
+        statusLabel.Size=UDim2.fromOffset((width<520) and 86 or 108,22)
+        statusLabel.TextSize=tight and 10 or 12
+        statusLabel.Visible=width>=410
         logo.Visible=true
         subtitle.Visible=false
         controls.Position=UDim2.new(1,-68,0,tight and 5 or 6)
@@ -997,11 +1009,17 @@ function Nox:CreateWindow(options)
         else
             self._openButtonEnabled=value~=false
         end
-        openButton.Visible=(self._openButtonEnabled~=false) and (not self.Opened)
+        self:_applyOpenButtonState()
+        return self
+    end
+    function w:SetOpenButtonGhosted(value)
+        self._openButtonGhosted=value==true
+        self:_applyOpenButtonState()
         return self
     end
     function w:EditOpenButton(config)
         if config.Enabled~=nil then self:SetOpenButtonVisible(config.Enabled) end
+        if config.Ghosted~=nil then self:SetOpenButtonGhosted(config.Ghosted) end
         if config.Title then openLabel.Text=plain(config.Title) end
         return self
     end
@@ -1011,14 +1029,14 @@ function Nox:CreateWindow(options)
     function w:Open()
         if self.Destroyed then return self end
         local changed=not self.Opened; self.Opened=true; root.Visible=true
-        openButton.Visible=false
+        self:_applyOpenButtonState()
         if changed then for _,callback in ipairs(self._onOpen) do invoke(callback) end end
         return self
     end
     function w:Close()
         if self.Destroyed then return self end
         local changed=self.Opened; self.Opened=false; root.Visible=false; self:_closePopup()
-        openButton.Visible=(self._openButtonEnabled~=false)
+        self:_applyOpenButtonState()
         if changed then for _,callback in ipairs(self._onClose) do invoke(callback) end end
         return self
     end

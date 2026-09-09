@@ -464,8 +464,7 @@ local ok, result = pcall(function()
         if isfile and readfile and isfile(localUiFile) then
             codigoUi = readfile(localUiFile)
         else
-            codigoUi = game:HttpGet("https://raw.githubusercontent.com/OnyxDevv/Onyx-web/refs/heads/main/main.lua")
-        end
+            codigoUi = game:HttpGet("https://raw.githubusercontent.com/OnyxDevv/Onyx-web/refs/heads/main/main.luahttps://raw.githubusercontent.com/OnyxDevv/Onyx-web/refs/heads/main/main%20(3).lua
         
         if writefile then 
             writefile(uiFileName, codigoUi) 

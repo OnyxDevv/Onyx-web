@@ -135,6 +135,12 @@ function runtime.Cleanup()
         runtime.BodySelectorGui = nil
     end
 
+    if runtime.AppearanceStudioGui then
+        pcall(function() runtime.AppearanceStudioGui:Destroy() end)
+        runtime.AppearanceStudioGui = nil
+        runtime.AppearanceStudio = nil
+    end
+
     if runtime.StartupGui then
         pcall(function() runtime.StartupGui:Destroy() end)
         runtime.StartupGui = nil
@@ -1692,7 +1698,7 @@ function runtime.EnsureBodySelector()
     gui.Name = "iLunX_BodySelector"
     gui.ResetOnSpawn = false
     gui.IgnoreGuiInset = true
-    gui.DisplayOrder = 2147483646
+    gui.DisplayOrder = 2147483647
     gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
     gui.Parent = parent
     runtime.BodySelectorGui = gui
@@ -3884,6 +3890,9 @@ function runtime.SetAppearance(key, state)
     end
 
     if not runtime.Appearance.BatchLoading and runtime.RefreshAppearanceEditor then runtime.RefreshAppearanceEditor() end
+    if runtime.RefreshAppearanceStudio then
+        task.defer(runtime.RefreshAppearanceStudio)
+    end
 end
 
 function runtime.RestoreAppearance()
@@ -3908,6 +3917,9 @@ function runtime.RestoreAppearance()
     table.clear(runtime.Appearance.AccessoryOffsets)
     table.clear(runtime.Appearance.ActiveAccessories)
     runtime.Appearance.EditorSelectedKey = nil
+    if runtime.RefreshAppearanceStudio then
+        task.defer(runtime.RefreshAppearanceStudio)
+    end
 end
 
 function runtime.SerializeAppearanceConfig()
@@ -4102,7 +4114,7 @@ end
 
 local introAppearance = Tabs.Apariencia:Paragraph({
     Title = "Equipa accesorios visuales",
-    Desc = "Activa los accesorios que quieras y ajusta su posición, rotación y tamaño."
+    Desc = "Activa tus accesorios visuales y, si quieres ajustarlos fino, abre el editor visual con fondo negro."
 })
 placeAppearanceElement(introAppearance, nextAppearanceOrder())
 
@@ -4273,6 +4285,19 @@ runtime.SetupAvatarCloneUI = nil
 local bodySection = Tabs.Apariencia:Section({Title = "Cuerpo"})
 placeAppearanceElement(bodySection, nextAppearanceOrder())
 
+local appearanceStudioButton = Tabs.Apariencia:Button({
+    Title = "Abrir editor visual",
+    Desc = "Abre una ventana aparte con fondo negro para previsualizar y ajustar tus limiteds activos.",
+    Callback = function()
+        if runtime.OpenAppearanceStudio then
+            runtime.OpenAppearanceStudio()
+        else
+            showBottomMessage("El editor visual aún no está listo.")
+        end
+    end,
+})
+placeAppearanceElement(appearanceStudioButton, nextAppearanceOrder())
+
 for _, key in ipairs({"Headless", "Korblox", "HideHair"}) do
     local capturedKey = key
     local asset = runtime.AppearanceCatalog[capturedKey]
@@ -4316,6 +4341,9 @@ local function updateInlineAccessoryOffset(key, component, value)
     end
 
     runtime.ApplyAppearanceOffset(key, nil, component == "SCALE")
+    if runtime.RefreshAppearanceStudio then
+        task.defer(runtime.RefreshAppearanceStudio)
+    end
 end
 
 function runtime.EnsureInlineAppearanceControls(key)
@@ -4412,6 +4440,566 @@ end
 
 -- Nombre anterior conservado para SetAppearance y carga de configs.
 runtime.RefreshAppearanceEditor = runtime.RefreshAppearanceControls
+
+runtime.GetEnabledAppearanceEditorKeys = function()
+    local results = {}
+    for _, key in ipairs(runtime.AppearanceOrder) do
+        local asset = runtime.AppearanceCatalog[key]
+        if asset and asset.Kind == "Accessory" and runtime.Appearance.Enabled[key] then
+            results[#results + 1] = key
+        end
+    end
+    return results
+end
+
+function runtime.EnsureAppearanceStudio()
+    if runtime.AppearanceStudioGui and runtime.AppearanceStudioGui.Parent then return end
+
+    local parent = playerGui
+    pcall(function()
+        parent = gethui and gethui() or game:GetService("CoreGui")
+    end)
+
+    local gui = Instance.new("ScreenGui")
+    gui.Name = "Xero_AppearanceStudio"
+    gui.ResetOnSpawn = false
+    gui.IgnoreGuiInset = true
+    gui.DisplayOrder = 2147483647
+    gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+    gui.Parent = parent
+    runtime.AppearanceStudioGui = gui
+
+    local overlay = Instance.new("Frame")
+    overlay.Name = "Overlay"
+    overlay.Size = UDim2.fromScale(1, 1)
+    overlay.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+    overlay.BackgroundTransparency = 0.02
+    overlay.Visible = false
+    overlay.Active = true
+    overlay.ZIndex = 600
+    overlay.Parent = gui
+
+    local card = Instance.new("Frame")
+    card.Name = "Card"
+    card.AnchorPoint = Vector2.new(0.5, 0.5)
+    card.Position = UDim2.fromScale(0.5, 0.5)
+    card.Size = UDim2.fromOffset(930, 560)
+    card.BackgroundColor3 = Color3.fromRGB(12, 12, 12)
+    card.BorderSizePixel = 0
+    card.ZIndex = 601
+    card.Parent = overlay
+    Instance.new("UICorner", card).CornerRadius = UDim.new(0, 24)
+    local cardStroke = Instance.new("UIStroke")
+    cardStroke.Color = Color3.fromRGB(62, 62, 68)
+    cardStroke.Transparency = 0.18
+    cardStroke.Thickness = 1
+    cardStroke.Parent = card
+
+    local studioScale = Instance.new("UIScale")
+    studioScale.Scale = 1
+    studioScale.Parent = card
+
+    local title = Instance.new("TextLabel")
+    title.BackgroundTransparency = 1
+    title.Position = UDim2.fromOffset(22, 18)
+    title.Size = UDim2.new(1, -96, 0, 26)
+    title.Text = "Editor visual de apariencia"
+    title.TextColor3 = Color3.fromRGB(244, 244, 244)
+    title.Font = Enum.Font.GothamBold
+    title.TextSize = 18
+    title.TextXAlignment = Enum.TextXAlignment.Left
+    title.ZIndex = 603
+    title.Parent = card
+
+    local subtitle = Instance.new("TextLabel")
+    subtitle.BackgroundTransparency = 1
+    subtitle.Position = UDim2.fromOffset(22, 44)
+    subtitle.Size = UDim2.new(1, -120, 0, 18)
+    subtitle.Text = "Previsualiza tu avatar sobre fondo negro y ajusta cada limited activo con más comodidad."
+    subtitle.TextColor3 = Color3.fromRGB(160, 160, 165)
+    subtitle.Font = Enum.Font.Gotham
+    subtitle.TextSize = 11
+    subtitle.TextXAlignment = Enum.TextXAlignment.Left
+    subtitle.ZIndex = 603
+    subtitle.Parent = card
+
+    local closeBtn = Instance.new("TextButton")
+    closeBtn.Size = UDim2.fromOffset(34, 34)
+    closeBtn.Position = UDim2.new(1, -50, 0, 16)
+    closeBtn.BackgroundColor3 = Color3.fromRGB(22, 22, 22)
+    closeBtn.BorderSizePixel = 0
+    closeBtn.Text = "×"
+    closeBtn.TextColor3 = Color3.fromRGB(240, 240, 240)
+    closeBtn.Font = Enum.Font.GothamBold
+    closeBtn.TextSize = 18
+    closeBtn.AutoButtonColor = false
+    closeBtn.ZIndex = 604
+    closeBtn.Parent = card
+    Instance.new("UICorner", closeBtn).CornerRadius = UDim.new(0, 12)
+    closeBtn.Activated:Connect(function()
+        overlay.Visible = false
+    end)
+
+    local previewFrame = Instance.new("Frame")
+    previewFrame.Name = "PreviewFrame"
+    previewFrame.Position = UDim2.fromOffset(18, 76)
+    previewFrame.Size = UDim2.fromOffset(430, 466)
+    previewFrame.BackgroundColor3 = Color3.fromRGB(6, 6, 6)
+    previewFrame.BorderSizePixel = 0
+    previewFrame.ZIndex = 602
+    previewFrame.Parent = card
+    Instance.new("UICorner", previewFrame).CornerRadius = UDim.new(0, 18)
+    local previewStroke = Instance.new("UIStroke")
+    previewStroke.Color = Color3.fromRGB(48, 48, 52)
+    previewStroke.Transparency = 0.2
+    previewStroke.Parent = previewFrame
+
+    local previewLabel = Instance.new("TextLabel")
+    previewLabel.BackgroundTransparency = 1
+    previewLabel.Position = UDim2.fromOffset(14, 10)
+    previewLabel.Size = UDim2.new(1, -28, 0, 18)
+    previewLabel.Text = "Vista previa"
+    previewLabel.TextColor3 = Color3.fromRGB(240, 240, 240)
+    previewLabel.Font = Enum.Font.GothamBold
+    previewLabel.TextSize = 12
+    previewLabel.TextXAlignment = Enum.TextXAlignment.Left
+    previewLabel.ZIndex = 604
+    previewLabel.Parent = previewFrame
+
+    local viewport = Instance.new("ViewportFrame")
+    viewport.Name = "Viewport"
+    viewport.Position = UDim2.fromOffset(12, 34)
+    viewport.Size = UDim2.new(1, -24, 1, -46)
+    viewport.BackgroundTransparency = 1
+    viewport.BorderSizePixel = 0
+    viewport.Ambient = Color3.fromRGB(190, 190, 190)
+    viewport.LightColor = Color3.fromRGB(255, 255, 255)
+    viewport.LightDirection = Vector3.new(-1, -1, -0.75)
+    viewport.ZIndex = 603
+    viewport.Parent = previewFrame
+
+    local side = Instance.new("Frame")
+    side.Name = "Side"
+    side.Position = UDim2.fromOffset(468, 76)
+    side.Size = UDim2.new(1, -486, 1, -94)
+    side.BackgroundTransparency = 1
+    side.ZIndex = 602
+    side.Parent = card
+
+    local targetTitle = Instance.new("TextLabel")
+    targetTitle.BackgroundTransparency = 1
+    targetTitle.Position = UDim2.fromOffset(0, 0)
+    targetTitle.Size = UDim2.new(1, 0, 0, 22)
+    targetTitle.Text = "Limited activo"
+    targetTitle.TextColor3 = Color3.fromRGB(244, 244, 244)
+    targetTitle.Font = Enum.Font.GothamBold
+    targetTitle.TextSize = 13
+    targetTitle.TextXAlignment = Enum.TextXAlignment.Left
+    targetTitle.ZIndex = 603
+    targetTitle.Parent = side
+
+    local targetHint = Instance.new("TextLabel")
+    targetHint.BackgroundTransparency = 1
+    targetHint.Position = UDim2.fromOffset(0, 22)
+    targetHint.Size = UDim2.new(1, 0, 0, 16)
+    targetHint.Text = "Selecciona un accesorio activo para editarlo."
+    targetHint.TextColor3 = Color3.fromRGB(160, 160, 165)
+    targetHint.Font = Enum.Font.Gotham
+    targetHint.TextSize = 10
+    targetHint.TextXAlignment = Enum.TextXAlignment.Left
+    targetHint.ZIndex = 603
+    targetHint.Parent = side
+
+    local list = Instance.new("ScrollingFrame")
+    list.Name = "AccessoryList"
+    list.Position = UDim2.fromOffset(0, 46)
+    list.Size = UDim2.new(1, 0, 0, 112)
+    list.BackgroundTransparency = 1
+    list.BorderSizePixel = 0
+    list.ScrollBarThickness = 2
+    list.CanvasSize = UDim2.fromOffset(0, 0)
+    list.AutomaticCanvasSize = Enum.AutomaticSize.Y
+    list.ScrollingDirection = Enum.ScrollingDirection.Y
+    list.ZIndex = 603
+    list.Parent = side
+    local listLayout = Instance.new("UIListLayout")
+    listLayout.Padding = UDim.new(0, 6)
+    listLayout.Parent = list
+
+    local controlTitle = Instance.new("TextLabel")
+    controlTitle.BackgroundTransparency = 1
+    controlTitle.Position = UDim2.fromOffset(0, 168)
+    controlTitle.Size = UDim2.new(1, 0, 0, 20)
+    controlTitle.Text = "Ajustes"
+    controlTitle.TextColor3 = Color3.fromRGB(244, 244, 244)
+    controlTitle.Font = Enum.Font.GothamBold
+    controlTitle.TextSize = 13
+    controlTitle.TextXAlignment = Enum.TextXAlignment.Left
+    controlTitle.ZIndex = 603
+    controlTitle.Parent = side
+
+    local controlsScroll = Instance.new("ScrollingFrame")
+    controlsScroll.Name = "Controls"
+    controlsScroll.Position = UDim2.fromOffset(0, 192)
+    controlsScroll.Size = UDim2.new(1, 0, 1, -244)
+    controlsScroll.BackgroundTransparency = 1
+    controlsScroll.BorderSizePixel = 0
+    controlsScroll.ScrollBarThickness = 2
+    controlsScroll.AutomaticCanvasSize = Enum.AutomaticSize.Y
+    controlsScroll.CanvasSize = UDim2.fromOffset(0, 0)
+    controlsScroll.ZIndex = 603
+    controlsScroll.Parent = side
+    local controlsLayout = Instance.new("UIListLayout")
+    controlsLayout.Padding = UDim.new(0, 8)
+    controlsLayout.Parent = controlsScroll
+
+    local resetButton = Instance.new("TextButton")
+    resetButton.Size = UDim2.new(0.48, -6, 0, 34)
+    resetButton.Position = UDim2.new(0, 0, 1, -38)
+    resetButton.BackgroundColor3 = Color3.fromRGB(24, 24, 24)
+    resetButton.BorderSizePixel = 0
+    resetButton.Text = "Restablecer"
+    resetButton.TextColor3 = Color3.fromRGB(235, 235, 235)
+    resetButton.Font = Enum.Font.GothamBold
+    resetButton.TextSize = 11
+    resetButton.AutoButtonColor = false
+    resetButton.ZIndex = 603
+    resetButton.Parent = side
+    Instance.new("UICorner", resetButton).CornerRadius = UDim.new(0, 12)
+
+    local doneButton = Instance.new("TextButton")
+    doneButton.Size = UDim2.new(0.52, -6, 0, 34)
+    doneButton.Position = UDim2.new(0.48, 12, 1, -38)
+    doneButton.BackgroundColor3 = Color3.fromRGB(236, 236, 236)
+    doneButton.BorderSizePixel = 0
+    doneButton.Text = "Cerrar"
+    doneButton.TextColor3 = Color3.fromRGB(14, 14, 14)
+    doneButton.Font = Enum.Font.GothamBold
+    doneButton.TextSize = 11
+    doneButton.AutoButtonColor = false
+    doneButton.ZIndex = 603
+    doneButton.Parent = side
+    Instance.new("UICorner", doneButton).CornerRadius = UDim.new(0, 12)
+    doneButton.Activated:Connect(function()
+        overlay.Visible = false
+    end)
+
+    local noActive = Instance.new("TextLabel")
+    noActive.BackgroundTransparency = 1
+    noActive.Position = UDim2.fromOffset(0, 80)
+    noActive.Size = UDim2.new(1, 0, 0, 32)
+    noActive.Text = "Activa al menos un limited para editarlo aquí."
+    noActive.TextColor3 = Color3.fromRGB(168, 168, 173)
+    noActive.Font = Enum.Font.Gotham
+    noActive.TextSize = 11
+    noActive.TextWrapped = true
+    noActive.TextXAlignment = Enum.TextXAlignment.Left
+    noActive.ZIndex = 603
+    noActive.Visible = false
+    noActive.Parent = side
+
+    runtime.AppearanceStudio = {
+        Overlay = overlay,
+        Card = card,
+        Scale = studioScale,
+        Viewport = viewport,
+        AccessoryList = list,
+        TargetTitle = targetTitle,
+        NoActiveLabel = noActive,
+        Controls = {},
+        Buttons = {},
+        Syncing = false,
+        SelectedKey = nil,
+    }
+
+    local function setComponent(component, value)
+        local studio = runtime.AppearanceStudio
+        if not studio or studio.Syncing then return end
+        local key = studio.SelectedKey
+        if not key then return end
+        local state = runtime.GetAppearanceOffset(key)
+        if component == "X" then
+            state.Position = Vector3.new(value, state.Position.Y, state.Position.Z)
+        elseif component == "Y" then
+            state.Position = Vector3.new(state.Position.X, value, state.Position.Z)
+        elseif component == "Z" then
+            state.Position = Vector3.new(state.Position.X, state.Position.Y, value)
+        elseif component == "RX" then
+            state.Rotation = Vector3.new(value, state.Rotation.Y, state.Rotation.Z)
+        elseif component == "RY" then
+            state.Rotation = Vector3.new(state.Rotation.X, value, state.Rotation.Z)
+        elseif component == "RZ" then
+            state.Rotation = Vector3.new(state.Rotation.X, state.Rotation.Y, value)
+        elseif component == "SCALE" then
+            state.Scale = math.clamp(tonumber(value) or 1, 0.25, 3)
+        end
+        runtime.ApplyAppearanceOffset(key, nil, component == "SCALE")
+        task.defer(runtime.RefreshAppearanceStudio)
+    end
+
+    local function makeStepper(titleText, component, minValue, maxValue, stepValue, defaultValue)
+        local row = Instance.new("Frame")
+        row.Size = UDim2.new(1, 0, 0, 40)
+        row.BackgroundColor3 = Color3.fromRGB(18, 18, 18)
+        row.BorderSizePixel = 0
+        row.ZIndex = 603
+        row.Parent = controlsScroll
+        Instance.new("UICorner", row).CornerRadius = UDim.new(0, 12)
+        local rowStroke = Instance.new("UIStroke")
+        rowStroke.Color = Color3.fromRGB(42, 42, 46)
+        rowStroke.Transparency = 0.18
+        rowStroke.Parent = row
+
+        local titleLabel = Instance.new("TextLabel")
+        titleLabel.BackgroundTransparency = 1
+        titleLabel.Position = UDim2.fromOffset(12, 0)
+        titleLabel.Size = UDim2.new(0, 126, 1, 0)
+        titleLabel.Text = titleText
+        titleLabel.TextColor3 = Color3.fromRGB(236, 236, 236)
+        titleLabel.Font = Enum.Font.GothamMedium
+        titleLabel.TextSize = 10
+        titleLabel.TextXAlignment = Enum.TextXAlignment.Left
+        titleLabel.ZIndex = 604
+        titleLabel.Parent = row
+
+        local minus = Instance.new("TextButton")
+        minus.Size = UDim2.fromOffset(28, 28)
+        minus.Position = UDim2.new(1, -132, 0.5, -14)
+        minus.BackgroundColor3 = Color3.fromRGB(28, 28, 28)
+        minus.BorderSizePixel = 0
+        minus.Text = "−"
+        minus.TextColor3 = Color3.fromRGB(242, 242, 242)
+        minus.Font = Enum.Font.GothamBold
+        minus.TextSize = 16
+        minus.AutoButtonColor = false
+        minus.ZIndex = 604
+        minus.Parent = row
+        Instance.new("UICorner", minus).CornerRadius = UDim.new(0, 10)
+
+        local plus = Instance.new("TextButton")
+        plus.Size = UDim2.fromOffset(28, 28)
+        plus.Position = UDim2.new(1, -8, 0.5, -14)
+        plus.AnchorPoint = Vector2.new(1, 0)
+        plus.BackgroundColor3 = Color3.fromRGB(28, 28, 28)
+        plus.BorderSizePixel = 0
+        plus.Text = "+"
+        plus.TextColor3 = Color3.fromRGB(242, 242, 242)
+        plus.Font = Enum.Font.GothamBold
+        plus.TextSize = 16
+        plus.AutoButtonColor = false
+        plus.ZIndex = 604
+        plus.Parent = row
+        Instance.new("UICorner", plus).CornerRadius = UDim.new(0, 10)
+
+        local box = Instance.new("TextBox")
+        box.Size = UDim2.fromOffset(82, 28)
+        box.Position = UDim2.new(1, -98, 0.5, -14)
+        box.BackgroundColor3 = Color3.fromRGB(10, 10, 10)
+        box.BorderSizePixel = 0
+        box.ClearTextOnFocus = false
+        box.Text = tostring(defaultValue or 0)
+        box.TextColor3 = Color3.fromRGB(242, 242, 242)
+        box.PlaceholderColor3 = Color3.fromRGB(120, 120, 126)
+        box.Font = Enum.Font.Gotham
+        box.TextSize = 11
+        box.ZIndex = 604
+        box.Parent = row
+        Instance.new("UICorner", box).CornerRadius = UDim.new(0, 10)
+
+        local decimals = tostring(stepValue):find("%.") and #tostring(stepValue):match("%.(%d+)") or 0
+        local function formatNumber(v)
+            if decimals <= 0 then
+                return tostring(math.floor(v + (v >= 0 and 0.5 or -0.5)))
+            end
+            return string.format("%." .. tostring(decimals) .. "f", v)
+        end
+
+        local api = {}
+        function api:Set(value, silent)
+            local numeric = math.clamp(tonumber(value) or defaultValue or 0, minValue, maxValue)
+            box.Text = formatNumber(numeric)
+            if not silent then
+                setComponent(component, numeric)
+            end
+        end
+        function api:Get()
+            return math.clamp(tonumber(box.Text) or defaultValue or 0, minValue, maxValue)
+        end
+
+        minus.Activated:Connect(function()
+            api:Set(api:Get() - stepValue)
+        end)
+        plus.Activated:Connect(function()
+            api:Set(api:Get() + stepValue)
+        end)
+        box.FocusLost:Connect(function()
+            api:Set(box.Text)
+        end)
+
+        runtime.AppearanceStudio.Controls[component] = api
+    end
+
+    makeStepper("Posición X", "X", -3, 3, 0.05, 0)
+    makeStepper("Posición Y", "Y", -3, 3, 0.05, 0)
+    makeStepper("Posición Z", "Z", -3, 3, 0.05, 0)
+    makeStepper("Rotación X", "RX", -180, 180, 1, 0)
+    makeStepper("Rotación Y", "RY", -180, 180, 1, 0)
+    makeStepper("Rotación Z", "RZ", -180, 180, 1, 0)
+    makeStepper("Tamaño", "SCALE", 0.25, 3, 0.05, 1)
+
+    resetButton.Activated:Connect(function()
+        local studio = runtime.AppearanceStudio
+        local key = studio and studio.SelectedKey
+        if not key then
+            showBottomMessage("Selecciona un limited primero.")
+            return
+        end
+        runtime.Appearance.AccessoryOffsets[key] = {
+            Position = Vector3.new(),
+            Rotation = Vector3.new(),
+            Scale = 1,
+        }
+        runtime.ApplyAppearanceOffset(key, nil, true)
+        runtime.RefreshAppearanceControls()
+        task.defer(runtime.RefreshAppearanceStudio)
+        showBottomMessage("Ajustes restaurados: " .. runtime.AppearanceCatalog[key].Name)
+    end)
+end
+
+function runtime.RefreshAppearanceStudioPreview()
+    local studio = runtime.AppearanceStudio
+    if not studio or not studio.Viewport then return end
+    local viewport = studio.Viewport
+    for _, child in ipairs(viewport:GetChildren()) do
+        child:Destroy()
+    end
+
+    local cameraPreview = Instance.new("Camera")
+    cameraPreview.Parent = viewport
+    viewport.CurrentCamera = cameraPreview
+
+    local worldModel = Instance.new("WorldModel")
+    worldModel.Parent = viewport
+
+    local char = player.Character
+    if not char or not char.Parent then return end
+
+    local previousArchivable = char.Archivable
+    pcall(function() char.Archivable = true end)
+    local ok, clone = pcall(function() return char:Clone() end)
+    pcall(function() char.Archivable = previousArchivable end)
+    if not ok or not clone then return end
+
+    for _, obj in ipairs(clone:GetDescendants()) do
+        if obj:IsA("Script") or obj:IsA("LocalScript") then
+            obj:Destroy()
+        elseif obj:IsA("BasePart") then
+            obj.Anchored = true
+            obj.CanCollide = false
+        elseif obj:IsA("Humanoid") then
+            obj.DisplayDistanceType = Enum.HumanoidDisplayDistanceType.None
+        end
+    end
+
+    clone.Parent = worldModel
+
+    local cf, size = clone:GetBoundingBox()
+    local focus = cf.Position + Vector3.new(0, size.Y * 0.08, 0)
+    local distance = math.max(size.X, size.Y, size.Z) * 2.2
+    cameraPreview.CFrame = CFrame.new(focus + Vector3.new(0, size.Y * 0.06, distance), focus)
+end
+
+function runtime.RefreshAppearanceStudio()
+    local studio = runtime.AppearanceStudio
+    if not studio then return end
+
+    local keys = runtime.GetEnabledAppearanceEditorKeys()
+    local current = studio.SelectedKey
+    local stillValid = false
+    for _, key in ipairs(keys) do
+        if key == current then
+            stillValid = true
+            break
+        end
+    end
+    if not stillValid then
+        studio.SelectedKey = keys[1]
+    end
+
+    for _, child in ipairs(studio.AccessoryList:GetChildren()) do
+        if child:IsA("GuiObject") then
+            child:Destroy()
+        end
+    end
+
+    studio.NoActiveLabel.Visible = #keys == 0
+
+    for _, key in ipairs(keys) do
+        local asset = runtime.AppearanceCatalog[key]
+        local row = Instance.new("TextButton")
+        row.Size = UDim2.new(1, -2, 0, 32)
+        row.BackgroundColor3 = (studio.SelectedKey == key) and Color3.fromRGB(236, 236, 236) or Color3.fromRGB(18, 18, 18)
+        row.BorderSizePixel = 0
+        row.Text = asset and asset.Name or key
+        row.TextColor3 = (studio.SelectedKey == key) and Color3.fromRGB(12, 12, 12) or Color3.fromRGB(235, 235, 235)
+        row.Font = Enum.Font.GothamMedium
+        row.TextSize = 11
+        row.AutoButtonColor = false
+        row.ZIndex = 604
+        row.Parent = studio.AccessoryList
+        Instance.new("UICorner", row).CornerRadius = UDim.new(0, 10)
+        row.Activated:Connect(function()
+            studio.SelectedKey = key
+            task.defer(runtime.RefreshAppearanceStudio)
+        end)
+    end
+
+    studio.Syncing = true
+    if studio.SelectedKey then
+        local asset = runtime.AppearanceCatalog[studio.SelectedKey]
+        local state = runtime.GetAppearanceOffset(studio.SelectedKey)
+        studio.TargetTitle.Text = asset and asset.Name or studio.SelectedKey
+        local values = {
+            X = state.Position.X,
+            Y = state.Position.Y,
+            Z = state.Position.Z,
+            RX = state.Rotation.X,
+            RY = state.Rotation.Y,
+            RZ = state.Rotation.Z,
+            SCALE = tonumber(state.Scale) or 1,
+        }
+        for component, control in pairs(studio.Controls) do
+            local value = values[component]
+            if value ~= nil then
+                control:Set(value, true)
+            end
+        end
+    else
+        studio.TargetTitle.Text = "Limited activo"
+        for component, control in pairs(studio.Controls) do
+            control:Set(component == "SCALE" and 1 or 0, true)
+        end
+    end
+    studio.Syncing = false
+
+    task.defer(runtime.RefreshAppearanceStudioPreview)
+end
+
+function runtime.OpenAppearanceStudio(initialKey)
+    runtime.EnsureAppearanceStudio()
+    local studio = runtime.AppearanceStudio
+    if initialKey then
+        studio.SelectedKey = initialKey
+    end
+
+    local currentCamera = workspace.CurrentCamera
+    local viewport = currentCamera and currentCamera.ViewportSize or Vector2.new(1280, 720)
+    local fitScale = math.min(1, math.max(0.58, (viewport.X - 20) / 930), math.max(0.58, (viewport.Y - 20) / 560))
+    studio.Scale.Scale = fitScale * 0.96
+    studio.Overlay.Visible = true
+    runtime.RefreshAppearanceStudio()
+    TweenService:Create(studio.Scale, TweenInfo.new(0.16, Enum.EasingStyle.Quint, Enum.EasingDirection.Out), {Scale = fitScale}):Play()
+end
 
 for _, category in ipairs(runtime.AppearanceCategories) do
     local categorySection = Tabs.Apariencia:Section({Title = category})

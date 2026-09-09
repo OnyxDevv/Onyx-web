@@ -4056,7 +4056,6 @@ TabBackgroundActive=Color3.fromHex"#FFFFFF", TabBackgroundActiveTransparency=0.9
 TabText=Color3.fromHex"#E7E7EA", TabTextTransparency=0.42, TabTextTransparencyActive=0,
 TabIcon=ilunxSilver, TabIconTransparency=0.52, TabIconTransparencyActive=0.02,
 TabBorder=Color3.fromHex"#D9D9DE", TabBorderTransparency=0.96, TabBorderTransparencyActive=0.80,
-TabRailTransparency=1, TabRailTransparencyActive=0.10,
 ElementBackground=ilunxSurface, ElementBackgroundTransparency=0.10, ElementBackgroundHover=ilunxHover,
 ElementTitle=Color3.fromHex"#F2F2F4", ElementDesc=Color3.fromHex"#A4A4AA", ElementIcon=ilunxSilver,
 SectionBox=Color3.fromHex"#CFCFD4", SectionBoxTransparency=0.94, SectionBoxBorder=Color3.fromHex"#B7B7BC", SectionBoxBorderTransparency=0.78, SectionBoxBackground=Color3.fromHex"#0D0D0F", SectionBoxBackgroundTransparency=0.02,
@@ -11797,10 +11796,6 @@ Name="Outline",
 
 
 }),
-ak.NewRoundFrame(99,"Squircle",{
-Size=UDim2.new(0,2,0,16), Position=UDim2.new(0,2,0.5,0), AnchorPoint=Vector2.new(0,0.5),
-ThemeTag={ImageColor3="TabBorder"}, ImageTransparency=1, Name="ActiveRail",
-}),
 ak.NewRoundFrame(ar.UICorner,"Squircle",{
 Size=UDim2.new(1,0,0,0),
 AutomaticSize="Y",
@@ -11961,10 +11956,9 @@ HorizontalAlignment="Center",
 
 
 
-ar.UIElements.ContainerFrameCanvas=al("CanvasGroup",{
+ar.UIElements.ContainerFrameCanvas=al("Frame",{
 Size=UDim2.new(1,0,1,0),
 BackgroundTransparency=1,
-GroupTransparency=1,
 Visible=false,
 Parent=Window.UIElements.MainBar,
 ZIndex=5,
@@ -12076,19 +12070,34 @@ end)
 end
 
 ak.AddSignal(ar.UIElements.Main.MouseEnter,function()
-if not ar.Locked and not ar.Selected then
-ak.SetThemeTag(ar.UIElements.Main.Frame,{ImageTransparency="TabBackgroundHoverTransparency",ImageColor3="TabBackgroundHover"},0.10)
+if not ar.Locked then
+ak.SetThemeTag(ar.UIElements.Main.Frame,{
+ImageTransparency="TabBackgroundHoverTransparency",
+ImageColor3="TabBackgroundHover",
+},0.1)
 end
 end)
 ak.AddSignal(ar.UIElements.Main.InputEnded,function()
 if ar.Desc then
 az=false
-if ax then task.cancel(ax) ax=nil end
-if ay then ay:Disconnect() ay=nil end
-if aw then aw:Close() aw=nil end
+if ax then
+task.cancel(ax)
+ax=nil
 end
+if ay then
+ay:Disconnect()
+ay=nil
+end
+if aw then
+aw:Close()
+aw=nil
+end
+end
+
 if not ar.Locked then
-ak.SetThemeTag(ar.UIElements.Main.Frame,{ImageColor3="TabBackground",ImageTransparency=1},0.10)
+ak.SetThemeTag(ar.UIElements.Main.Frame,{
+ImageTransparency="TabBorderTransparency",
+},0.1)
 end
 end)
 
@@ -12250,36 +12259,66 @@ ao.OnChangeFunc=aq
 end
 
 function ao.SelectTab(ap,aq)
-local target=ao.Tabs[aq]
-if not target or target.Locked then return end
-if ao.SelectedTab==aq and target.Selected then return end
+if not ao.Tabs[aq].Locked then
 ao.SelectedTab=aq
 
-for _,tab in next,ao.Tabs do
-if not tab.Locked then
-local active=(tab.Index==aq)
-tab.Selected=active
-ak.SetThemeTag(tab.UIElements.Main,{ImageColor3=active and "TabBackgroundActive" or "TabBackground",ImageTransparency=active and "TabBackgroundActiveTransparency" or 1},0.12)
-if tab.Border then ak.SetThemeTag(tab.UIElements.Main.Outline,{ImageTransparency=active and "TabBorderTransparencyActive" or "TabBorderTransparency"},0.12) end
-local rail=tab.UIElements.Main:FindFirstChild("ActiveRail")
-if rail then ak.SetThemeTag(rail,{ImageTransparency=active and "TabRailTransparencyActive" or "TabRailTransparency"},0.12) end
-ak.SetThemeTag(tab.UIElements.Main.Frame,{ImageColor3="TabBackground",ImageTransparency=1},0.10)
-ak.SetThemeTag(tab.UIElements.Main.Frame.TextLabel,{TextTransparency=active and "TabTextTransparencyActive" or "TabTextTransparency"},0.12)
-if tab.UIElements.Icon and not tab.IconColor then ak.SetThemeTag(tab.UIElements.Icon.ImageLabel,{ImageTransparency=active and "TabIconTransparencyActive" or "TabIconTransparency"},0.12) end
+for ar,as in next,ao.Tabs do
+if not as.Locked then
+ak.SetThemeTag(as.UIElements.Main,{
+ImageTransparency="TabBorderTransparency",
+},0.15)
+if as.Border then
+ak.SetThemeTag(as.UIElements.Main.Outline,{
+ImageTransparency="TabBorderTransparency",
+},0.15)
+end
+ak.SetThemeTag(as.UIElements.Main.Frame.TextLabel,{
+TextTransparency="TabTextTransparency",
+},0.15)
+if as.UIElements.Icon and not as.IconColor then
+ak.SetThemeTag(as.UIElements.Icon.ImageLabel,{
+ImageTransparency="TabIconTransparency",
+},0.15)
+end
+as.Selected=false
 end
 end
+ak.SetThemeTag(ao.Tabs[aq].UIElements.Main,{
+ImageColor3="TabBackgroundActive",
+ImageTransparency="TabBackgroundActiveTransparency",
+},0.15)
+if ao.Tabs[aq].Border then
+ak.SetThemeTag(ao.Tabs[aq].UIElements.Main.Outline,{
+ImageTransparency="TabBorderTransparencyActive",
+},0.15)
+end
+ak.SetThemeTag(ao.Tabs[aq].UIElements.Main.Frame.TextLabel,{
+TextTransparency="TabTextTransparencyActive",
+},0.15)
+if ao.Tabs[aq].UIElements.Icon and not ao.Tabs[aq].IconColor then
+ak.SetThemeTag(ao.Tabs[aq].UIElements.Icon.ImageLabel,{
+ImageTransparency="TabIconTransparencyActive",
+},0.15)
+end
+ao.Tabs[aq].Selected=true
 
-for index,container in next,ao.Containers do
-container.Visible=(index==aq)
-container.GroupTransparency=1
-container.Position=index==aq and UDim2.new(0,0,0,5) or UDim2.new(0,0,0,0)
+task.spawn(function()
+for ar,as in next,ao.Containers do
+as.AnchorPoint=Vector2.new(0,0.05)
+as.Visible=false
 end
-local container=ao.Containers[aq]
-if container then
-local tween=game:GetService"TweenService":Create(container,TweenInfo.new(0.14,Enum.EasingStyle.Quart,Enum.EasingDirection.Out),{GroupTransparency=0,Position=UDim2.new(0,0,0,0)})
-tween:Play()
-end
+ao.Containers[aq].Visible=true
+local ar=game:GetService"TweenService"
+
+local as=TweenInfo.new(0.15,Enum.EasingStyle.Quart,Enum.EasingDirection.Out)
+local at=ar:Create(ao.Containers[aq],as,{
+AnchorPoint=Vector2.new(0,0),
+})
+at:Play()
+end)
+
 ao.OnChangeFunc(aq)
+end
 end
 
 return ao end function a.ab()

@@ -1,5 +1,5 @@
 --[[
-    XeroHub UI / Obsidian 2.3 — premium spacing pass
+    XeroHub UI / Obsidian 2.4 — lighter compact pass
     Creator: Kev
     Native Roblox interface. No WindUI runtime, icon downloads or render loops.
     Compatible with the control API used by the supplied DUELS hub.
@@ -11,7 +11,7 @@ local Players = game:GetService("Players")
 local Input = game:GetService("UserInputService")
 local Workspace = game:GetService("Workspace")
 local TextService = game:GetService("TextService")
-local Nox = { Version = "2.3.0", Brand = "XeroHub", Creator = "Kev", UIScale = 1 }
+local Nox = { Version = "2.4.0", Brand = "XeroHub", Creator = "Kev", UIScale = 1 }
 local C = {
     Window = Color3.fromRGB(9,9,9), Panel = Color3.fromRGB(14,14,14),
     Row = Color3.fromRGB(20,20,20), Field = Color3.fromRGB(11,11,11),
@@ -139,38 +139,38 @@ end
 function Control:_resize(width)
     if self.Destroyed then return end
     local section=self.__type=="Section"
-    local px=section and 2 or 14
-    local py=section and 10 or 12
+    local px=section and 2 or 12
+    local py=section and 10 or 10
     local headWidth=math.max(40,width-px*2)
     local reserve=self.Reserve or 0
     local copyWidth=math.max(30,headWidth-reserve)
     local titleHeight=textHeight(self.Title,self.TitleLabel.TextSize,self.TitleLabel.Font,copyWidth)
     local descHeight=textHeight(self.Desc,self.DescLabel.TextSize,self.DescLabel.Font,copyWidth)
-    local copyHeight=titleHeight+(descHeight>0 and 6+descHeight or 0)
+    local copyHeight=titleHeight+(descHeight>0 and 5+descHeight or 0)
     local headHeight=math.max(copyHeight,self.HeadMinimum or 0)
     self.Head.Position=UDim2.fromOffset(px,py)
     self.Head.Size=UDim2.new(1,-px*2,0,headHeight)
     self.Copy.Size=UDim2.new(1,-reserve,0,copyHeight)
     self.TitleLabel.Size=UDim2.new(1,0,0,titleHeight)
-    self.DescLabel.Position=UDim2.fromOffset(0,titleHeight+6)
+    self.DescLabel.Position=UDim2.fromOffset(0,titleHeight+5)
     self.DescLabel.Size=UDim2.new(1,0,0,descHeight)
     local y=py+headHeight
     if self.BodyField then
         local fieldHeight=36
         if self.ValueLabel then fieldHeight=math.max(36,textHeight(self.ValueLabel.Text,13,FONT,headWidth-42)+16) end
-        self.BodyField.Position=UDim2.fromOffset(px,y+10)
+        self.BodyField.Position=UDim2.fromOffset(px,y+8)
         self.BodyField.Size=UDim2.new(1,-px*2,0,fieldHeight)
-        y+=10+fieldHeight
+        y+=8+fieldHeight
     end
     if self.SliderArea then
-        self.SliderArea.Position=UDim2.fromOffset(px,y+8)
-        self.SliderArea.Size=UDim2.new(1,-px*2,0,34)
-        self.Limits.Position=UDim2.fromOffset(px,y+45)
+        self.SliderArea.Position=UDim2.fromOffset(px,y+6)
+        self.SliderArea.Size=UDim2.new(1,-px*2,0,30)
+        self.Limits.Position=UDim2.fromOffset(px,y+40)
         self.Limits.Size=UDim2.new(1,-px*2,0,12)
-        y+=58
+        y+=50
     end
-    if self.Rule then self.Rule.Position=UDim2.fromOffset(px,y+10); self.Rule.Size=UDim2.new(1,-px*2,0,1); y+=12 end
-    local height=y+(section and 5 or py)
+    if self.Rule then self.Rule.Position=UDim2.fromOffset(px,y+8); self.Rule.Size=UDim2.new(1,-px*2,0,1); y+=10 end
+    local height=y+(section and 4 or py)
     self.ElementFrame.Size=UDim2.new(1,0,0,height)
     self.Slot.Size=UDim2.new(1,-6,0,height)
 end
@@ -181,7 +181,7 @@ function Tab:_layout()
     for _,c in ipairs(self.Elements) do
         if not c.Destroyed then
             c:_resize(width)
-            if c.Slot.Visible then height+=c.Slot.Size.Y.Offset+9 end
+            if c.Slot.Visible then height+=c.Slot.Size.Y.Offset+7 end
         end
     end
     self.Content.CanvasSize=UDim2.fromOffset(0,math.max(0,height-7))
@@ -303,9 +303,9 @@ function Tab:Paragraph(options)
     local c = self:_control("Paragraph",options)
     local o = options or {}
     if type(o.Image)=="string" and (o.Image:match("^rbxassetid://") or o.Image:match("^rbxthumb://")) then
-        c.Reserve=58; c.HeadMinimum=44
+        c.Reserve=54; c.HeadMinimum=40
         local picture=new("ImageLabel",{Name="Thumbnail",Image=o.Image,BackgroundColor3=C.Field,
-            Position=UDim2.new(1,-44,0,0),Size=UDim2.fromOffset(44,44)},c.Head)
+            Position=UDim2.new(1,-40,0,0),Size=UDim2.fromOffset(40,40)},c.Head)
         round(picture,10)
     end
     function c:Set(value) return self:SetDesc(value) end
@@ -313,9 +313,9 @@ function Tab:Paragraph(options)
 end
 function Tab:Button(options)
     local c = self:_control("Button",options)
-    c.Reserve=46; c.HeadMinimum=38
+    c.Reserve=42; c.HeadMinimum=34
     local hit = button(c.Head,"→",{Name="Action",BackgroundColor3=C.Field,TextSize=16,
-        Position=UDim2.new(1,-34,0,1),Size=UDim2.fromOffset(34,34)})
+        Position=UDim2.new(1,-30,0,1),Size=UDim2.fromOffset(30,30)})
     round(hit,7); stroke(hit); hover(c.Window,hit,C.Field)
     -- The title and description are clickable too; nested field controls are separate.
     local titleHit=button(c.Copy,"",{Name="Activate",BackgroundTransparency=1,Size=UDim2.fromScale(1,1),ZIndex=3})
@@ -326,14 +326,14 @@ function Tab:Button(options)
 end
 function Tab:Toggle(options)
     local o = options or {}; local c = self:_control("Toggle",o)
-    c.Reserve=60; c.HeadMinimum=38
+    c.Reserve=54; c.HeadMinimum=34
     local target=button(c.Head,"",{Name="ToggleHit",BackgroundTransparency=1,
-        Position=UDim2.new(1,-48,0,1),Size=UDim2.fromOffset(48,36)})
+        Position=UDim2.new(1,-44,0,0),Size=UDim2.fromOffset(44,32)})
     local hit=new("Frame",{Name="Switch",BackgroundColor3=C.Border,
-        Position=UDim2.fromOffset(5,7),Size=UDim2.fromOffset(38,22)},target)
+        Position=UDim2.fromOffset(5,6),Size=UDim2.fromOffset(34,20)},target)
     round(hit,7)
     local knob=new("Frame",{Name="Thumb",BackgroundColor3=C.Muted,Position=UDim2.fromOffset(4,4),
-        Size=UDim2.fromOffset(14,14)},hit); round(knob,4)
+        Size=UDim2.fromOffset(12,12)},hit); round(knob,4)
     local tick=label(knob,"",11,C.Window,{TextXAlignment=Enum.TextXAlignment.Center,Size=UDim2.fromScale(1,1)})
     c.Interactive=target
     function c:Set(value,silent)
@@ -342,7 +342,7 @@ function Tab:Toggle(options)
         local changed=self.Value ~= value; self.Value=value
         hit.BackgroundColor3=value and C.White or C.Border
         knob.BackgroundColor3=value and C.Window or C.Muted
-        knob.Position=UDim2.fromOffset(value and 20 or 4,4)
+        knob.Position=UDim2.fromOffset(value and 18 or 4,4)
         tick.Text=value and "·" or ""; tick.TextColor3=C.White
         if changed and not silent then invoke(self.Callback,value) end
         return self
@@ -354,8 +354,8 @@ end
 local function field(parent, placeholder)
     local box=new("TextBox",{Name="Field",Text="",PlaceholderText=placeholder or "",
         PlaceholderColor3=C.Faint,BackgroundColor3=C.Field,ClearTextOnFocus=false,
-        TextXAlignment=Enum.TextXAlignment.Left,Size=UDim2.new(1,0,0,34),LayoutOrder=2},parent)
-    round(box,9); stroke(box); padding(box,10,0)
+        TextXAlignment=Enum.TextXAlignment.Left,TextSize=12,Size=UDim2.new(1,0,0,32),LayoutOrder=2},parent)
+    round(box,8); stroke(box); padding(box,9,0)
     return box
 end
 function Tab:Input(options)
@@ -386,17 +386,17 @@ function Tab:Slider(options)
     local decimals=0
     while decimals<6 and math.abs(step*10^decimals-math.floor(step*10^decimals+.5))>.000001 do decimals+=1 end
     c.Min,c.Max,c.Step=low,high,step
-    c.Reserve=78; c.HeadMinimum=36
-    local box=field(c.Head,""); box.Name="Value"; box.Size=UDim2.fromOffset(64,34)
-    box.Position=UDim2.new(1,-64,0,1); box.TextXAlignment=Enum.TextXAlignment.Center
+    c.Reserve=70; c.HeadMinimum=34
+    local box=field(c.Head,""); box.Name="Value"; box.Size=UDim2.fromOffset(58,32)
+    box.Position=UDim2.new(1,-58,0,0); box.TextXAlignment=Enum.TextXAlignment.Center
     local area=button(c.ElementFrame,"",{Name="SliderArea",BackgroundTransparency=1,
-        Size=UDim2.new(1,0,0,24),LayoutOrder=2})
-    local track=new("Frame",{Name="Track",Position=UDim2.new(0,8,.5,-2),Size=UDim2.new(1,-16,0,3),BackgroundColor3=C.Border},area)
+        Size=UDim2.new(1,0,0,22),LayoutOrder=2})
+    local track=new("Frame",{Name="Track",Position=UDim2.new(0,8,.5,-1),Size=UDim2.new(1,-16,0,2),BackgroundColor3=C.Border},area)
     round(track,2)
     local fill=new("Frame",{Name="Fill",Size=UDim2.fromScale(0,1),BackgroundColor3=C.Text},track); round(fill,2)
     local thumb=new("Frame",{Name="Thumb",AnchorPoint=Vector2.new(.5,.5),Position=UDim2.fromScale(0,.5),
-        Size=UDim2.fromOffset(12,12),BackgroundColor3=C.White},track); round(thumb,4)
-    local limits=new("Frame",{Name="Limits",BackgroundTransparency=1,Size=UDim2.new(1,0,0,11),LayoutOrder=3},c.ElementFrame)
+        Size=UDim2.fromOffset(10,10),BackgroundColor3=C.White},track); round(thumb,4)
+    local limits=new("Frame",{Name="Limits",BackgroundTransparency=1,Size=UDim2.new(1,0,0,10),LayoutOrder=3},c.ElementFrame)
     c.SliderArea=area; c.Limits=limits
     label(limits,tostring(low),9,C.Faint,{Size=UDim2.fromScale(.5,1),Font=Enum.Font.Code})
     label(limits,tostring(high),9,C.Faint,{Size=UDim2.fromScale(.5,1),Position=UDim2.fromScale(.5,0),
@@ -437,9 +437,9 @@ function Tab:Dropdown(options)
     local o=options or {}; local c=self:_control("Dropdown",o)
     c.Values=table.clone(o.Values or {}); c.Multi=o.Multi==true or o.MultiSelect==true
     local hit=button(c.ElementFrame,"",{Name="Dropdown",BackgroundColor3=C.Field,
-        Size=UDim2.new(1,0,0,34),LayoutOrder=2}); round(hit,9); stroke(hit)
-    local valueLabel=label(hit,"",13,C.Text,{Position=UDim2.fromOffset(10,0),Size=UDim2.new(1,-38,1,0),TextWrapped=true})
-    label(hit,"⌄",15,C.Muted,{Position=UDim2.new(1,-26,0,0),Size=UDim2.new(0,18,1,0),TextXAlignment=Enum.TextXAlignment.Center})
+        Size=UDim2.new(1,0,0,32),LayoutOrder=2}); round(hit,8); stroke(hit)
+    local valueLabel=label(hit,"",12,C.Text,{Position=UDim2.fromOffset(9,0),Size=UDim2.new(1,-34,1,0),TextWrapped=true})
+    label(hit,"⌄",14,C.Muted,{Position=UDim2.new(1,-24,0,0),Size=UDim2.new(0,16,1,0),TextXAlignment=Enum.TextXAlignment.Center})
     c.Interactive=hit; c.BodyField=hit; c.ValueLabel=valueLabel
     function c:Set(value,silent,force)
         if self.Destroyed then return self end
@@ -467,9 +467,9 @@ function Tab:Dropdown(options)
         local window=self.Window
         local panel=window:_popup(self.Title,360,410,self)
         local search=field(panel,"Buscar una opción…")
-        search.Position=UDim2.fromOffset(16,54); search.Size=UDim2.new(1,-32,0,38)
-        local list=scroll(panel,{Position=UDim2.fromOffset(16,102),Size=UDim2.new(1,-32,1,-134)})
-        vertical(list,6)
+        search.Position=UDim2.fromOffset(16,50); search.Size=UDim2.new(1,-32,0,34)
+        local list=scroll(panel,{Position=UDim2.fromOffset(16,96),Size=UDim2.new(1,-32,1,-126)})
+        vertical(list,5)
         local hint=label(panel,"",10,C.Faint,{Position=UDim2.new(0,16,1,-29),Size=UDim2.new(1,-32,0,16)})
         local optionConnections={}
         window._popupCleanup=function() disconnect(optionConnections); self._renderOptions=nil end
@@ -483,7 +483,7 @@ function Tab:Dropdown(options)
                     if count<120 then
                         count+=1
                         local selected=self.Multi and table.find(self.Value,value)~=nil or (not self.Multi and self.Value==value)
-                        local choiceHeight=math.max(40,textHeight(tostring(value),13,FONT,math.max(60,panel.AbsoluteSize.X-78))+16)
+                        local choiceHeight=math.max(36,textHeight(tostring(value),12,FONT,math.max(60,panel.AbsoluteSize.X-78))+14)
                         local choice=button(list,"",{Name="Option",Size=UDim2.new(1,-4,0,choiceHeight),LayoutOrder=count,
                             BackgroundColor3=selected and C.Text or C.Row})
                         round(choice,8)
@@ -623,7 +623,7 @@ function Nox:CreateWindow(options)
     -- Full-viewport bounds are shared by popups, dragging and responsive layout.
     local surface=new("Frame",{Name="Surface",BackgroundTransparency=1,Size=UDim2.fromScale(1,1)},gui)
     local root=new("Frame",{Name="XeroPanel",BackgroundColor3=Color3.fromRGB(7,7,7),AnchorPoint=Vector2.new(.5,.5),
-        Position=UDim2.fromScale(.5,.5),Size=UDim2.fromOffset(760,500),ClipsDescendants=true},surface)
+        Position=UDim2.fromScale(.5,.5),Size=UDim2.fromOffset(740,480),ClipsDescendants=true},surface)
     round(root,22); stroke(root,Color3.fromRGB(58,58,58))
     local rootGradient=new("UIGradient",{Rotation=22,Color=ColorSequence.new({
         ColorSequenceKeypoint.new(0,Color3.fromRGB(5,5,5)),
@@ -634,17 +634,17 @@ function Nox:CreateWindow(options)
 
     -- Fondo Xero: geométrico, monocromo y más contenido para no invadir el panel.
     local backdrop=new("Frame",{Name="NoxBackdrop",BackgroundTransparency=1,Size=UDim2.fromScale(1,1),ZIndex=1},root)
-    local glowA=new("Frame",{Name="SoftGlowA",AnchorPoint=Vector2.new(.5,.5),Position=UDim2.fromScale(.76,.30),
-        Size=UDim2.fromScale(.66,.74),BackgroundColor3=Color3.fromRGB(24,24,24),BackgroundTransparency=.58,Rotation=-16,ZIndex=1},backdrop)
+    local glowA=new("Frame",{Name="SoftGlowA",AnchorPoint=Vector2.new(.5,.5),Position=UDim2.fromScale(.68,.34),
+        Size=UDim2.fromScale(.54,.62),BackgroundColor3=Color3.fromRGB(22,22,22),BackgroundTransparency=.74,Rotation=-16,ZIndex=1},backdrop)
     round(glowA,80)
     new("UIGradient",{Rotation=35,Transparency=NumberSequence.new({NumberSequenceKeypoint.new(0,.12),NumberSequenceKeypoint.new(1,1)})},glowA)
-    local glowB=new("Frame",{Name="SoftGlowB",AnchorPoint=Vector2.new(.5,.5),Position=UDim2.fromScale(.20,.88),
-        Size=UDim2.fromScale(.52,.46),BackgroundColor3=Color3.fromRGB(20,20,20),BackgroundTransparency=.68,Rotation=18,ZIndex=1},backdrop)
+    local glowB=new("Frame",{Name="SoftGlowB",AnchorPoint=Vector2.new(.5,.5),Position=UDim2.fromScale(.22,.84),
+        Size=UDim2.fromScale(.46,.38),BackgroundColor3=Color3.fromRGB(18,18,18),BackgroundTransparency=.78,Rotation=18,ZIndex=1},backdrop)
     round(glowB,80)
     new("UIGradient",{Rotation=205,Transparency=NumberSequence.new({NumberSequenceKeypoint.new(0,.2),NumberSequenceKeypoint.new(1,1)})},glowB)
-    local watermark=label(backdrop,"XERO",92,Color3.fromRGB(255,255,255),{
-        AnchorPoint=Vector2.new(.5,.5),Position=UDim2.fromScale(.68,.58),Size=UDim2.fromScale(.42,.18),
-        Font=BOLD,TextTransparency=.973,TextXAlignment=Enum.TextXAlignment.Center,TextYAlignment=Enum.TextYAlignment.Center,Rotation=-10,ZIndex=1})
+    local watermark=label(backdrop,"XERO",78,Color3.fromRGB(255,255,255),{
+        AnchorPoint=Vector2.new(.5,.5),Position=UDim2.fromScale(.63,.58),Size=UDim2.fromScale(.36,.14),
+        Font=BOLD,TextTransparency=.979,TextXAlignment=Enum.TextXAlignment.Center,TextYAlignment=Enum.TextYAlignment.Center,Rotation=-10,ZIndex=1})
     for i=1,6 do
         local v=new("Frame",{Name="GridV",Position=UDim2.new(i/7,0,0,0),Size=UDim2.new(0,1,1,0),
             BackgroundColor3=Color3.fromRGB(255,255,255),BackgroundTransparency=.972,ZIndex=1},backdrop)
@@ -695,9 +695,9 @@ function Nox:CreateWindow(options)
     mark(openButton,24).Position=UDim2.fromOffset(8,8)
     local openLabel=label(openButton,"Abrir XeroHub",12,C.Text,{Position=UDim2.fromOffset(40,0),Size=UDim2.new(1,-47,1,0),Font=MEDIUM})
     w.OpenButton=openButton; w.UIElements={Main=root,Title=brand,SideBar=sidebar,MainBar=content,Pages=pages,Search=searchBox,Topbar=top}
-    local desired=o.Size or UDim2.fromOffset(760,500)
-    w._desiredWidth=desired.X.Offset>0 and desired.X.Offset or 760
-    w._desiredHeight=desired.Y.Offset>0 and desired.Y.Offset or 500
+    local desired=o.Size or UDim2.fromOffset(740,480)
+    w._desiredWidth=desired.X.Offset>0 and desired.X.Offset or 740
+    w._desiredHeight=desired.Y.Offset>0 and desired.Y.Offset or 480
     w.Resizable=o.Resizable~=false
     local minSize=o.MinSize or Vector2.new(390,320)
     w._minWidth=math.max(300,tonumber(minSize.X) or 390)
@@ -801,53 +801,53 @@ function Nox:CreateWindow(options)
         w.Short=height<450
         w.Narrow=width<520
         w.Compact=width<670 or w.Short
-        local tight=width<600 or height<465 or Input.TouchEnabled
-        local topHeight=tight and 58 or 64
-        local contentTop=topHeight+14
+        local tight=width<580 or height<450 or Input.TouchEnabled
+        local topHeight=tight and 54 or 58
+        local contentTop=topHeight+12
         -- Rail persistente. En pantallas estrechas se hace más delgado, nunca desaparece.
-        local sidebarWidth = width<440 and 118 or (width<560 and 132 or (width<700 and 146 or 168))
-        local left=12+sidebarWidth+18
-        local right=tight and 12 or 16
-        local bottom=w.Short and 10 or 16
+        local sidebarWidth = width<440 and 112 or (width<560 and 126 or (width<700 and 140 or 160))
+        local left=12+sidebarWidth+16
+        local right=tight and 10 or 14
+        local bottom=w.Short and 8 or 14
         w.ContentWidth=math.max(170,width-left-right)
         top.Size=UDim2.new(1,0,0,topHeight)
-        logo.Position=UDim2.fromOffset(tight and 14 or 18,tight and 12 or 14)
-        brand.Position=UDim2.fromOffset(tight and 52 or 58,14)
-        brand.TextSize=tight and 16 or 18
+        logo.Position=UDim2.fromOffset(tight and 12 or 16,tight and 10 or 12)
+        brand.Position=UDim2.fromOffset(tight and 48 or 54,12)
+        brand.TextSize=tight and 15 or 17
         brand.Visible=width>=380
         logo.Visible=true
         subtitle.Visible=false
-        controls.Position=UDim2.new(1,-88,0,tight and 10 or 12)
-        controls.Size=UDim2.fromOffset(74,34)
-        minimize.Position=UDim2.fromOffset(0,0); minimize.Size=UDim2.fromOffset(34,34)
-        close.Position=UDim2.fromOffset(40,0); close.Size=UDim2.fromOffset(34,34)
-        local minIcon=minimize:FindFirstChildOfClass("Frame"); if minIcon then minIcon.Position=UDim2.fromOffset(7,7) end
-        local closeIcon=close:FindFirstChildOfClass("Frame"); if closeIcon then closeIcon.Position=UDim2.fromOffset(7,7) end
+        controls.Position=UDim2.new(1,-80,0,tight and 8 or 10)
+        controls.Size=UDim2.fromOffset(68,32)
+        minimize.Position=UDim2.fromOffset(0,0); minimize.Size=UDim2.fromOffset(32,32)
+        close.Position=UDim2.fromOffset(36,0); close.Size=UDim2.fromOffset(32,32)
+        local minIcon=minimize:FindFirstChildOfClass("Frame"); if minIcon then minIcon.Position=UDim2.fromOffset(6,6) end
+        local closeIcon=close:FindFirstChildOfClass("Frame"); if closeIcon then closeIcon.Position=UDim2.fromOffset(6,6) end
         topRule.Position=UDim2.fromOffset(14,topHeight-1); topRule.Size=UDim2.new(1,-28,0,1)
         menu.Visible=false; author.Visible=false
-        local searchWidth=math.clamp(math.floor(width*(tight and 0.33 or 0.30)),170,290)
-        searchBox.Size=UDim2.fromOffset(searchWidth,tight and 36 or 38)
-        searchBox.Position=UDim2.new(1,-(searchWidth+controls.Size.X.Offset+18),0,tight and 9 or 12)
+        local searchWidth=math.clamp(math.floor(width*(tight and 0.32 or 0.29)),156,270)
+        searchBox.Size=UDim2.fromOffset(searchWidth,tight and 32 or 34)
+        searchBox.Position=UDim2.new(1,-(searchWidth+controls.Size.X.Offset+14),0,tight and 8 or 10)
         searchBox.Visible=true
         sidebar.Visible=true
         sidebar.Position=UDim2.fromOffset(12,contentTop)
         sidebar.Size=UDim2.new(0,sidebarWidth,1,-contentTop-bottom)
-        nav.Size=UDim2.new(1,-12,1,w.Short and -14 or -46)
+        nav.Size=UDim2.new(1,-12,1,w.Short and -12 or -42)
         nav.Position=UDim2.fromOffset(6,8)
         nav.ScrollBarThickness=2; navFooter.Visible=not w.Short and sidebarWidth>=132
         drawerShade.Visible=false
         content.Position=UDim2.fromOffset(left,contentTop)
         content.Size=UDim2.new(1,-left-right,1,-contentTop-bottom)
         pageTitle.Position=UDim2.fromOffset(0,0)
-        pageTitle.Size=UDim2.new(1,-110,0,32)
-        count.Position=UDim2.new(1,-108,0,7)
-        pageDesc.Position=UDim2.fromOffset(0,34)
-        pageDesc.Size=UDim2.new(1,-6,0,30)
-        pageDesc.Visible=not tight and height>=500 and w.ContentWidth>=320
+        pageTitle.Size=UDim2.new(1,-96,0,30)
+        count.Position=UDim2.new(1,-100,0,5)
+        pageDesc.Position=UDim2.fromOffset(0,30)
+        pageDesc.Size=UDim2.new(1,-6,0,26)
+        pageDesc.Visible=not tight and height>=470 and w.ContentWidth>=300
         count.Visible=not tight and width>=720
-        pageTitle.TextSize=tight and 22 or 25
+        pageTitle.TextSize=tight and 20 or 23
         pageTitle.TextTruncate=Enum.TextTruncate.AtEnd
-        local pagesY=pageDesc.Visible and 74 or 44
+        local pagesY=pageDesc.Visible and 62 or 38
         pages.Position=UDim2.fromOffset(0,pagesY); pages.Size=UDim2.new(1,0,1,-pagesY)
         footer.Visible=not w.Short
         shortcut.Visible=not tight and width>=700
@@ -883,12 +883,12 @@ function Nox:CreateWindow(options)
         local page=new("Frame",{Name=title,BackgroundTransparency=1,Size=UDim2.fromScale(1,1),Visible=false},pages)
         local list=scroll(page,{Name="Options",AutomaticCanvasSize=Enum.AutomaticSize.None}); vertical(list,10); padding(list,2,4)
         local empty=label(page,"Sin coincidencias. Prueba otra búsqueda.",12,C.Muted,{Position=UDim2.fromOffset(12,18),Size=UDim2.new(1,-24,0,50),TextWrapped=true,Visible=false})
-        local navButton=button(holder or nav,"",{Name=title,Size=UDim2.new(1,0,0,38),BackgroundColor3=Color3.fromRGB(11,11,11),LayoutOrder=index})
+        local navButton=button(holder or nav,"",{Name=title,Size=UDim2.new(1,0,0,34),BackgroundColor3=Color3.fromRGB(11,11,11),LayoutOrder=index})
         round(navButton,7)
-        local selectionBar=new("Frame",{Name="Selected",Position=UDim2.fromOffset(1,7),Size=UDim2.fromOffset(2,24),
+        local selectionBar=new("Frame",{Name="Selected",Position=UDim2.fromOffset(1,6),Size=UDim2.fromOffset(2,22),
             BackgroundColor3=C.Text,Visible=false,ZIndex=3},navButton); round(selectionBar,2)
-        local glyph=icon(navButton,title); glyph.Position=UDim2.fromOffset(9,9)
-        local titleLabel=label(navButton,title,12,C.Muted,{Position=UDim2.fromOffset(34,0),Size=UDim2.new(1,-40,1,0),Font=MEDIUM,TextTruncate=Enum.TextTruncate.AtEnd})
+        local glyph=icon(navButton,title); glyph.Position=UDim2.fromOffset(8,7)
+        local titleLabel=label(navButton,title,11,C.Muted,{Position=UDim2.fromOffset(31,0),Size=UDim2.new(1,-36,1,0),Font=MEDIUM,TextTruncate=Enum.TextTruncate.AtEnd})
         tab.Page,tab.Content,tab.Empty=page,list,empty; tab.NavButton,tab.NavTitle=navButton,titleLabel
         tab.Number=glyph:FindFirstChildOfClass("TextLabel"); tab.SelectionBar=selectionBar
         table.insert(self.Tabs,tab)
@@ -903,11 +903,11 @@ function Nox:CreateWindow(options)
     function w:Section(options)
         local opt=options or {}; self._navOrder+=1
         local group=new("Frame",{Name=plain(opt.Title),BackgroundTransparency=1,Size=UDim2.new(1,0,0,0),AutomaticSize=Enum.AutomaticSize.Y,LayoutOrder=self._navOrder},nav)
-        vertical(group,8)
+        vertical(group,7)
         local heading=label(group,string.upper(plain(opt.Title or "GENERAL")),9,C.Faint,{Size=UDim2.new(1,-8,0,22),Font=BOLD,LayoutOrder=0,TextWrapped=true})
         padding(heading,8,0)
         local items=new("Frame",{Name="Items",BackgroundTransparency=1,Size=UDim2.new(1,0,0,0),AutomaticSize=Enum.AutomaticSize.Y,LayoutOrder=1},group)
-        vertical(items,6)
+        vertical(items,4)
         local section={Window=self,ElementFrame=group}
         function section:Tab(config) return self.Window:_tab(config,items) end
         function section:Open() items.Visible=true; return self end

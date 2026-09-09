@@ -1,5 +1,5 @@
 --[[
-    XeroHub UI / Obsidian 2.7 — compact premium + credits
+    XeroHub UI / Obsidian 2.8 — profile polish + gothic cards
     Creator: Kev
     Native Roblox interface. No WindUI runtime, icon downloads or render loops.
     Compatible with the control API used by the supplied DUELS hub.
@@ -12,7 +12,7 @@ local Input = game:GetService("UserInputService")
 local Workspace = game:GetService("Workspace")
 local RunService = game:GetService("RunService")
 local TextService = game:GetService("TextService")
-local Nox = { Version = "2.7.0", Brand = "XeroHub", Creator = "Kev", UIScale = 1 }
+local Nox = { Version = "2.8.0", Brand = "XeroHub", Creator = "Kev", UIScale = 1 }
 local C = {
     Window = Color3.fromRGB(9,9,9), Panel = Color3.fromRGB(14,14,14),
     Row = Color3.fromRGB(20,20,20), Field = Color3.fromRGB(11,11,11),
@@ -99,14 +99,15 @@ local function mark(parent, size, color)
     local holder = new("Frame", {BackgroundTransparency=1, Size=UDim2.fromOffset(size,size)}, parent)
     local tone = color or C.Text
     local ring = new("Frame", {BackgroundTransparency=1, AnchorPoint=Vector2.new(.5,.5),
-        Position=UDim2.fromScale(.5,.5), Size=UDim2.fromScale(.74,.74), Rotation=45}, holder)
-    round(ring, 4); stroke(ring, tone, 1.8)
-    local a = line(holder, math.floor(size*0.22), math.floor(size*0.26), math.floor(size*0.42), 2, 45, tone)
-    local b = line(holder, math.floor(size*0.44), math.floor(size*0.26), math.floor(size*0.26), 2, -45, tone)
-    local c = line(holder, math.floor(size*0.22), math.floor(size*0.58), math.floor(size*0.24), 2, -45, tone)
-    local d = line(holder, math.floor(size*0.44), math.floor(size*0.58), math.floor(size*0.26), 2, 45, tone)
-    a.AnchorPoint=Vector2.new(0,.5); b.AnchorPoint=Vector2.new(0,.5)
-    c.AnchorPoint=Vector2.new(0,.5); d.AnchorPoint=Vector2.new(0,.5)
+        Position=UDim2.fromScale(.5,.5), Size=UDim2.fromScale(.78,.78), Rotation=45}, holder)
+    round(ring, 4); stroke(ring, tone, 1.7)
+    local slashA = new("Frame", {AnchorPoint=Vector2.new(.5,.5),Position=UDim2.fromScale(.5,.5),
+        Size=UDim2.fromOffset(math.floor(size*0.46),2),Rotation=45,BackgroundColor3=tone}, holder)
+    local slashB = new("Frame", {AnchorPoint=Vector2.new(.5,.5),Position=UDim2.fromScale(.5,.5),
+        Size=UDim2.fromOffset(math.floor(size*0.46),2),Rotation=-45,BackgroundColor3=tone}, holder)
+    local core = new("Frame", {AnchorPoint=Vector2.new(.5,.5),Position=UDim2.fromScale(.5,.5),
+        Size=UDim2.fromOffset(math.max(3,math.floor(size*0.12)), math.max(3,math.floor(size*0.12))),BackgroundColor3=tone}, holder)
+    round(core, 3)
     return holder
 end
 local function icon(parent, kind)
@@ -155,10 +156,19 @@ function Control:_resize(width)
     local headHeight=math.max(copyHeight,self.HeadMinimum or 0)
     self.Head.Position=UDim2.fromOffset(px,py)
     self.Head.Size=UDim2.new(1,-px*2,0,headHeight)
-    self.Copy.Size=UDim2.new(1,-reserve,0,copyHeight)
+    local copyOffsetX=self.CopyOffsetX or 0
+    self.Copy.Position=UDim2.fromOffset(copyOffsetX,0)
+    self.Copy.Size=UDim2.new(1,-reserve-copyOffsetX,0,copyHeight)
     self.TitleLabel.Size=UDim2.new(1,0,0,titleHeight)
     self.DescLabel.Position=UDim2.fromOffset(0,titleHeight+4)
     self.DescLabel.Size=UDim2.new(1,0,0,descHeight)
+    if self.Thumbnail then
+        local size=self.ThumbnailSize or 36
+        local thumbY=math.max(0,math.floor((headHeight-size)/2))
+        local thumbX=(self.ImageAlign=="left") and 0 or math.max(0,headWidth-size)
+        self.Thumbnail.Position=UDim2.fromOffset(thumbX,thumbY)
+        self.Thumbnail.Size=UDim2.fromOffset(size,size)
+    end
     local y=py+headHeight
     if self.BodyField then
         local fieldHeight=28
@@ -273,9 +283,9 @@ function Tab:_control(kind, options)
     self._order += 1
     local slot = new("Frame", {Name="Slot",BackgroundTransparency=1,
         Size=UDim2.new(1,-4,0,0),LayoutOrder=self._order},self.Content)
-    local row = new("Frame", {Name=kind,BackgroundColor3=C.Row,
-        Size=UDim2.new(1,0,0,0),LayoutOrder=self._order},slot)
-    round(row,11); stroke(row,Color3.fromRGB(31,31,31))
+    local row = new("Frame", {Name=kind,BackgroundColor3=o.Color or C.Row,
+        Size=UDim2.new(1,0,0,0),LayoutOrder=self._order,ClipsDescendants=true},slot)
+    round(row,11); local rowStroke=stroke(row,o.StrokeColor or Color3.fromRGB(31,31,31))
     local head = new("Frame", {Name="Heading",BackgroundTransparency=1,
         Size=UDim2.new(1,0,0,0),LayoutOrder=1},row)
     local copy = new("Frame", {Name="Copy",BackgroundTransparency=1,
@@ -285,7 +295,7 @@ function Tab:_control(kind, options)
     local desc = label(copy,plain(o.Desc),11,C.Muted,{TextWrapped=true,AutomaticSize=Enum.AutomaticSize.Y,
         Size=UDim2.new(1,0,0,0),LayoutOrder=2,Visible=o.Desc ~= nil and o.Desc ~= ""})
     local control = setmetatable({Title=plain(o.Title or kind),Desc=plain(o.Desc),__type=kind,
-        Window=self.Window,Tab=self,ElementFrame=row,Slot=slot,Head=head,Copy=copy,
+        Window=self.Window,Tab=self,ElementFrame=row,Slot=slot,Head=head,Copy=copy,RowStroke=rowStroke,
         TitleLabel=title,DescLabel=desc,Callback=o.Callback,GroupTitle=self._groupTitle,Locked=false},Control)
     desc.AutomaticSize=Enum.AutomaticSize.None; desc.TextYAlignment=Enum.TextYAlignment.Top
     table.insert(self.Elements,control)
@@ -309,12 +319,35 @@ end
 function Tab:Paragraph(options)
     local c = self:_control("Paragraph",options)
     local o = options or {}
+    if o.TitleColor then c.TitleLabel.TextColor3=o.TitleColor end
+    if o.DescColor then c.DescLabel.TextColor3=o.DescColor end
     if type(o.Image)=="string" and (o.Image:match("^rbxassetid://") or o.Image:match("^rbxthumb://")) then
         local pictureSize=math.max(32, tonumber(o.ImageSize) or 32)
-        c.Reserve=pictureSize+14; c.HeadMinimum=math.max(32,pictureSize)
+        local align=(o.ImageAlign=="left") and "left" or "right"
+        c.ImageAlign=align
+        c.ThumbnailSize=pictureSize
+        c.CopyOffsetX=align=="left" and (pictureSize+12) or 0
+        c.Reserve=(align=="left") and 0 or (pictureSize+14)
+        c.HeadMinimum=math.max(34,pictureSize)
         local picture=new("ImageLabel",{Name="Thumbnail",Image=o.Image,BackgroundColor3=C.Field,
-            Position=UDim2.new(1,-pictureSize,0,0),Size=UDim2.fromOffset(pictureSize,pictureSize)},c.Head)
+            Position=UDim2.new(1,-pictureSize,0,0),Size=UDim2.fromOffset(pictureSize,pictureSize),ScaleType=Enum.ScaleType.Crop},c.Head)
         round(picture,o.CircleImage and math.floor(pictureSize/2) or 10)
+        stroke(picture,o.ImageStrokeColor or Color3.fromRGB(238,238,238),o.ImageStrokeThickness or 1)
+        c.Thumbnail=picture
+    end
+    if o.Gothic then
+        local decor=new("Frame",{Name="Decor",BackgroundTransparency=1,Size=UDim2.fromScale(1,1),ZIndex=0},c.ElementFrame)
+        local glow=new("Frame",{AnchorPoint=Vector2.new(1,.5),Position=UDim2.fromScale(1,.5),Size=UDim2.fromScale(.42,.95),
+            BackgroundColor3=Color3.fromRGB(28,28,32),BackgroundTransparency=.46,Rotation=-10,ZIndex=0},decor)
+        round(glow,22)
+        new("UIGradient",{Rotation=30,Transparency=NumberSequence.new({NumberSequenceKeypoint.new(0,.18),NumberSequenceKeypoint.new(1,1)})},glow)
+        local arch=new("Frame",{AnchorPoint=Vector2.new(1,.5),Position=UDim2.fromScale(1.02,.5),Size=UDim2.fromScale(.30,.80),BackgroundTransparency=1,ZIndex=0},decor)
+        round(arch,90); stroke(arch,Color3.fromRGB(80,80,88),1)
+        local bar=line(decor,16,0,1,400,0,Color3.fromRGB(46,46,50)); bar.BackgroundTransparency=.65; bar.ZIndex=0
+        local wm=label(decor,o.DecorText or "XERO",30,Color3.fromRGB(255,255,255),{AnchorPoint=Vector2.new(1,1),Position=UDim2.fromScale(.96,.96),
+            Size=UDim2.fromScale(.52,.32),Font=BOLD,TextTransparency=.94,TextXAlignment=Enum.TextXAlignment.Right,TextYAlignment=Enum.TextYAlignment.Bottom,ZIndex=0})
+        c.ElementFrame.BackgroundColor3=o.Color or Color3.fromRGB(11,11,14)
+        c.RowStroke.Color=o.StrokeColor or Color3.fromRGB(42,42,48)
     end
     function c:Set(value) return self:SetDesc(value) end
     return c
@@ -653,28 +686,28 @@ function Nox:CreateWindow(options)
     -- Fondo Xero: geométrico, monocromo y más contenido para no invadir el panel.
     local backdrop=new("Frame",{Name="NoxBackdrop",BackgroundTransparency=1,Size=UDim2.fromScale(1,1),ZIndex=1},root)
     local glowA=new("Frame",{Name="SoftGlowA",AnchorPoint=Vector2.new(.5,.5),Position=UDim2.fromScale(.68,.34),
-        Size=UDim2.fromScale(.54,.62),BackgroundColor3=Color3.fromRGB(22,22,22),BackgroundTransparency=.74,Rotation=-16,ZIndex=1},backdrop)
+        Size=UDim2.fromScale(.54,.62),BackgroundColor3=Color3.fromRGB(26,26,28),BackgroundTransparency=.58,Rotation=-16,ZIndex=1},backdrop)
     round(glowA,72)
     new("UIGradient",{Rotation=35,Transparency=NumberSequence.new({NumberSequenceKeypoint.new(0,.12),NumberSequenceKeypoint.new(1,1)})},glowA)
     local glowB=new("Frame",{Name="SoftGlowB",AnchorPoint=Vector2.new(.5,.5),Position=UDim2.fromScale(.22,.84),
-        Size=UDim2.fromScale(.46,.38),BackgroundColor3=Color3.fromRGB(18,18,18),BackgroundTransparency=.78,Rotation=18,ZIndex=1},backdrop)
+        Size=UDim2.fromScale(.46,.38),BackgroundColor3=Color3.fromRGB(20,20,24),BackgroundTransparency=.64,Rotation=18,ZIndex=1},backdrop)
     round(glowB,64)
     new("UIGradient",{Rotation=205,Transparency=NumberSequence.new({NumberSequenceKeypoint.new(0,.2),NumberSequenceKeypoint.new(1,1)})},glowB)
-    local watermark=label(backdrop,"XERO",68,Color3.fromRGB(255,255,255),{
+    local watermark=label(backdrop,"XERO",80,Color3.fromRGB(255,255,255),{
         AnchorPoint=Vector2.new(.5,.5),Position=UDim2.fromScale(.61,.58),Size=UDim2.fromScale(.30,.12),
-        Font=BOLD,TextTransparency=.984,TextXAlignment=Enum.TextXAlignment.Center,TextYAlignment=Enum.TextYAlignment.Center,Rotation=-10,ZIndex=1})
+        Font=BOLD,TextTransparency=.974,TextXAlignment=Enum.TextXAlignment.Center,TextYAlignment=Enum.TextYAlignment.Center,Rotation=-10,ZIndex=1})
     for i=1,6 do
         local v=new("Frame",{Name="GridV",Position=UDim2.new(i/7,0,0,0),Size=UDim2.new(0,1,1,0),
-            BackgroundColor3=Color3.fromRGB(255,255,255),BackgroundTransparency=.972,ZIndex=1},backdrop)
+            BackgroundColor3=Color3.fromRGB(255,255,255),BackgroundTransparency=.952,ZIndex=1},backdrop)
     end
     for i=1,4 do
         local h=new("Frame",{Name="GridH",Position=UDim2.new(0,0,i/5,0),Size=UDim2.new(1,0,0,1),
-            BackgroundColor3=Color3.fromRGB(255,255,255),BackgroundTransparency=.978,ZIndex=1},backdrop)
+            BackgroundColor3=Color3.fromRGB(255,255,255),BackgroundTransparency=.962,ZIndex=1},backdrop)
     end
     local top=new("Frame",{Name="Topbar",BackgroundTransparency=1,Size=UDim2.new(1,0,0,58),ZIndex=5},root)
     local logo=mark(top,28); logo.Position=UDim2.fromOffset(16,12)
-    local brand=label(top,"XERO",17,C.Text,{Position=UDim2.fromOffset(50,10),Size=UDim2.fromOffset(86,22),Font=BOLD})
-    local statusLabel=label(top,"-- activos",11,C.Text,{Position=UDim2.fromOffset(138,10),Size=UDim2.fromOffset(118,22),Font=MEDIUM})
+    local brand=label(top,"XERO | DUELS",16,C.Text,{Position=UDim2.fromOffset(50,10),Size=UDim2.fromOffset(138,22),Font=BOLD})
+    local statusLabel=label(top,"-- activos",12,C.Text,{Position=UDim2.fromOffset(196,10),Size=UDim2.fromOffset(128,22),Font=BOLD})
     local subtitle=label(top,"N O X  /  "..tostring(o.Subtitle or "DUELS"),8,C.Faint,{Position=UDim2.fromOffset(52,37),Size=UDim2.fromOffset(180,14)})
     local author=label(top,w.Author,11,C.Muted,{Position=UDim2.new(1,-248,0,27),Size=UDim2.fromOffset(104,20),TextXAlignment=Enum.TextXAlignment.Right})
     local controls=new("Frame",{BackgroundTransparency=1,Position=UDim2.new(1,-76,0,8),Size=UDim2.fromOffset(64,28)},top)
@@ -822,12 +855,15 @@ function Nox:CreateWindow(options)
         w.ContentWidth=math.max(170,width-left-right)
         top.Size=UDim2.new(1,0,0,topHeight)
         logo.Position=UDim2.fromOffset(tight and 10 or 14,tight and 8 or 10)
+        brand.Text=(width<520) and "XERO" or "XERO | DUELS"
         brand.Position=UDim2.fromOffset(tight and 40 or 46,8)
+        brand.Size=UDim2.fromOffset((width<520) and 72 or 138,22)
         brand.TextSize=tight and 13 or 15
         brand.Visible=width>=350
-        statusLabel.Position=UDim2.fromOffset(tight and 88 or 108,tight and 7 or 7)
-        statusLabel.TextSize=tight and 9 or 11
-        statusLabel.Visible=width>=410
+        statusLabel.Position=UDim2.fromOffset((width<520) and 106 or 192,tight and 7 or 7)
+        statusLabel.Size=UDim2.fromOffset((width<520) and 88 or 126,22)
+        statusLabel.TextSize=tight and 10 or 13
+        statusLabel.Visible=width>=430
         logo.Visible=true
         subtitle.Visible=false
         controls.Position=UDim2.new(1,-68,0,tight and 5 or 6)

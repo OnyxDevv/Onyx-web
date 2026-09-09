@@ -719,8 +719,8 @@
       </div>
 
       <div class="status">
-        <i class="dot" id="statusDot"></i>
-        <span id="statusText">Servicios en línea</span>
+        <i class="dot"></i>
+        <span>MM2 · DUELS</span>
       </div>
     </header>
 
@@ -730,14 +730,14 @@
 
       <p class="intro">
         Un hub enfocado en MM2 y DUELS con herramientas, mejoras visuales,
-        configuración y optimización dentro de una misma experiencia.
+        configuración, apariencia y optimización dentro de una misma experiencia.
       </p>
 
       <div class="meta">
         <div class="meta-card">
-          <span>Activos</span>
-          <strong id="usersCount">—</strong>
-          <small>usuarios ejecutando</small>
+          <span>Script</span>
+          <strong class="small">Loader</strong>
+          <small>acceso principal de iLunXHub</small>
         </div>
 
         <div class="meta-card">
@@ -906,7 +906,6 @@
 
   <script>
     const SCRIPT_CODE='loadstring(game:HttpGet("https://onyx-scripts.com/onyxhub"))()';
-    const USERS_API='https://hub.onyx-scripts.com/ping?user=iLunXWebClient&jobid=WebPanel';
 
     const $=id=>document.getElementById(id);
     let toastTimer;
@@ -945,31 +944,6 @@
       notify('Script copiado');
       setTimeout(()=>button.textContent=old,1200);
     });
-
-    async function updateUsers(){
-      try{
-        const response=await fetch(USERS_API,{
-          headers:{'Astra-Auth':'OnyxHub!'},
-          cache:'no-store'
-        });
-
-        if(!response.ok)throw 0;
-
-        const value=Number((await response.text()).trim());
-        if(!Number.isFinite(value))throw 0;
-
-        $('usersCount').textContent=value.toLocaleString('es-MX');
-        $('statusDot').classList.remove('offline');
-        $('statusText').textContent='Servicios en línea';
-      }catch{
-        $('usersCount').textContent='—';
-        $('statusDot').classList.add('offline');
-        $('statusText').textContent='Reconectando';
-      }
-    }
-
-    updateUsers();
-    setInterval(updateUsers,10000);
   </script>
 </body>
 </html>

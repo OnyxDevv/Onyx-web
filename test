@@ -1,4 +1,4 @@
--- NoxHub | DUELS MURDERS VS SHERIFF | Kev --
+-- XeroHub | DUELS MURDERS VS SHERIFF | Kev --
 
 
 local MM2_PLACE_ID = 142823291
@@ -169,7 +169,7 @@ end
 task.spawn(function()
     local banStatus = AstraRequest("/check_ban")
     if banStatus == "BANNED" then
-        player:Kick("\nNoxHub SECURITY\nTu red (IP) está baneada permanentemente del Hub por intento de robo o violación de reglas.\n\n.")
+        player:Kick("\nXeroHub SECURITY\nTu red (IP) está baneada permanentemente del Hub por intento de robo o violación de reglas.\n\n.")
     end
 end)
 
@@ -217,7 +217,7 @@ aimbotTargetPart = "Cabeza"
 local UIElements = {} -- Tabla para guardar referencias
 
 local playerGui = player:WaitForChild("PlayerGui")
-local previousOverlay = playerGui:FindFirstChild("NoxHub_Overlays") or playerGui:FindFirstChild("iLunXHub_Overlays")
+local previousOverlay = playerGui:FindFirstChild("XeroHub_Overlays") or playerGui:FindFirstChild("iLunXHub_Overlays")
 if previousOverlay then
     previousOverlay:Destroy()
 end
@@ -234,11 +234,11 @@ do
         if gethui then splashParent = gethui() else splashParent = game:GetService("CoreGui") end
     end)
 
-    local previousSplash = splashParent and (splashParent:FindFirstChild("NoxHub_Startup") or splashParent:FindFirstChild("iLunXHub_Startup"))
+    local previousSplash = splashParent and (splashParent:FindFirstChild("XeroHub_Startup") or splashParent:FindFirstChild("iLunXHub_Startup"))
     if previousSplash then previousSplash:Destroy() end
 
     local startupGui = Instance.new("ScreenGui")
-    startupGui.Name = "NoxHub_Startup"
+    startupGui.Name = "XeroHub_Startup"
     startupGui.ResetOnSpawn = false
     startupGui.IgnoreGuiInset = true
     startupGui.DisplayOrder = 2147483647
@@ -299,7 +299,7 @@ do
     status.Size = UDim2.new(1, -48, 0, 22)
     status.Position = UDim2.new(0.5, 0, 0, 62)
     status.BackgroundTransparency = 1
-    status.Text = "Cargando NoxHub..."
+    status.Text = "Cargando XeroHub..."
     status.TextColor3 = Color3.fromHex("#9B9B9B")
     status.Font = Enum.Font.GothamMedium
     status.TextSize = 13
@@ -368,7 +368,7 @@ function startupSplashState.Finish(message)
 end
 
 local screenGui = Instance.new("ScreenGui")
-screenGui.Name = "NoxHub_Overlays"
+screenGui.Name = "XeroHub_Overlays"
 screenGui.ResetOnSpawn = false
 screenGui.IgnoreGuiInset = true 
 screenGui.DisplayOrder = 999 
@@ -436,44 +436,44 @@ end
 
 -- ==========================================
 -- NOXHUB / UI SEPARADA
--- La lógica carga NoxHub_UI.lua por archivo local o URL RAW.
+-- La lógica carga XeroHub_UI.lua por archivo local o URL RAW.
 -- ==========================================
 local WindUI
 -- UI separada: puedes ofuscar este archivo sin mezclar las ~1k líneas visuales.
--- Orden de carga: archivo local NoxHub_UI.lua -> URL RAW oficial de NoxHub.
+-- Orden de carga: archivo local XeroHub_UI.lua -> URL RAW oficial de XeroHub.
 local NOX_UI_URL = ((getgenv and getgenv()) or _G).NOX_UI_URL or "https://raw.githubusercontent.com/OnyxDevv/Onyx-web/refs/heads/main/main%20(3).lua"
 local ok, result = pcall(function()
     local source
-    if isfile and readfile and isfile("NoxHub_UI.lua") then
-        source = readfile("NoxHub_UI.lua")
+    if isfile and readfile and isfile("XeroHub_UI.lua") then
+        source = readfile("XeroHub_UI.lua")
     elseif NOX_UI_URL ~= "" then
         source = game:HttpGet(NOX_UI_URL)
     else
-        error("Falta NoxHub_UI.lua o getgenv().NOX_UI_URL")
+        error("Falta XeroHub_UI.lua o getgenv().NOX_UI_URL")
     end
     local chunk, compileError = loadstring(source)
-    if not chunk then error("No se pudo compilar NoxHub_UI.lua: " .. tostring(compileError)) end
+    if not chunk then error("No se pudo compilar XeroHub_UI.lua: " .. tostring(compileError)) end
     return chunk()
 end)
 
 if ok and result then
     WindUI = result
 else
-    warn("[NoxHub] No se pudo iniciar la UI: " .. tostring(result))
-    startupSplashState.Finish("No se pudo cargar NoxHub")
+    warn("[XeroHub] No se pudo iniciar la UI: " .. tostring(result))
+    startupSplashState.Finish("No se pudo cargar XeroHub")
     runtime.Cleanup()
     return
 end
 
 local Window = WindUI:CreateWindow({
-    Title = "NoxHub / DUELS",
+    Title = "XeroHub / DUELS",
     Subtitle = "DUELS",
-    Theme = "Nox",
+    Theme = "Xero",
     Author = "by Kev",
-    Size = UDim2.fromOffset(780, 540),
+    Size = UDim2.fromOffset(760, 500),
     MinSize = Vector2.new(390, 320),
     Resizable = true,
-    OpenButton = {Title = "Abrir NoxHub", Enabled = true},
+    OpenButton = {Title = "Abrir XeroHub", Enabled = true},
 })
 
 pcall(function()
@@ -707,7 +707,7 @@ sendNotification = function(text, options)
 
     local payload = {
         text = text,
-        title = tostring(options.title or "NoxHub"),
+        title = tostring(options.title or "XeroHub"),
         icon = tostring(options.icon or "◇"),
         accent = Color3.fromHex("#E6E6E6"),
         duration = holdDuration,
@@ -785,7 +785,7 @@ for _, tab in pairs(Tabs) do
                         sendNotification(
                             title .. (enabled and " activado" or " desactivado"),
                             {
-                                title = "NoxHub · Ajuste",
+                                title = "XeroHub · Ajuste",
                                 icon = enabled and "✓" or "–",
                                 accent = enabled and Color3.fromHex("#78D98B") or Color3.fromHex("#8E8E93"),
                                 key = "toggle:" .. title,
@@ -810,7 +810,7 @@ end
 
 
 Tabs.Inicio:Paragraph({
-    Title = "Bienvenido a NoxHub",
+    Title = "Bienvenido a XeroHub",
     Desc = "Elige una categoría y encuentra cada ajuste con el buscador. Tu panel, a tu manera.\nCreado por Kev.",
 })
 
@@ -824,7 +824,7 @@ Tabs.Inicio:Paragraph({
 -- ==========================================
 -- CAMBIOS RECIENTES · INICIO
 -- ==========================================
-Tabs.Inicio:Section({Title = "Novedades de NoxHub"})
+Tabs.Inicio:Section({Title = "Novedades de XeroHub"})
 
 Tabs.Inicio:Paragraph({
     Title = "Apariencia",
@@ -4401,7 +4401,7 @@ end
 
 local restoreAppearanceButton = Tabs.Apariencia:Button({
     Title = "Restaurar apariencia completa",
-    Desc = "Restaura tu avatar base y quita Headless, Korblox, HideHair y todos los limiteds aplicados por NoxHub.",
+    Desc = "Restaura tu avatar base y quita Headless, Korblox, HideHair y todos los limiteds aplicados por XeroHub.",
     Callback = function()
         runtime.RestoreAppearance()
         local wasSuppressed = runtime.SuppressNotifications
@@ -9557,7 +9557,7 @@ Tabs.Config:Section({ Title = "Personalización de Interfaz" })
 
 Tabs.Config:Paragraph({
     Title = "Nox / Obsidian",
-    Desc = "Negro, blanco y una interfaz hecha para NoxHub. Creado por Kev.",
+    Desc = "Negro, blanco y una interfaz hecha para XeroHub. Creado por Kev.",
 })
 
 Tabs.Config:Toggle({

@@ -96,31 +96,27 @@ local function line(parent, x, y, w, h, rotation, color)
         Rotation=rotation or 0, BackgroundColor3=color or C.Muted}, parent)
 end
 local function mark(parent, size, color)
-    local holder = new("Frame", {BackgroundTransparency=1, Size=UDim2.fromOffset(size,size)}, parent)
+    -- Marca Xero: una X geométrica limpia. Sin marco, caja ni "reloj de arena".
+    local holder = new("Frame", {Name="XeroMark", BackgroundTransparency=1, Size=UDim2.fromOffset(size,size)}, parent)
     local tone = color or C.Text
-    local shell = new("Frame", {Name="Shell", BackgroundColor3=Color3.fromRGB(9,9,9),
-        AnchorPoint=Vector2.new(.5,.5), Position=UDim2.fromScale(.5,.5), Size=UDim2.fromScale(.9,.9)}, holder)
-    round(shell, math.max(7, math.floor(size*0.24)))
-    stroke(shell, tone, 1.4)
+    local length = math.max(14, math.floor(size * 0.72))
+    local thickness = math.max(2, math.floor(size * 0.105))
 
-    local inner = new("Frame", {Name="Inner", BackgroundColor3=Color3.fromRGB(255,255,255),
-        BackgroundTransparency=.985, AnchorPoint=Vector2.new(.5,.5), Position=UDim2.fromScale(.5,.5),
-        Size=UDim2.fromScale(.76,.76)}, shell)
-    round(inner, math.max(5, math.floor(size*0.18)))
-    stroke(inner, Color3.fromRGB(120,120,120), 1)
+    local function xBar(rotation)
+        local bar = new("Frame", {
+            AnchorPoint=Vector2.new(.5,.5),
+            Position=UDim2.fromScale(.5,.5),
+            Size=UDim2.fromOffset(length,thickness),
+            Rotation=rotation,
+            BackgroundColor3=tone,
+        }, holder)
+        round(bar, thickness)
+        return bar
+    end
 
-    local diagA = line(shell, math.floor(size*0.18), math.floor(size*0.24), math.floor(size*0.48), 2, 43, tone)
-    local diagB = line(shell, math.floor(size*0.18), math.floor(size*0.62), math.floor(size*0.48), 2, -43, tone)
-    local diagC = line(shell, math.floor(size*0.36), math.floor(size*0.24), math.floor(size*0.48), 2, -43, tone)
-    local diagD = line(shell, math.floor(size*0.36), math.floor(size*0.62), math.floor(size*0.48), 2, 43, tone)
-    diagA.BackgroundTransparency = .02
-    diagB.BackgroundTransparency = .02
-    diagC.BackgroundTransparency = .02
-    diagD.BackgroundTransparency = .02
+    xBar(45)
+    xBar(-45)
 
-    local cut = new("Frame", {BackgroundColor3=Color3.fromRGB(9,9,9), AnchorPoint=Vector2.new(.5,.5),
-        Position=UDim2.fromScale(.5,.5), Size=UDim2.fromOffset(math.max(2, math.floor(size*0.07)), math.max(14, math.floor(size*0.38)))}, shell)
-    round(cut, math.max(2, math.floor(size*0.03)))
     return holder
 end
 local function icon(parent, kind)
@@ -368,12 +364,9 @@ function Tab:Paragraph(options)
         c.DescLabel.TextSize=math.max(c.DescLabel.TextSize,11)
         c.DescLabel.TextColor3=o.DescColor or Color3.fromRGB(178,178,178)
         if c.Thumbnail then
+            -- La foto ya lleva su propio stroke. No añadimos un halo separado:
+            -- al relayout quedaba como un círculo vacío a la derecha del perfil.
             c.HeadMinimum=math.max(c.HeadMinimum or 0,(c.ThumbnailSize or 36)+8)
-            local halo=new("Frame",{Name="Halo",AnchorPoint=Vector2.new(.5,.5),Position=UDim2.new(c.Thumbnail.Position.X.Scale,c.Thumbnail.Position.X.Offset + math.floor((c.ThumbnailSize or 36)/2),c.Thumbnail.Position.Y.Scale,c.Thumbnail.Position.Y.Offset + math.floor((c.ThumbnailSize or 36)/2)),
-                Size=UDim2.fromOffset((c.ThumbnailSize or 36)+18,(c.ThumbnailSize or 36)+18),BackgroundColor3=Color3.fromRGB(255,255,255),BackgroundTransparency=.92,ZIndex=0},c.Head)
-            round(halo,math.floor(((c.ThumbnailSize or 36)+18)/2))
-            local haloStroke=stroke(halo,Color3.fromRGB(236,236,236),1)
-            haloStroke.Transparency=.68
             c.Thumbnail.ZIndex=2
         end
         if o.BadgeText then
@@ -685,7 +678,7 @@ function Nox:CreateWindow(options)
         Title=plain(o.Title or "XeroHub"),Author=o.Author or "by Kev",UIScale=1,_navOrder=0}
     self.Window=w; env.__NOX_UI=w
     local gui=new("ScreenGui",{Name="XeroHubUI",ResetOnSpawn=false,IgnoreGuiInset=true,
-        DisplayOrder=2147483647,ZIndexBehavior=Enum.ZIndexBehavior.Sibling},parent)
+        DisplayOrder=2147483000,ZIndexBehavior=Enum.ZIndexBehavior.Sibling},parent)
     -- El panel usa todo el viewport real. Así puede tocar Y=0 y no queda atrapado
     -- debajo del inset de la barra superior de Roblox.
     pcall(function()
@@ -695,7 +688,7 @@ function Nox:CreateWindow(options)
     end)
     pcall(function() gui.OnTopOfCoreBlur=true end)
     local launcherGui=new("ScreenGui",{Name="XeroHubLauncher",ResetOnSpawn=false,IgnoreGuiInset=true,
-        DisplayOrder=2147483647,ZIndexBehavior=Enum.ZIndexBehavior.Sibling},parent)
+        DisplayOrder=2147483001,ZIndexBehavior=Enum.ZIndexBehavior.Sibling},parent)
     pcall(function()
         launcherGui.ScreenInsets=Enum.ScreenInsets.None
         launcherGui.ClipToDeviceSafeArea=false
@@ -740,9 +733,16 @@ function Nox:CreateWindow(options)
     end
     local top=new("Frame",{Name="Topbar",BackgroundTransparency=1,Size=UDim2.new(1,0,0,58),ZIndex=5},root)
     local logo=mark(top,28); logo.Position=UDim2.fromOffset(16,12)
-    local brand=label(top,"XERO | DUELS",16,C.Text,{Position=UDim2.fromOffset(50,10),Size=UDim2.fromOffset(128,22),Font=BOLD})
-    local statusLabel=label(top,"-- activos",13,C.Text,{Position=UDim2.fromOffset(172,10),Size=UDim2.fromOffset(110,22),Font=BOLD})
-    local subtitle=label(top,"N O X  /  "..tostring(o.Subtitle or "DUELS"),8,C.Faint,{Position=UDim2.fromOffset(52,37),Size=UDim2.fromOffset(180,14)})
+
+    local titleCluster=new("Frame",{Name="TitleCluster",BackgroundTransparency=1,
+        Position=UDim2.fromOffset(50,9),Size=UDim2.fromOffset(290,24)},top)
+    -- El título y el contador se posicionan manualmente para mantenerlos juntos
+    -- en cualquier ancho; un UIListLayout con AutomaticSize dejaba huecos raros.
+    local brand=label(titleCluster,"XERO | DUELS",16,C.Text,{Position=UDim2.fromOffset(0,0),
+        Size=UDim2.fromOffset(120,22),Font=BOLD})
+    local statusLabel=label(titleCluster,"-- activos",12,C.Muted,{Position=UDim2.fromOffset(126,0),
+        Size=UDim2.fromOffset(96,22),Font=BOLD})
+    local subtitle=label(top,"X E R O  /  "..tostring(o.Subtitle or "DUELS"),8,C.Faint,{Position=UDim2.fromOffset(52,37),Size=UDim2.fromOffset(180,14)})
     local author=label(top,w.Author,11,C.Muted,{Position=UDim2.new(1,-248,0,27),Size=UDim2.fromOffset(104,20),TextXAlignment=Enum.TextXAlignment.Right})
     local controls=new("Frame",{BackgroundTransparency=1,Position=UDim2.new(1,-76,0,8),Size=UDim2.fromOffset(64,28)},top)
     -- Navegación siempre visible: ya no existe el botón hamburguesa/drawer.
@@ -885,6 +885,10 @@ function Nox:CreateWindow(options)
         if w.Destroyed then return end
         local bounds=surface.AbsoluteSize
         if bounds.X<1 or bounds.Y<1 then return end
+
+        -- La ventana conserva tamaño lógico, pero nunca puede salir del viewport.
+        -- En móvil se redistribuye en vez de escalarse completa, para mantener
+        -- texto, botones, dropdowns y sliders legibles/táctiles.
         local maxWidth=math.max(280,bounds.X/w.UIScale)
         local maxHeight=math.max(240,bounds.Y/w.UIScale)
         local minWidth=math.min(w._minWidth,maxWidth)
@@ -892,68 +896,174 @@ function Nox:CreateWindow(options)
         local width=math.clamp(w._desiredWidth,minWidth,maxWidth)
         local height=math.clamp(w._desiredHeight,minHeight,maxHeight)
         root.Size=UDim2.fromOffset(width,height)
+
+        local phone=width<520
+        local tiny=width<380
+        local short=height<390
+        local veryShort=height<330
         w.Short=height<435
         w.Narrow=width<500
         w.Compact=width<650 or w.Short
-        local tight=width<525 or height<410 or Input.TouchEnabled
-        local topHeight=tight and 46 or 50
-        local contentTop=topHeight+9
-        -- Rail persistente. En pantallas estrechas se hace más delgado, nunca desaparece.
-        local sidebarWidth = width<440 and 96 or (width<560 and 108 or (width<700 and 120 or 136))
-        local left=9+sidebarWidth+12
-        local right=tight and 8 or 10
-        local bottom=w.Short and 6 or 9
-        w.ContentWidth=math.max(170,width-left-right)
+
+        local topHeight=(phone or short) and 48 or 52
+        local contentTop=topHeight+8
+        local sidebarWidth
+        if width<340 then sidebarWidth=76
+        elseif width<430 then sidebarWidth=86
+        elseif width<560 then sidebarWidth=100
+        elseif width<700 then sidebarWidth=116
+        else sidebarWidth=136 end
+
+        local left=8+sidebarWidth+10
+        local right=phone and 7 or 10
+        local bottom=veryShort and 4 or (w.Short and 6 or 9)
+        w.ContentWidth=math.max(150,width-left-right)
+
         top.Size=UDim2.new(1,0,0,topHeight)
-        logo.Position=UDim2.fromOffset(tight and 10 or 14,tight and 8 or 10)
-        brand.Text=(width<520) and "XERO" or "XERO | DUELS"
-        local brandX=tight and 40 or 46
-        local brandWidth=(width<520) and 72 or 128
-        brand.Position=UDim2.fromOffset(brandX,8)
-        brand.Size=UDim2.fromOffset(brandWidth,22)
-        brand.TextSize=tight and 13 or 15
-        brand.Visible=width>=350
-        statusLabel.Position=UDim2.fromOffset(brandX+brandWidth+(tight and 2 or 8),tight and 7 or 7)
-        statusLabel.Size=UDim2.fromOffset((width<520) and 84 or 108,22)
-        statusLabel.TextSize=tight and 10 or 12
-        statusLabel.Visible=width>=410
+        logo.Size=UDim2.fromOffset(phone and 24 or 28,phone and 24 or 28)
+        logo.Position=UDim2.fromOffset(phone and 10 or 14,phone and 11 or 11)
         logo.Visible=true
-        subtitle.Visible=false
-        controls.Position=UDim2.new(1,-68,0,tight and 5 or 6)
+
+        controls.Position=UDim2.new(1,-68,0,8)
         controls.Size=UDim2.fromOffset(60,28)
         minimize.Position=UDim2.fromOffset(0,0); minimize.Size=UDim2.fromOffset(26,26)
         close.Position=UDim2.fromOffset(30,0); close.Size=UDim2.fromOffset(26,26)
-        local minIcon=minimize:FindFirstChildOfClass("Frame"); if minIcon then minIcon.Position=UDim2.fromOffset(3,3) end
-        local closeIcon=close:FindFirstChildOfClass("Frame"); if closeIcon then closeIcon.Position=UDim2.fromOffset(3,3) end
-        topRule.Position=UDim2.fromOffset(14,topHeight-1); topRule.Size=UDim2.new(1,-28,0,1)
-        menu.Visible=false; author.Visible=false
-        local searchWidth=math.clamp(math.floor(width*(tight and 0.31 or 0.28)),156,236)
-        searchBox.Size=UDim2.fromOffset(searchWidth,tight and 26 or 28)
-        searchBox.Position=UDim2.new(1,-(searchWidth+controls.Size.X.Offset+12),0,tight and 5 or 6)
-        searchBox.Visible=true
+
+        -- Marca + activos: siempre juntos y usando sólo el espacio realmente libre.
+        local clusterX=phone and 40 or 48
+        local clusterRight=width-76
+        local clusterWidth=math.max(82,clusterRight-clusterX-4)
+        titleCluster.Position=UDim2.fromOffset(clusterX,phone and 10 or 10)
+        titleCluster.Size=UDim2.fromOffset(clusterWidth,24)
+        brand.Text=(tiny and "XERO") or "XERO | DUELS"
+        brand.TextSize=phone and 13 or 15
+        statusLabel.TextSize=phone and 10 or 11
+
+        local measuredBrand=math.ceil(TextService:GetTextSize(
+            brand.Text,brand.TextSize,brand.Font,Vector2.new(300,24)
+        ).X)
+        local measuredStatus=math.ceil(TextService:GetTextSize(
+            statusLabel.Text,statusLabel.TextSize,statusLabel.Font,Vector2.new(180,24)
+        ).X)
+        local gap=phone and 6 or 8
+        local canShowStatus=(measuredBrand+gap+measuredStatus)<=clusterWidth
+        if not canShowStatus and brand.Text~="XERO" then
+            brand.Text="XERO"
+            measuredBrand=math.ceil(TextService:GetTextSize(
+                brand.Text,brand.TextSize,brand.Font,Vector2.new(180,24)
+            ).X)
+            canShowStatus=(measuredBrand+gap+measuredStatus)<=clusterWidth
+        end
+        brand.Position=UDim2.fromOffset(0,0)
+        brand.Size=UDim2.fromOffset(math.min(measuredBrand,clusterWidth),22)
+        statusLabel.Position=UDim2.fromOffset(measuredBrand+gap,0)
+        statusLabel.Size=UDim2.fromOffset(math.max(0,clusterWidth-measuredBrand-gap),22)
+        statusLabel.Visible=canShowStatus
+
+        subtitle.Visible=false
+        author.Visible=false
+        menu.Visible=false
+
+        topRule.Position=UDim2.fromOffset(12,topHeight-1)
+        topRule.Size=UDim2.new(1,-24,0,1)
+
         sidebar.Visible=true
-        sidebar.Position=UDim2.fromOffset(9,contentTop)
+        sidebar.Position=UDim2.fromOffset(8,contentTop)
         sidebar.Size=UDim2.new(0,sidebarWidth,1,-contentTop-bottom)
-        nav.Size=UDim2.new(1,-10,1,w.Short and -8 or -32)
-        nav.Position=UDim2.fromOffset(5,7)
-        nav.ScrollBarThickness=2; navFooter.Visible=not w.Short and sidebarWidth>=132
+        nav.Position=UDim2.fromOffset(4,6)
+        nav.Size=UDim2.new(1,-8,1,(w.Short or sidebarWidth<110) and -10 or -32)
+        nav.ScrollBarThickness=2
+        navFooter.Visible=not w.Short and sidebarWidth>=116
+        navFooter.Position=UDim2.new(0,8,1,-27)
+        navFooter.Size=UDim2.new(1,-16,0,15)
         drawerShade.Visible=false
+
+        -- En móvil el buscador baja al encabezado del contenido para no chocar
+        -- con el título, el contador ni los botones de ventana.
+        if phone then
+            if searchBox.Parent~=content then searchBox.Parent=content end
+            searchBox.Position=UDim2.fromOffset(0,28)
+            searchBox.Size=UDim2.new(1,0,0,28)
+            searchBox.Visible=w.ContentWidth>=150
+        else
+            if searchBox.Parent~=top then searchBox.Parent=top end
+            local searchWidth=math.clamp(math.floor(width*0.28),170,236)
+            searchBox.Size=UDim2.fromOffset(searchWidth,28)
+            searchBox.Position=UDim2.new(1,-(searchWidth+76),0,8)
+            searchBox.Visible=true
+        end
+
         content.Position=UDim2.fromOffset(left,contentTop)
         content.Size=UDim2.new(1,-left-right,1,-contentTop-bottom)
         pageTitle.Position=UDim2.fromOffset(0,0)
-        pageTitle.Size=UDim2.new(1,-76,0,22)
-        count.Position=UDim2.new(1,-84,0,2)
-        pageDesc.Position=UDim2.fromOffset(0,20)
-        pageDesc.Size=UDim2.new(1,-6,0,18)
-        pageDesc.Visible=not tight and height>=430 and w.ContentWidth>=280
-        count.Visible=not tight and width>=720
-        pageTitle.TextSize=tight and 16 or 18
+        pageTitle.Size=UDim2.new(1,phone and 0 or -76,0,22)
+        pageTitle.TextSize=phone and 16 or 18
         pageTitle.TextTruncate=Enum.TextTruncate.AtEnd
-        local pagesY=pageDesc.Visible and 40 or 24
-        pages.Position=UDim2.fromOffset(0,pagesY); pages.Size=UDim2.new(1,0,1,-pagesY)
-        footer.Visible=not tight
-        shortcut.Visible=not tight and width>=660
-        w:_drawer(false); clampRoot(); clampLauncher()
+
+        count.Position=UDim2.new(1,-84,0,2)
+        count.Visible=(not phone) and (not short) and width>=720
+
+        pageDesc.Position=UDim2.fromOffset(0,21)
+        pageDesc.Size=UDim2.new(1,-6,0,18)
+        pageDesc.Visible=(not phone) and height>=430 and w.ContentWidth>=280
+
+        local pagesY
+        if phone then
+            pagesY=62
+        else
+            pagesY=pageDesc.Visible and 40 or 25
+        end
+        pages.Position=UDim2.fromOffset(0,pagesY)
+        pages.Size=UDim2.new(1,0,1,-pagesY)
+
+        footer.Visible=(not phone) and (not short)
+        shortcut.Visible=(not phone) and (not short) and width>=660
+
+        -- Compacta sólo la navegación; el contenido conserva tamaños táctiles.
+        for _,tab in ipairs(w.Tabs) do
+            if tab.NavButton then
+                tab.NavButton.Size=UDim2.new(1,0,0,phone and 30 or 28)
+            end
+            if tab.SelectionBar then
+                tab.SelectionBar.Position=UDim2.fromOffset(1,phone and 6 or 5)
+                tab.SelectionBar.Size=UDim2.fromOffset(2,18)
+            end
+            local glyph=tab.NavButton and tab.NavButton:FindFirstChildOfClass("Frame")
+            if glyph then
+                glyph.Position=UDim2.fromOffset(phone and 4 or 6,phone and 5 or 4)
+                glyph.Visible=sidebarWidth>=76
+            end
+            if tab.NavTitle then
+                tab.NavTitle.Position=UDim2.fromOffset(phone and 23 or 26,0)
+                tab.NavTitle.Size=UDim2.new(1,phone and -25 or -30,1,0)
+                tab.NavTitle.TextSize=phone and 9 or 10
+            end
+        end
+        for _,section in ipairs(w.Groups) do
+            local group=section.ElementFrame
+            if group then
+                local heading=group:FindFirstChildOfClass("TextLabel")
+                if heading then
+                    heading.TextSize=phone and 8 or 9
+                    heading.Size=UDim2.new(1,-6,0,phone and 18 or 20)
+                end
+            end
+        end
+
+        -- Botón flotante también se adapta a pantallas angostas.
+        if bounds.X<380 then
+            openButton.Size=UDim2.fromOffset(math.min(138,math.max(112,bounds.X-20)),38)
+            openLabel.Text="Abrir Xero"
+            openLabel.TextSize=11
+        else
+            openButton.Size=UDim2.fromOffset(154,40)
+            openLabel.Text="Abrir XeroHub"
+            openLabel.TextSize=12
+        end
+
+        w:_drawer(false)
+        clampRoot()
+        clampLauncher()
         if not skipContentLayout then
             for _,tab in ipairs(w.Tabs) do tab:_queueFilter() end
         end
@@ -1024,7 +1134,10 @@ function Nox:CreateWindow(options)
         self.Title=plain(title)
         footer.Text=self.Title
         local active=self.Title:match("(%d+)%s+activos")
-        if active then statusLabel.Text=active.." activos"; statusLabel.Visible=true end
+        if active then
+            statusLabel.Text=active.." activos"
+            if self._fit then self._fit(true) end
+        end
         return self
     end
     function w:SetAuthor(text) self.Author=plain(text); author.Text=self.Author end

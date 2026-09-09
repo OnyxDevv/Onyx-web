@@ -1,4 +1,4 @@
--- iLunXHub | DUELS MURDERS VS SHERIFF --
+-- iLunXHub | DUELS MURDERS VS SHERIFF | UI by AlexDev --
 
 
 local MM2_PLACE_ID = 142823291
@@ -17,7 +17,7 @@ local workspace = game:GetService("Workspace")
 
 -- Estilo iOS: radios consistentes para ventana, controles y overlays.
 local IOS_STYLE = {
-    WindowRadius = 22,
+    WindowRadius = 20,
     ElementRadius = 14,
     OverlayRadius = 14,
     OpenButtonRadius = 16,
@@ -140,12 +140,6 @@ function runtime.Cleanup()
         runtime.StartupGui = nil
     end
 
-    if runtime.Window then
-        local uiWindow = runtime.Window
-        runtime.Window = nil
-        pcall(function() uiWindow:Destroy() end)
-    end
-
     if runtime.ScreenGui then
         pcall(function() runtime.ScreenGui:Destroy() end)
         runtime.ScreenGui = nil
@@ -264,7 +258,7 @@ do
     splash.Name = "Splash"
     splash.Size = UDim2.fromScale(1, 1)
     splash.Position = UDim2.fromScale(0, 0)
-    splash.BackgroundColor3 = Color3.fromHex("#090D16")
+    splash.BackgroundColor3 = Color3.new(0, 0, 0)
     splash.BackgroundTransparency = 0
     splash.BorderSizePixel = 0
     splash.GroupTransparency = 1
@@ -276,7 +270,7 @@ do
     content.Name = "LoaderContent"
     content.AnchorPoint = Vector2.new(0.5, 0.5)
     content.Position = UDim2.fromScale(0.5, 0.5)
-    content.Size = UDim2.new(1, -32, 0, 128)
+    content.Size = UDim2.fromOffset(460, 128)
     content.BackgroundTransparency = 1
     content.ZIndex = 2
     content.Parent = splash
@@ -306,7 +300,7 @@ do
     status.Position = UDim2.new(0.5, 0, 0, 62)
     status.BackgroundTransparency = 1
     status.Text = "Cargando iLunXHub..."
-    status.TextColor3 = Color3.fromHex("#9FADC3")
+    status.TextColor3 = Color3.fromHex("#9B9FA6")
     status.Font = Enum.Font.GothamMedium
     status.TextSize = 13
     status.TextXAlignment = Enum.TextXAlignment.Center
@@ -317,7 +311,7 @@ do
     progressTrack.AnchorPoint = Vector2.new(0.5, 0)
     progressTrack.Size = UDim2.fromOffset(230, 2)
     progressTrack.Position = UDim2.new(0.5, 0, 0, 98)
-    progressTrack.BackgroundColor3 = Color3.fromHex("#26334A")
+    progressTrack.BackgroundColor3 = Color3.fromHex("#242528")
     progressTrack.BorderSizePixel = 0
     progressTrack.ZIndex = 3
     progressTrack.Parent = content
@@ -325,7 +319,7 @@ do
 
     local progress = Instance.new("Frame")
     progress.Size = UDim2.fromScale(0.04, 1)
-    progress.BackgroundColor3 = Color3.fromHex("#D6E3F5")
+    progress.BackgroundColor3 = Color3.fromHex("#E7E9EC")
     progress.BorderSizePixel = 0
     progress.ZIndex = 4
     progress.Parent = progressTrack
@@ -444,42 +438,41 @@ end
 -- INICIALIZACIÓN WINDUI (CON CACHÉ 24HRS)
 -- ==========================================
 local WindUI
-local _version = "2.0.0_NOCTIS"
+local _version = "1.9.0_ILUNX_MONO"
 local uiFileName = "iLunXHubUI_Cache_v" .. _version .. ".txt"
 local timeFileName = "iLunXHubUI_Cache_v" .. _version .. "_Time.txt"
 
 local ok, result = pcall(function()
-    local function execute(source, label)
-        local chunk, syntaxError = loadstring(source, label)
-        if not chunk then error("UI inválida: " .. tostring(syntaxError)) end
-        local library = chunk()
-        if type(library) ~= "table" or type(library.CreateWindow) ~= "function" then
-            error("El archivo de UI no devuelve una biblioteca válida.")
-        end
-        return library
-    end
-    -- El archivo nuevo siempre tiene prioridad, aunque exista caché de 24 horas.
-    if isfile and readfile then
-        for _, filename in ipairs({"main_iLunX_PRO.lua", "main.lua"}) do
-            if isfile(filename) then return execute(readfile(filename), filename) end
-        end
-        if isfile(uiFileName) and isfile(timeFileName) then
-            local savedTime = tonumber(readfile(timeFileName))
-            if savedTime and os.time() >= savedTime and os.time() - savedTime < 86400 then
-                local cached, library = pcall(execute, readfile(uiFileName), uiFileName)
-                if cached then return library end
-            end
+    local cacheValido = false
+    
+    -- Revisar la expiración del caché
+    if isfile and isfile(timeFileName) and readfile then
+        local savedTime = tonumber(readfile(timeFileName))
+        if savedTime and (os.time() - savedTime) < 86400 then -- 24 horas
+            cacheValido = true
         end
     end
-    local source = game:HttpGet("https://raw.githubusercontent.com/OnyxDevv/Onyx-web/refs/heads/main/main.lua")
-    local library = execute(source, "iLunXHub UI")
-    if writefile then
-        pcall(function()
-            writefile(uiFileName, source)
-            writefile(timeFileName, tostring(os.time()))
-        end)
+
+    if cacheValido and isfile and isfile(uiFileName) then
+        -- Cargar desde almacenamiento local (Carga instantánea sin lag)
+        return loadstring(readfile(uiFileName))()
+    else
+        -- Si guardas ambos archivos juntos, prioriza la UI local.
+        -- Si no existe, conserva el fallback remoto actual.
+        local localUiFile = "main_iLunX_PRO.lua"
+        local codigoUi
+        if isfile and readfile and isfile(localUiFile) then
+            codigoUi = readfile(localUiFile)
+        else
+            codigoUi = game:HttpGet("https://raw.githubusercontent.com/OnyxDevv/Onyx-web/refs/heads/main/main.lua")
+        end
+        
+        if writefile then 
+            writefile(uiFileName, codigoUi) 
+            writefile(timeFileName, tostring(os.time())) -- Guardamos el nuevo tiempo de vida
+        end
+        return loadstring(codigoUi)()
     end
-    return library
 end)
 
 if ok and result then 
@@ -499,13 +492,13 @@ local Window = WindUI:CreateWindow({
     IconSize = 20,
     IconRadius = 8,
     Folder = "iLunXHub_WindUI",
-    Size = UDim2.new(0, 760, 0, 540),
+    Size = UDim2.new(0, 720, 0, 520),
     MinSize = Vector2.new(620, 420),
     MaxSize = Vector2.new(900, 650),
     Radius = IOS_STYLE.WindowRadius,
     ElementsRadius = IOS_STYLE.ElementRadius,
-    SideBarWidth = 190,
-    ShadowTransparency = 0.58,
+    SideBarWidth = 184,
+    ShadowTransparency = 0.76,
     Acrylic = false,
     Transparent = false,
     NewElements = false,
@@ -514,24 +507,23 @@ local Window = WindUI:CreateWindow({
     AmbientBackground = true,
     HideSearchBar = true,
     OpenButton = {
-        Title = "Abrir iLunXHub",
+        Title = "iLunXHub",
         Icon = "x",
         CornerRadius = UDim.new(0, IOS_STYLE.OpenButtonRadius),
         StrokeThickness = 1,
         Enabled = true,
         Draggable = true,
-        Scale = 1,
-        OnlyMobile = false,
+        OnlyIcon = true,
+        Scale = 0.86,
         Color = ColorSequence.new({
-            ColorSequenceKeypoint.new(0, Color3.fromRGB(60, 65, 72)),
-            ColorSequenceKeypoint.new(0.48, Color3.fromRGB(255, 255, 255)),
-            ColorSequenceKeypoint.new(1, Color3.fromRGB(126, 132, 140))
+            ColorSequenceKeypoint.new(0, Color3.fromRGB(42, 42, 45)),
+            ColorSequenceKeypoint.new(0.50, Color3.fromRGB(146, 146, 151)),
+            ColorSequenceKeypoint.new(1, Color3.fromRGB(48, 48, 52))
         })
     },
-    Topbar = { Height = 62, ButtonsType = "Default" }
+    Topbar = { Height = 52, ButtonsType = "Default" }
 })
 
-runtime.Window = Window
 pcall(function()
     Window:OnDestroy(runtime.Cleanup)
 end)
@@ -623,11 +615,11 @@ runtime.NotificationsReady = false
 
 local function createIOSBanner(payload)
     local banner = Instance.new("CanvasGroup")
-    banner.Name = "IlunXNoctisBanner"
+    banner.Name = "iOSBannerFast"
     banner.AnchorPoint = Vector2.new(0.5, 0)
     banner.Position = UDim2.new(0.5, 0, 0, -96)
     banner.Size = UDim2.new(1, -24, 0, 78)
-    banner.BackgroundColor3 = Color3.new(1, 1, 1)
+    banner.BackgroundColor3 = Color3.fromHex("#1C1C1E")
     banner.BackgroundTransparency = 0.035
     banner.BorderSizePixel = 0
     banner.ClipsDescendants = true
@@ -640,19 +632,19 @@ local function createIOSBanner(payload)
     sizeConstraint.MaxSize = Vector2.new(390, 78)
     sizeConstraint.Parent = banner
 
-    Instance.new("UICorner", banner).CornerRadius = UDim.new(0, 18)
+    Instance.new("UICorner", banner).CornerRadius = UDim.new(0, 20)
 
     local stroke = Instance.new("UIStroke")
-    stroke.Color = Color3.fromHex("#8DA4C4")
-    stroke.Transparency = 0.56
+    stroke.Color = Color3.fromHex("#68686B")
+    stroke.Transparency = 0.38
     stroke.Thickness = 1
     stroke.Parent = banner
 
     local gradient = Instance.new("UIGradient")
     gradient.Color = ColorSequence.new({
-        ColorSequenceKeypoint.new(0, Color3.fromHex("#26364B")),
-        ColorSequenceKeypoint.new(0.52, Color3.fromHex("#172333")),
-        ColorSequenceKeypoint.new(1, Color3.fromHex("#101722"))
+        ColorSequenceKeypoint.new(0, Color3.fromHex("#343437")),
+        ColorSequenceKeypoint.new(0.52, Color3.fromHex("#242426")),
+        ColorSequenceKeypoint.new(1, Color3.fromHex("#18181A"))
     })
     gradient.Rotation = 105
     gradient.Parent = banner
@@ -678,7 +670,7 @@ local function createIOSBanner(payload)
     iconText.Size = UDim2.fromScale(1, 1)
     iconText.BackgroundTransparency = 1
     iconText.Text = payload.icon
-    iconText.TextColor3 = Color3.fromHex("#132033")
+    iconText.TextColor3 = Color3.fromHex("#111113")
     iconText.Font = Enum.Font.GothamBlack
     iconText.TextSize = 18
     iconText.ZIndex = 204
@@ -701,8 +693,8 @@ local function createIOSBanner(payload)
     timeLabel.Size = UDim2.fromOffset(48, 18)
     timeLabel.Position = UDim2.new(1, -13, 0, 8)
     timeLabel.BackgroundTransparency = 1
-    timeLabel.Text = "ILUNX"
-    timeLabel.TextColor3 = Color3.fromHex("#8EA1BD")
+    timeLabel.Text = "ahora"
+    timeLabel.TextColor3 = Color3.fromHex("#A7A7AD")
     timeLabel.Font = Enum.Font.GothamMedium
     timeLabel.TextSize = 10
     timeLabel.TextXAlignment = Enum.TextXAlignment.Right
@@ -714,8 +706,8 @@ local function createIOSBanner(payload)
     body.Position = UDim2.fromOffset(59, 27)
     body.BackgroundTransparency = 1
     body.Text = payload.text
-    body.TextColor3 = Color3.fromHex("#D6DFED")
-    body.Font = Enum.Font.Gotham
+    body.TextColor3 = Color3.fromHex("#EAEAEE")
+    body.Font = Enum.Font.GothamMedium
     body.TextSize = 13
     body.TextWrapped = true
     body.TextXAlignment = Enum.TextXAlignment.Left
@@ -723,16 +715,6 @@ local function createIOSBanner(payload)
     body.ZIndex = 203
     body.Parent = banner
 
-    local line = Instance.new("Frame")
-    line.Name = "Lifetime"
-    line.Size = UDim2.new(1, -36, 0, 2)
-    line.Position = UDim2.new(0, 18, 1, -6)
-    line.BackgroundColor3 = payload.accent
-    line.BackgroundTransparency = 0.45
-    line.BorderSizePixel = 0
-    line.ZIndex = 204
-    line.Parent = banner
-    Instance.new("UICorner", line).CornerRadius = UDim.new(1, 0)
     return banner
 end
 
@@ -745,35 +727,24 @@ local function runNotificationQueue()
             local payload = table.remove(notificationQueue, 1)
             local banner = createIOSBanner(payload)
 
-            if Window.ReduceMotion then
-                banner.Position = UDim2.new(0.5, 0, 0, 10)
-                banner.GroupTransparency = 0
-            else
-                local enterTween = TweenService:Create(
-                    banner,
-                    TweenInfo.new(NOTIFICATION_TIMING.Enter, Enum.EasingStyle.Quint, Enum.EasingDirection.Out),
-                    {Position = UDim2.new(0.5, 0, 0, 10), GroupTransparency = 0}
-                )
-                enterTween:Play()
-                enterTween.Completed:Wait()
-            end
+            local enterTween = TweenService:Create(
+                banner,
+                TweenInfo.new(NOTIFICATION_TIMING.Enter, Enum.EasingStyle.Quint, Enum.EasingDirection.Out),
+                {Position = UDim2.new(0.5, 0, 0, 10), GroupTransparency = 0}
+            )
+            enterTween:Play()
+            enterTween.Completed:Wait()
 
-            if not runtime.Alive or not banner.Parent then break end
-            TweenService:Create(banner.Lifetime, TweenInfo.new(payload.duration, Enum.EasingStyle.Linear), {
-                Size = UDim2.new(0, 0, 0, 2)
-            }):Play()
             task.wait(payload.duration)
             if not runtime.Alive or not banner.Parent then break end
 
-            if not Window.ReduceMotion then
-                local exitTween = TweenService:Create(
-                    banner,
-                    TweenInfo.new(NOTIFICATION_TIMING.Exit, Enum.EasingStyle.Quint, Enum.EasingDirection.In),
-                    {Position = UDim2.new(0.5, 0, 0, -96), GroupTransparency = 1}
-                )
-                exitTween:Play()
-                exitTween.Completed:Wait()
-            end
+            local exitTween = TweenService:Create(
+                banner,
+                TweenInfo.new(NOTIFICATION_TIMING.Exit, Enum.EasingStyle.Quint, Enum.EasingDirection.In),
+                {Position = UDim2.new(0.5, 0, 0, -96), GroupTransparency = 1}
+            )
+            exitTween:Play()
+            exitTween.Completed:Wait()
             if banner.Parent then banner:Destroy() end
             task.wait(NOTIFICATION_TIMING.Gap)
         end
@@ -812,7 +783,7 @@ sendNotification = function(text, options)
         text = text,
         title = tostring(options.title or "iLunXHub"),
         icon = tostring(options.icon or "X"),
-        accent = options.accent or Color3.fromHex("#CFDBED"),
+        accent = options.accent or Color3.fromHex("#D8D8DC"),
         duration = holdDuration,
         key = options.key,
     }
@@ -890,7 +861,7 @@ for _, tab in pairs(Tabs) do
                             {
                                 title = "iLunXHub · Ajuste",
                                 icon = enabled and "✓" or "–",
-                                accent = enabled and Color3.fromHex("#78D98B") or Color3.fromHex("#8E8E93"),
+                                accent = enabled and Color3.fromHex("#ECECEF") or Color3.fromHex("#8E8E93"),
                                 key = "toggle:" .. title,
                             }
                         )
@@ -6691,18 +6662,18 @@ local floatingButtonsList = {}
 function createFloatingBtn(name, startPos, internalId)
     local btn = Instance.new("TextButton")
     btn.Name = internalId or name
-    btn.Size = UDim2.new(0, 158, 0, 46)
+    btn.Size = UDim2.new(0, 150, 0, 45)
     btn.Position = startPos
-    btn.BackgroundColor3 = Color3.fromHex("#192436")
+    btn.BackgroundColor3 = Color3.fromHex("#1C1C1E")
     btn.BackgroundTransparency = 0.08 
     btn.Text = name
     
     -- 🔥 MEJORAS DE TEXTO AQUÍ 🔥
     btn.TextColor3 = Color3.fromHex("#F3F4F5")
-    btn.Font = Enum.Font.GothamMedium
+    btn.Font = Enum.Font.GothamBold -- En negritas para resaltar
     btn.TextSize = 14
     btn.TextScaled = true -- Para que se autoajuste si lo hacen cuadrado
-    btn.TextStrokeTransparency = 1
+    btn.TextStrokeTransparency = 0.2 -- Contorno oscuro activado
     btn.TextStrokeColor3 = Color3.new(0, 0, 0) -- Contorno negro puro
     
     btn.AutoButtonColor = false
@@ -6716,43 +6687,24 @@ function createFloatingBtn(name, startPos, internalId)
     -- ❌ ELIMINAMOS EL UIGradient AQUÍ PARA QUE NO MANCHE LAS LETRAS ❌
 
     local stroke = Instance.new("UIStroke")
-    stroke.Thickness = 1
-    stroke.Color = Color3.fromHex("#8D9FBA")
+    stroke.Thickness = 1.2
+    stroke.Color = Color3.fromHex("#48484A")
     stroke.Transparency = 0.35
     stroke.Parent = btn
 
-    local textLimit = Instance.new("UITextSizeConstraint")
-    textLimit.MinTextSize = 10
-    textLimit.MaxTextSize = 14
-    textLimit.Parent = btn
-    local padding = Instance.new("UIPadding")
-    padding.PaddingLeft = UDim.new(0, 12)
-    padding.PaddingRight = UDim.new(0, 12)
-    padding.Parent = btn
-    local hoverTween, strokeTween
-    local function style(hovered)
+    btn.MouseEnter:Connect(function()
         if _G.AstraBotonesOcultos then return end
-        if hoverTween then hoverTween:Cancel() end
-        if strokeTween then strokeTween:Cancel() end
-        local timing = TweenInfo.new(Window.ReduceMotion and 0 or 0.12, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
-        hoverTween = TweenService:Create(btn, timing, {
-            BackgroundColor3 = Color3.fromHex(hovered and "#2C3D56" or "#192436"),
-            BackgroundTransparency = hovered and 0.02 or 0.08,
-        })
-        strokeTween = TweenService:Create(stroke, timing, {Transparency = hovered and 0.08 or 0.35})
-        hoverTween:Play()
-        strokeTween:Play()
-    end
-    btn:GetAttributeChangedSignal("IlunXHidden"):Connect(function()
-        if hoverTween then hoverTween:Cancel() end
-        if strokeTween then strokeTween:Cancel() end
+        btn.BackgroundColor3 = Color3.fromHex("#3A3A3C")
+        btn.BackgroundTransparency = 0.02
+        stroke.Color = Color3.fromHex("#D8DCE1")
+        stroke.Transparency = 0
     end)
-    btn.MouseEnter:Connect(function() style(true) end)
-    btn.MouseLeave:Connect(function() style(false) end)
-    btn:GetPropertyChangedSignal("Visible"):Connect(function()
-        if hoverTween then hoverTween:Cancel() end
-        if strokeTween then strokeTween:Cancel() end
-        if btn.Visible then style(false) end
+    btn.MouseLeave:Connect(function()
+        if _G.AstraBotonesOcultos then return end
+        btn.BackgroundColor3 = Color3.fromHex("#1C1C1E")
+        btn.BackgroundTransparency = 0.08
+        stroke.Color = Color3.fromHex("#48484A")
+        stroke.Transparency = 0.35
     end)
 
     makeDraggable(btn, btn)
@@ -8303,19 +8255,57 @@ Tabs.Config:Dropdown({
 
 Tabs.Config:Toggle({
     Title = "Ocultar Botón Flotante",
-    Desc = "Oculta el acceso para abrir iLunXHub.",
-    Callback = function(value)
-        Window:EditOpenButton({Enabled = not value})
-        if not value and Window.Closed then Window.OpenButtonMain:Visible(true) end
-    end
-})
+    Callback = function(Value)
+        local guisToSearch = { player:FindFirstChild("PlayerGui") }
+        pcall(function() table.insert(guisToSearch, game:GetService("CoreGui")) end)
 
-Tabs.Config:Toggle({
-    Title = "Reducir animaciones",
-    Desc = "Transiciones inmediatas para dispositivos de menor rendimiento.",
-    Value = false,
-    Callback = function(value)
-        Window.ReduceMotion = value
+        for _, guiContainer in ipairs(guisToSearch) do
+            if guiContainer then
+                for _, v in pairs(guiContainer:GetDescendants()) do
+                    if (v:IsA("TextLabel") or v:IsA("TextButton")) and v.Text and string.find(v.Text, "Abrir iLunXHub") then
+                        
+                        -- Subimos hasta la caja principal
+                        local btnContainer = v
+                        while btnContainer.Parent and not btnContainer.Parent:IsA("ScreenGui") and not btnContainer.Parent:IsA("Folder") do
+                            btnContainer = btnContainer.Parent
+                        end
+                        
+                        if btnContainer:IsA("CanvasGroup") then
+                            btnContainer.GroupTransparency = Value and 1 or 0
+                        else
+                            -- Función inteligente que "recuerda" la transparencia original
+                            function aplicarTransparencia(obj)
+                                if obj:IsA("UIStroke") then
+                                    if not obj:GetAttribute("OrigTrans") then obj:SetAttribute("OrigTrans", obj.Transparency) end
+                                    obj.Transparency = Value and 1 or obj:GetAttribute("OrigTrans")
+                                elseif obj:IsA("TextLabel") or obj:IsA("TextButton") then
+                                    if not obj:GetAttribute("OrigTxtTrans") then obj:SetAttribute("OrigTxtTrans", obj.TextTransparency) end
+                                    obj.TextTransparency = Value and 1 or obj:GetAttribute("OrigTxtTrans")
+                                    
+                                    if not obj:GetAttribute("OrigBgTrans") then obj:SetAttribute("OrigBgTrans", obj.BackgroundTransparency) end
+                                    obj.BackgroundTransparency = Value and 1 or obj:GetAttribute("OrigBgTrans")
+                                elseif obj:IsA("Frame") or obj:IsA("ImageLabel") or obj:IsA("ImageButton") then
+                                    if not obj:GetAttribute("OrigBgTrans") then obj:SetAttribute("OrigBgTrans", obj.BackgroundTransparency) end
+                                    obj.BackgroundTransparency = Value and 1 or obj:GetAttribute("OrigBgTrans")
+                                    
+                                    pcall(function()
+                                        if not obj:GetAttribute("OrigImgTrans") then obj:SetAttribute("OrigImgTrans", obj.ImageTransparency) end
+                                        obj.ImageTransparency = Value and 1 or obj:GetAttribute("OrigImgTrans")
+                                    end)
+                                end
+                            end
+                            
+                            -- Aplicamos a todo lo de adentro
+                            for _, obj in pairs(btnContainer:GetDescendants()) do
+                                aplicarTransparencia(obj)
+                            end
+                            -- Aplicamos a la caja contenedora
+                            aplicarTransparencia(btnContainer)
+                        end
+                    end
+                end
+            end
+        end
     end
 })
 
@@ -8332,7 +8322,6 @@ Tabs.Config:Toggle({
         
         for _, btn in ipairs(floatingButtonsList) do
             if btn then
-                btn:SetAttribute("IlunXHidden", Value)
                 btn.BackgroundTransparency = bgTrans
                 btn.TextTransparency = txtTrans
                 local stroke = btn:FindFirstChildOfClass("UIStroke")

@@ -479,8 +479,8 @@ local Window = WindUI:CreateWindow({
     Subtitle = "DUELS",
     Theme = "Xero",
     Author = "by Kev",
-    Size = UDim2.fromOffset(680, 430),
-    MinSize = Vector2.new(390, 320),
+    Size = UDim2.fromOffset(620, 350),
+    MinSize = Vector2.new(330, 270),
     Resizable = true,
     OpenButton = {Title = "Abrir XeroHub", Enabled = true},
 })
@@ -4634,9 +4634,10 @@ function runtime.EnsureAppearanceStudio()
     card.Name = "Card"
     card.AnchorPoint = Vector2.new(0.5, 0.5)
     card.Position = UDim2.fromScale(0.5, 0.5)
-    card.Size = UDim2.fromOffset(930, 560)
+    card.Size = UDim2.fromOffset(860, 500)
     card.BackgroundColor3 = Color3.fromRGB(12, 12, 12)
     card.BorderSizePixel = 0
+    card.ClipsDescendants = true
     card.ZIndex = 601
     card.Parent = overlay
     Instance.new("UICorner", card).CornerRadius = UDim.new(0, 24)
@@ -4824,9 +4825,13 @@ function runtime.EnsureAppearanceStudio()
     controlsScroll.Size = UDim2.new(1, 0, 1, -244)
     controlsScroll.BackgroundTransparency = 1
     controlsScroll.BorderSizePixel = 0
-    controlsScroll.ScrollBarThickness = 2
+    controlsScroll.ScrollBarThickness = 3
+    controlsScroll.ScrollBarImageColor3 = Color3.fromRGB(92, 92, 98)
     controlsScroll.AutomaticCanvasSize = Enum.AutomaticSize.Y
     controlsScroll.CanvasSize = UDim2.fromOffset(0, 0)
+    controlsScroll.ScrollingDirection = Enum.ScrollingDirection.Y
+    controlsScroll.ElasticBehavior = Enum.ElasticBehavior.Never
+    controlsScroll.ClipsDescendants = true
     controlsScroll.ZIndex = 603
     controlsScroll.Parent = side
     local controlsLayout = Instance.new("UIListLayout")
@@ -4930,22 +4935,24 @@ function runtime.EnsureAppearanceStudio()
             bounds = currentCamera and currentCamera.ViewportSize or Vector2.new(1280, 720)
         end
 
-        local margin = math.clamp(math.floor(math.min(bounds.X, bounds.Y) * 0.02), 6, 14)
+        local margin = math.clamp(math.floor(math.min(bounds.X, bounds.Y) * 0.035), 8, 18)
         local rawAvailableW = math.max(1, bounds.X - margin * 2)
         local rawAvailableH = math.max(1, bounds.Y - margin * 2)
         local availableW = math.max(250, rawAvailableW)
         local availableH = math.max(280, rawAvailableH)
         local aspect = availableW / math.max(1, availableH)
-        local wide = availableW >= 690 or (availableW >= 460 and aspect >= 1.35)
+        local wide = availableW >= 620 and aspect >= 1.18
 
+        -- No ocupa toda la pantalla al abrirse. Se conserva margen real para
+        -- que el editor se sienta como una ventana nativa y no como otro juego.
         local cardW
         local cardH
         if wide then
-            cardW = math.min(930, availableW)
-            cardH = math.min(560, availableH)
+            cardW = math.min(860, math.floor(availableW * 0.94))
+            cardH = math.min(500, math.floor(availableH * 0.90))
         else
-            cardW = math.min(560, availableW)
-            cardH = math.min(760, availableH)
+            cardW = math.min(520, math.floor(availableW * 0.95))
+            cardH = math.min(700, math.floor(availableH * 0.94))
         end
 
         studio.Card.Size = UDim2.fromOffset(cardW, cardH)
@@ -4953,8 +4960,8 @@ function runtime.EnsureAppearanceStudio()
         studio.TargetScale = 1
         studio.LayoutMode = wide and "wide" or "portrait"
 
-        local shortWide = wide and cardH < 430
-        local headerH = shortWide and 56 or ((not wide and cardW < 350) and 68 or 66)
+        local shortWide = wide and cardH < 440
+        local headerH = shortWide and 48 or ((not wide and cardW < 350) and 64 or 62)
 
         studio.TitleLabel.Position = UDim2.fromOffset(wide and 20 or 16, shortWide and 12 or 16)
         studio.TitleLabel.Size = UDim2.new(1, wide and -88 or -70, 0, 24)
@@ -4971,12 +4978,12 @@ function runtime.EnsureAppearanceStudio()
         studio.SubtitleLabel.TextWrapped = not wide and cardW < 430
 
         if wide then
-            local gap = cardW < 760 and 14 or 18
-            local sideMin = math.min(300, math.max(220, math.floor(cardW * 0.34)))
+            local gap = cardW < 760 and 12 or 16
+            local sideMin = math.min(340, math.max(240, math.floor(cardW * 0.40)))
             local previewW = math.clamp(
-                math.floor(cardW * (cardW < 760 and 0.48 or 0.47)),
-                math.min(220, cardW - sideMin - gap - 36),
-                math.max(220, cardW - sideMin - gap - 36)
+                math.floor(cardW * (cardW < 760 and 0.43 or 0.44)),
+                math.min(210, cardW - sideMin - gap - 36),
+                math.max(210, cardW - sideMin - gap - 36)
             )
             local previewX = 18
             local bodyY = headerH + 8
@@ -5014,11 +5021,11 @@ function runtime.EnsureAppearanceStudio()
             studio.TargetHint.Size = UDim2.new(1, 0, 0, 16)
             studio.TargetHint.TextSize = 9
 
-            local listY = studio.TargetHint.Visible and 42 or 25
+            local listY = studio.TargetHint.Visible and 40 or 24
             local listH
-            if bodyH < 250 then listH = 48
-            elseif bodyH < 330 then listH = 64
-            else listH = math.min(104, math.floor(bodyH * 0.25)) end
+            if bodyH < 250 then listH = 40
+            elseif bodyH < 330 then listH = 48
+            else listH = math.min(76, math.floor(bodyH * 0.18)) end
             studio.AccessoryList.Position = UDim2.fromOffset(0, listY)
             studio.AccessoryList.Size = UDim2.new(1, 0, 0, listH)
 
@@ -5082,8 +5089,8 @@ function runtime.EnsureAppearanceStudio()
             studio.TargetHint.Size = UDim2.new(1, 0, 0, 15)
             studio.TargetHint.TextSize = 9
 
-            local listY = studio.TargetHint.Visible and 38 or 22
-            local listH = math.clamp(math.floor(sideH * 0.22), 42, 72)
+            local listY = studio.TargetHint.Visible and 36 or 22
+            local listH = math.clamp(math.floor(sideH * 0.18), 38, 58)
             studio.AccessoryList.Position = UDim2.fromOffset(0, listY)
             studio.AccessoryList.Size = UDim2.new(1, 0, 0, listH)
 
@@ -5300,6 +5307,41 @@ function runtime.EnsureAppearanceStudio()
         end
     end))
 
+    local previewRefreshQueued = false
+    local function queueAppearancePreviewRefresh()
+        if previewRefreshQueued then return end
+        previewRefreshQueued = true
+        task.delay(0.045, function()
+            previewRefreshQueued = false
+            if runtime.Alive and runtime.AppearanceStudio and overlay.Visible then
+                runtime.RefreshAppearanceStudioPreview()
+            end
+        end)
+    end
+
+    local function updateStudioAccessoryTransform(key)
+        local studio = runtime.AppearanceStudio
+        local model = studio and studio.PreviewModel
+        if not model or not key then return false end
+
+        for _, accessory in ipairs(model:GetChildren()) do
+            if accessory:IsA("Accessory") and accessory:GetAttribute("iLunXAppearanceKey") == key then
+                local weld = runtime.FindAppearanceWeld(accessory)
+                local base = accessory:GetAttribute("XeroPreviewBaseC1")
+                if weld and typeof(base) == "CFrame" then
+                    local state = runtime.GetAppearanceOffset(key)
+                    local p = state.Position
+                    local r = state.Rotation
+                    weld.C1 = base
+                        * CFrame.new(p.X, p.Y, p.Z)
+                        * CFrame.Angles(math_rad(r.X), math_rad(r.Y), math_rad(r.Z))
+                    return true
+                end
+            end
+        end
+        return false
+    end
+
     local function setComponent(component, value)
         local studio = runtime.AppearanceStudio
         if not studio or studio.Syncing then return end
@@ -5321,19 +5363,64 @@ function runtime.EnsureAppearanceStudio()
         elseif component == "SCALE" then
             state.Scale = math.clamp(tonumber(value) or 1, 0.25, 3)
         end
+
         runtime.ApplyAppearanceOffset(key, nil, component == "SCALE")
-        task.defer(runtime.RefreshAppearanceStudio)
+
+        -- Posición/rotación se actualizan directamente en el Viewport para que
+        -- arrastrar con el dedo sea fluido. Tamaño reconstruye la preview de
+        -- forma limitada porque puede modificar MeshPart/SpecialMesh.
+        if component == "SCALE" or not updateStudioAccessoryTransform(key) then
+            queueAppearancePreviewRefresh()
+        end
     end
 
-    local function makeStepper(titleText, component, minValue, maxValue, stepValue, defaultValue)
+    local activeStudioSlider = nil
+
+    local function finishStudioSlider(input)
+        local active = activeStudioSlider
+        if not active then return end
+        if input and active.Input ~= input
+            and not (active.Input.UserInputType == Enum.UserInputType.MouseButton1
+                and input.UserInputType == Enum.UserInputType.MouseButton1) then
+            return
+        end
+        activeStudioSlider = nil
+        if controlsScroll and controlsScroll.Parent then
+            controlsScroll.ScrollingEnabled = true
+        end
+    end
+
+    runtime.Track(UserInputService.InputChanged:Connect(function(input)
+        local active = activeStudioSlider
+        if not active or not overlay.Visible then return end
+
+        local mouseDrag = active.Input.UserInputType == Enum.UserInputType.MouseButton1
+            and input.UserInputType == Enum.UserInputType.MouseMovement
+        local touchDrag = active.Input.UserInputType == Enum.UserInputType.Touch
+            and input == active.Input
+
+        if mouseDrag or touchDrag then
+            active.Api:SetFromScreenX(input.Position.X)
+        end
+    end))
+
+    runtime.Track(UserInputService.InputEnded:Connect(function(input)
+        if activeStudioSlider then
+            finishStudioSlider(input)
+        end
+    end))
+
+    local function makeStudioSlider(titleText, component, minValue, maxValue, stepValue, defaultValue)
         local row = Instance.new("Frame")
-        row.Size = UDim2.new(1, 0, 0, 40)
+        row.Name = component .. "Slider"
+        row.Size = UDim2.new(1, -3, 0, 60)
         row.BackgroundColor3 = Color3.fromRGB(18, 18, 18)
         row.BorderSizePixel = 0
         row.ClipsDescendants = true
         row.ZIndex = 603
         row.Parent = controlsScroll
         Instance.new("UICorner", row).CornerRadius = UDim.new(0, 12)
+
         local rowStroke = Instance.new("UIStroke")
         rowStroke.Color = Color3.fromRGB(42, 42, 46)
         rowStroke.Transparency = 0.18
@@ -5341,61 +5428,112 @@ function runtime.EnsureAppearanceStudio()
 
         local titleLabel = Instance.new("TextLabel")
         titleLabel.BackgroundTransparency = 1
-        titleLabel.Position = UDim2.fromOffset(12, 0)
-        titleLabel.Size = UDim2.new(1, -150, 1, 0)
+        titleLabel.Position = UDim2.fromOffset(12, 5)
+        titleLabel.Size = UDim2.new(1, -100, 0, 22)
         titleLabel.Text = titleText
         titleLabel.TextColor3 = Color3.fromRGB(236, 236, 236)
         titleLabel.Font = Enum.Font.GothamMedium
         titleLabel.TextSize = 10
         titleLabel.TextXAlignment = Enum.TextXAlignment.Left
+        titleLabel.TextTruncate = Enum.TextTruncate.AtEnd
         titleLabel.ZIndex = 604
         titleLabel.Parent = row
 
-        local minus = Instance.new("TextButton")
-        minus.Size = UDim2.fromOffset(28, 28)
-        minus.Position = UDim2.new(1, -132, 0.5, -14)
-        minus.BackgroundColor3 = Color3.fromRGB(28, 28, 28)
-        minus.BorderSizePixel = 0
-        minus.Text = "−"
-        minus.TextColor3 = Color3.fromRGB(242, 242, 242)
-        minus.Font = Enum.Font.GothamBold
-        minus.TextSize = 16
-        minus.AutoButtonColor = false
-        minus.ZIndex = 604
-        minus.Parent = row
-        Instance.new("UICorner", minus).CornerRadius = UDim.new(0, 10)
-
-        local plus = Instance.new("TextButton")
-        plus.Size = UDim2.fromOffset(28, 28)
-        plus.Position = UDim2.new(1, -8, 0.5, -14)
-        plus.AnchorPoint = Vector2.new(1, 0)
-        plus.BackgroundColor3 = Color3.fromRGB(28, 28, 28)
-        plus.BorderSizePixel = 0
-        plus.Text = "+"
-        plus.TextColor3 = Color3.fromRGB(242, 242, 242)
-        plus.Font = Enum.Font.GothamBold
-        plus.TextSize = 16
-        plus.AutoButtonColor = false
-        plus.ZIndex = 604
-        plus.Parent = row
-        Instance.new("UICorner", plus).CornerRadius = UDim.new(0, 10)
-
         local box = Instance.new("TextBox")
-        box.Size = UDim2.fromOffset(82, 28)
-        box.Position = UDim2.new(1, -98, 0.5, -14)
-        box.BackgroundColor3 = Color3.fromRGB(10, 10, 10)
+        box.AnchorPoint = Vector2.new(1, 0)
+        box.Size = UDim2.fromOffset(72, 24)
+        box.Position = UDim2.new(1, -8, 0, 5)
+        box.BackgroundColor3 = Color3.fromRGB(9, 9, 9)
         box.BorderSizePixel = 0
         box.ClearTextOnFocus = false
         box.Text = tostring(defaultValue or 0)
         box.TextColor3 = Color3.fromRGB(242, 242, 242)
         box.PlaceholderColor3 = Color3.fromRGB(120, 120, 126)
-        box.Font = Enum.Font.Gotham
-        box.TextSize = 11
-        box.ZIndex = 604
+        box.Font = Enum.Font.GothamMedium
+        box.TextSize = 10
+        box.ZIndex = 606
         box.Parent = row
-        Instance.new("UICorner", box).CornerRadius = UDim.new(0, 10)
+        Instance.new("UICorner", box).CornerRadius = UDim.new(0, 8)
 
-        local decimals = tostring(stepValue):find("%.") and #tostring(stepValue):match("%.(%d+)") or 0
+        local minus = Instance.new("TextButton")
+        minus.Size = UDim2.fromOffset(28, 28)
+        minus.Position = UDim2.fromOffset(8, 29)
+        minus.BackgroundColor3 = Color3.fromRGB(27, 27, 27)
+        minus.BorderSizePixel = 0
+        minus.Text = "−"
+        minus.TextColor3 = Color3.fromRGB(242, 242, 242)
+        minus.Font = Enum.Font.GothamBold
+        minus.TextSize = 15
+        minus.AutoButtonColor = false
+        minus.ZIndex = 606
+        minus.Parent = row
+        Instance.new("UICorner", minus).CornerRadius = UDim.new(0, 9)
+
+        local plus = Instance.new("TextButton")
+        plus.AnchorPoint = Vector2.new(1, 0)
+        plus.Size = UDim2.fromOffset(28, 28)
+        plus.Position = UDim2.new(1, -8, 0, 29)
+        plus.BackgroundColor3 = Color3.fromRGB(27, 27, 27)
+        plus.BorderSizePixel = 0
+        plus.Text = "+"
+        plus.TextColor3 = Color3.fromRGB(242, 242, 242)
+        plus.Font = Enum.Font.GothamBold
+        plus.TextSize = 15
+        plus.AutoButtonColor = false
+        plus.ZIndex = 606
+        plus.Parent = row
+        Instance.new("UICorner", plus).CornerRadius = UDim.new(0, 9)
+
+        local track = Instance.new("Frame")
+        track.Name = "Track"
+        track.Position = UDim2.fromOffset(46, 40)
+        track.Size = UDim2.new(1, -92, 0, 5)
+        track.BackgroundColor3 = Color3.fromRGB(48, 48, 52)
+        track.BorderSizePixel = 0
+        track.ZIndex = 604
+        track.Parent = row
+        Instance.new("UICorner", track).CornerRadius = UDim.new(1, 0)
+
+        local fill = Instance.new("Frame")
+        fill.Name = "Fill"
+        fill.Size = UDim2.fromScale(0, 1)
+        fill.BackgroundColor3 = Color3.fromRGB(236, 236, 236)
+        fill.BorderSizePixel = 0
+        fill.ZIndex = 605
+        fill.Parent = track
+        Instance.new("UICorner", fill).CornerRadius = UDim.new(1, 0)
+
+        local thumb = Instance.new("Frame")
+        thumb.Name = "Thumb"
+        thumb.AnchorPoint = Vector2.new(0.5, 0.5)
+        thumb.Position = UDim2.fromScale(0, 0.5)
+        thumb.Size = UDim2.fromOffset(16, 16)
+        thumb.BackgroundColor3 = Color3.fromRGB(246, 246, 246)
+        thumb.BorderSizePixel = 0
+        thumb.ZIndex = 607
+        thumb.Parent = track
+        Instance.new("UICorner", thumb).CornerRadius = UDim.new(1, 0)
+        local thumbStroke = Instance.new("UIStroke")
+        thumbStroke.Color = Color3.fromRGB(24, 24, 24)
+        thumbStroke.Transparency = 0.15
+        thumbStroke.Parent = thumb
+
+        -- Área táctil grande e invisible: el usuario no tiene que acertarle a
+        -- una línea de 5 px para deslizar.
+        local sliderHit = Instance.new("TextButton")
+        sliderHit.Name = "TouchTrack"
+        sliderHit.Position = UDim2.fromOffset(38, 28)
+        sliderHit.Size = UDim2.new(1, -76, 0, 31)
+        sliderHit.BackgroundTransparency = 1
+        sliderHit.Text = ""
+        sliderHit.AutoButtonColor = false
+        sliderHit.ZIndex = 608
+        sliderHit.Parent = row
+
+        local stepString = tostring(stepValue)
+        local fraction = stepString:match("%.(%d+)")
+        local decimals = fraction and #fraction or 0
+
         local function formatNumber(v)
             if decimals <= 0 then
                 return tostring(math.floor(v + (v >= 0 and 0.5 or -0.5)))
@@ -5403,38 +5541,83 @@ function runtime.EnsureAppearanceStudio()
             return string.format("%." .. tostring(decimals) .. "f", v)
         end
 
-        local api = {}
+        local api = {
+            Min = minValue,
+            Max = maxValue,
+            Step = stepValue,
+            Default = defaultValue or 0,
+            Track = track,
+            Fill = fill,
+            Thumb = thumb,
+        }
+
+        local function quantize(value)
+            value = math.clamp(tonumber(value) or api.Default, minValue, maxValue)
+            local steps = math.floor(((value - minValue) / stepValue) + 0.5)
+            return math.clamp(minValue + steps * stepValue, minValue, maxValue)
+        end
+
+        function api:UpdateVisual(value)
+            local span = math.max(0.000001, maxValue - minValue)
+            local alpha = math.clamp((value - minValue) / span, 0, 1)
+            fill.Size = UDim2.fromScale(alpha, 1)
+            thumb.Position = UDim2.new(alpha, 0, 0.5, 0)
+        end
+
         function api:Set(value, silent)
-            local numeric = math.clamp(tonumber(value) or defaultValue or 0, minValue, maxValue)
+            local numeric = quantize(value)
             box.Text = formatNumber(numeric)
+            self:UpdateVisual(numeric)
             if not silent then
                 setComponent(component, numeric)
             end
         end
+
         function api:Get()
-            return math.clamp(tonumber(box.Text) or defaultValue or 0, minValue, maxValue)
+            return quantize(box.Text)
         end
+
+        function api:SetFromScreenX(screenX)
+            local absPos = track.AbsolutePosition
+            local absSize = track.AbsoluteSize
+            if absSize.X <= 1 then return end
+            local alpha = math.clamp((screenX - absPos.X) / absSize.X, 0, 1)
+            self:Set(minValue + (maxValue - minValue) * alpha)
+        end
+
+        sliderHit.InputBegan:Connect(function(input)
+            if input.UserInputType ~= Enum.UserInputType.MouseButton1
+                and input.UserInputType ~= Enum.UserInputType.Touch then
+                return
+            end
+            activeStudioSlider = {Api = api, Input = input}
+            controlsScroll.ScrollingEnabled = false
+            api:SetFromScreenX(input.Position.X)
+        end)
 
         minus.Activated:Connect(function()
             api:Set(api:Get() - stepValue)
         end)
+
         plus.Activated:Connect(function()
             api:Set(api:Get() + stepValue)
         end)
+
         box.FocusLost:Connect(function()
             api:Set(box.Text)
         end)
 
+        api:Set(defaultValue or 0, true)
         runtime.AppearanceStudio.Controls[component] = api
     end
 
-    makeStepper("Posición X", "X", -3, 3, 0.05, 0)
-    makeStepper("Posición Y", "Y", -3, 3, 0.05, 0)
-    makeStepper("Posición Z", "Z", -3, 3, 0.05, 0)
-    makeStepper("Rotación X", "RX", -180, 180, 1, 0)
-    makeStepper("Rotación Y", "RY", -180, 180, 1, 0)
-    makeStepper("Rotación Z", "RZ", -180, 180, 1, 0)
-    makeStepper("Tamaño", "SCALE", 0.25, 3, 0.05, 1)
+    makeStudioSlider("Posición X", "X", -3, 3, 0.05, 0)
+    makeStudioSlider("Posición Y", "Y", -3, 3, 0.05, 0)
+    makeStudioSlider("Posición Z", "Z", -3, 3, 0.05, 0)
+    makeStudioSlider("Rotación X", "RX", -180, 180, 1, 0)
+    makeStudioSlider("Rotación Y", "RY", -180, 180, 1, 0)
+    makeStudioSlider("Rotación Z", "RZ", -180, 180, 1, 0)
+    makeStudioSlider("Tamaño", "SCALE", 0.25, 3, 0.05, 1)
 
     resetButton.Activated:Connect(function()
         local studio = runtime.AppearanceStudio
@@ -5620,6 +5803,7 @@ local function addAppearanceStudioAccessory(model, key)
         local p = state.Position
         local r = state.Rotation
         local base = weld.C1
+        accessory:SetAttribute("XeroPreviewBaseC1", base)
         weld.C1 = base
             * CFrame.new(p.X, p.Y, p.Z)
             * CFrame.Angles(math_rad(r.X), math_rad(r.Y), math_rad(r.Z))
@@ -5647,12 +5831,16 @@ function runtime.RefreshAppearanceStudioPreview()
             addAppearanceStudioAccessory(model, key)
         end
 
+        local previewRoot = model:FindFirstChild("HumanoidRootPart")
         for _, obj in ipairs(model:GetDescendants()) do
             if obj:IsA("BasePart") then
-                obj.Anchored = true
+                -- Anclar todas las piezas rompe Motor6D/AccessoryWeld y deja
+                -- cabeza, cabello y extremidades "flotando". Sólo fijamos el root.
+                obj.Anchored = obj == previewRoot
                 obj.CanCollide = false
                 obj.CanTouch = false
                 obj.CanQuery = false
+                obj.Massless = true
             end
         end
 
@@ -5667,6 +5855,12 @@ function runtime.RefreshAppearanceStudioPreview()
 
         model.Name = "Xero_AvatarPreview"
         model.Parent = worldModel
+        pcall(function()
+            model:PivotTo(CFrame.new())
+        end)
+        if previewRoot and previewRoot.Parent then
+            previewRoot.Anchored = true
+        end
         studio.PreviewModel = model
 
         local cameraPreview = Instance.new("Camera")

@@ -438,7 +438,7 @@ end
 -- INICIALIZACIÓN WINDUI (CON CACHÉ 24HRS)
 -- ==========================================
 local WindUI
-local _version = "1.9.0_ILUNX_MONO"
+local _version = "1.9.1_ILUNX_FIXED"
 local uiFileName = "iLunXHubUI_Cache_v" .. _version .. ".txt"
 local timeFileName = "iLunXHubUI_Cache_v" .. _version .. "_Time.txt"
 
@@ -471,14 +471,23 @@ local ok, result = pcall(function()
             writefile(uiFileName, codigoUi) 
             writefile(timeFileName, tostring(os.time())) -- Guardamos el nuevo tiempo de vida
         end
-        return loadstring(codigoUi)()
+        local uiChunk, compileError = loadstring(codigoUi)
+        if not uiChunk then
+            error("iLunXHub UI compile error: " .. tostring(compileError))
+        end
+
+        local loadedUI = uiChunk()
+        if loadedUI == nil then
+            error("iLunXHub UI devolvió nil al inicializarse")
+        end
+        return loadedUI
     end
 end)
 
 if ok and result then 
     WindUI = result 
 else 
-    warn("Error al cargar WindUI. Revisa el link de GitHub o tu conexión.") 
+    warn("Error al cargar WindUI: " .. tostring(result)) 
     startupSplashState.Finish("No se pudo cargar iLunXHub")
     return 
 end

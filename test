@@ -470,7 +470,7 @@ local Window = WindUI:CreateWindow({
     Subtitle = "DUELS",
     Theme = "Xero",
     Author = "by Kev",
-    Size = UDim2.fromOffset(760, 500),
+    Size = UDim2.fromOffset(740, 480),
     MinSize = Vector2.new(390, 320),
     Resizable = true,
     OpenButton = {Title = "Abrir XeroHub", Enabled = true},

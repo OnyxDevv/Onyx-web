@@ -784,6 +784,7 @@ function Nox:CreateWindow(options)
     local desired=o.Size or UDim2.fromOffset(680,430)
     w._desiredWidth=desired.X.Offset>0 and desired.X.Offset or 680
     w._desiredHeight=desired.Y.Offset>0 and desired.Y.Offset or 430
+    w._initialFitDone=false
     w.Resizable=o.Resizable~=false
     local minSize=o.MinSize or Vector2.new(390,320)
     w._minWidth=math.max(300,tonumber(minSize.X) or 390)
@@ -893,6 +894,20 @@ function Nox:CreateWindow(options)
         local maxHeight=math.max(240,bounds.Y/w.UIScale)
         local minWidth=math.min(w._minWidth,maxWidth)
         local minHeight=math.min(w._minHeight,maxHeight)
+
+        -- Primer arranque en móvil/landscape: deja aire alrededor del panel.
+        -- Después de esto no vuelve a forzar tamaño y el resize manual manda.
+        if not w._initialFitDone then
+            if maxHeight < 500 then
+                w._desiredHeight=math.min(w._desiredHeight,math.max(minHeight,maxHeight*0.82))
+                w._desiredWidth=math.min(w._desiredWidth,math.max(minWidth,maxWidth*0.80))
+            elseif maxWidth < 650 then
+                w._desiredWidth=math.min(w._desiredWidth,math.max(minWidth,maxWidth*0.90))
+                w._desiredHeight=math.min(w._desiredHeight,math.max(minHeight,maxHeight*0.88))
+            end
+            w._initialFitDone=true
+        end
+
         local width=math.clamp(w._desiredWidth,minWidth,maxWidth)
         local height=math.clamp(w._desiredHeight,minHeight,maxHeight)
         root.Size=UDim2.fromOffset(width,height)
@@ -1027,6 +1042,8 @@ function Nox:CreateWindow(options)
             if tab.SelectionBar then
                 tab.SelectionBar.Position=UDim2.fromOffset(1,phone and 6 or 5)
                 tab.SelectionBar.Size=UDim2.fromOffset(2,18)
+                tab.SelectionBar.Visible=true
+                tab.SelectionBar.BackgroundTransparency=(w.CurrentTab==tab) and 0 or 1
             end
             local glyph=tab.NavButton and tab.NavButton:FindFirstChildOfClass("Frame")
             if glyph then
@@ -1083,7 +1100,10 @@ function Nox:CreateWindow(options)
             tab.NavButton.BackgroundColor3=selected and C.Row or Color3.fromRGB(11,11,11)
             tab.NavTitle.TextColor3=selected and C.Text or C.Muted
             if tab.Number then tab.Number.TextColor3=selected and C.Text or C.Faint end
-            if tab.SelectionBar then tab.SelectionBar.Visible=selected end
+            if tab.SelectionBar then
+                tab.SelectionBar.Visible=true
+                tab.SelectionBar.BackgroundTransparency=selected and 0 or 1
+            end
         end
         pageTitle.Text=target.Title; pageDesc.Text=target.Desc
         search.Text=target.Query or ""; clear.Visible=search.Text~=""
@@ -1101,7 +1121,7 @@ function Nox:CreateWindow(options)
         local navButton=button(holder or nav,"",{Name=title,Size=UDim2.new(1,0,0,28),BackgroundColor3=Color3.fromRGB(10,10,10),LayoutOrder=index})
         round(navButton,8)
         local selectionBar=new("Frame",{Name="Selected",Position=UDim2.fromOffset(1,5),Size=UDim2.fromOffset(2,18),
-            BackgroundColor3=C.Text,Visible=false,ZIndex=3},navButton); round(selectionBar,2)
+            BackgroundColor3=C.Text,BackgroundTransparency=1,Visible=true,ZIndex=3},navButton); round(selectionBar,2)
         local glyph=icon(navButton,title); glyph.Position=UDim2.fromOffset(6,4)
         local titleLabel=label(navButton,title,10,C.Muted,{Position=UDim2.fromOffset(26,0),Size=UDim2.new(1,-30,1,0),Font=MEDIUM,TextTruncate=Enum.TextTruncate.AtEnd})
         tab.Page,tab.Content,tab.Empty=page,list,empty; tab.NavButton,tab.NavTitle=navButton,titleLabel

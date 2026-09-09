@@ -98,13 +98,29 @@ end
 local function mark(parent, size, color)
     local holder = new("Frame", {BackgroundTransparency=1, Size=UDim2.fromOffset(size,size)}, parent)
     local tone = color or C.Text
-    local shell = new("Frame", {BackgroundTransparency=1, AnchorPoint=Vector2.new(.5,.5),
-        Position=UDim2.fromScale(.5,.5), Size=UDim2.fromScale(.86,.86)}, holder)
-    round(shell, math.floor(size*0.28)); stroke(shell, tone, 1.4)
-    local leftTop = line(holder, math.floor(size*0.23), math.floor(size*0.24), math.floor(size*0.24), 2, 45, tone)
-    local leftBottom = line(holder, math.floor(size*0.23), math.floor(size*0.62), math.floor(size*0.24), 2, -45, tone)
-    local rightTop = line(holder, math.floor(size*0.53), math.floor(size*0.24), math.floor(size*0.24), 2, -45, tone)
-    local rightBottom = line(holder, math.floor(size*0.53), math.floor(size*0.62), math.floor(size*0.24), 2, 45, tone)
+    local shell = new("Frame", {Name="Shell", BackgroundColor3=Color3.fromRGB(9,9,9),
+        AnchorPoint=Vector2.new(.5,.5), Position=UDim2.fromScale(.5,.5), Size=UDim2.fromScale(.9,.9)}, holder)
+    round(shell, math.max(7, math.floor(size*0.24)))
+    stroke(shell, tone, 1.4)
+
+    local inner = new("Frame", {Name="Inner", BackgroundColor3=Color3.fromRGB(255,255,255),
+        BackgroundTransparency=.985, AnchorPoint=Vector2.new(.5,.5), Position=UDim2.fromScale(.5,.5),
+        Size=UDim2.fromScale(.76,.76)}, shell)
+    round(inner, math.max(5, math.floor(size*0.18)))
+    stroke(inner, Color3.fromRGB(120,120,120), 1)
+
+    local diagA = line(shell, math.floor(size*0.18), math.floor(size*0.24), math.floor(size*0.48), 2, 43, tone)
+    local diagB = line(shell, math.floor(size*0.18), math.floor(size*0.62), math.floor(size*0.48), 2, -43, tone)
+    local diagC = line(shell, math.floor(size*0.36), math.floor(size*0.24), math.floor(size*0.48), 2, -43, tone)
+    local diagD = line(shell, math.floor(size*0.36), math.floor(size*0.62), math.floor(size*0.48), 2, 43, tone)
+    diagA.BackgroundTransparency = .02
+    diagB.BackgroundTransparency = .02
+    diagC.BackgroundTransparency = .02
+    diagD.BackgroundTransparency = .02
+
+    local cut = new("Frame", {BackgroundColor3=Color3.fromRGB(9,9,9), AnchorPoint=Vector2.new(.5,.5),
+        Position=UDim2.fromScale(.5,.5), Size=UDim2.fromOffset(math.max(2, math.floor(size*0.07)), math.max(14, math.floor(size*0.38)))}, shell)
+    round(cut, math.max(2, math.floor(size*0.03)))
     return holder
 end
 local function icon(parent, kind)
@@ -334,15 +350,38 @@ function Tab:Paragraph(options)
     end
     if o.Gothic then
         local decor=new("Frame",{Name="Decor",BackgroundTransparency=1,Size=UDim2.fromScale(1,1),ZIndex=0},c.ElementFrame)
-        local glow=new("Frame",{AnchorPoint=Vector2.new(1,.5),Position=UDim2.fromScale(.98,.5),Size=UDim2.fromScale(.34,.92),
-            BackgroundColor3=Color3.fromRGB(26,26,32),BackgroundTransparency=.58,Rotation=-8,ZIndex=0},decor)
-        round(glow,20)
-        new("UIGradient",{Rotation=28,Transparency=NumberSequence.new({NumberSequenceKeypoint.new(0,.22),NumberSequenceKeypoint.new(1,1)})},glow)
-        local bar=line(decor,18,14,1,200,0,Color3.fromRGB(46,46,52)); bar.BackgroundTransparency=.72; bar.ZIndex=0
-        local wm=label(decor,o.DecorText or "XERO",26,Color3.fromRGB(255,255,255),{AnchorPoint=Vector2.new(1,1),Position=UDim2.fromScale(.965,.9),
-            Size=UDim2.fromScale(.44,.28),Font=BOLD,TextTransparency=.955,TextXAlignment=Enum.TextXAlignment.Right,TextYAlignment=Enum.TextYAlignment.Bottom,ZIndex=0})
+        local shell=new("Frame",{Name="Shell",BackgroundColor3=Color3.fromRGB(255,255,255),BackgroundTransparency=.985,
+            Position=UDim2.fromOffset(1,1),Size=UDim2.new(1,-2,1,-2),ZIndex=0},decor)
+        round(shell,10); stroke(shell,Color3.fromRGB(72,72,78),1)
+        local glow=new("Frame",{AnchorPoint=Vector2.new(1,.5),Position=UDim2.fromScale(.985,.5),Size=UDim2.fromScale(.38,.92),
+            BackgroundColor3=Color3.fromRGB(26,26,32),BackgroundTransparency=.54,Rotation=-8,ZIndex=0},decor)
+        round(glow,22)
+        new("UIGradient",{Rotation=28,Transparency=NumberSequence.new({NumberSequenceKeypoint.new(0,.16),NumberSequenceKeypoint.new(1,1)})},glow)
+        local bar=line(decor,18,14,1,200,0,Color3.fromRGB(64,64,72)); bar.BackgroundTransparency=.58; bar.ZIndex=0
+        local corner=line(decor,18,14,42,1,0,Color3.fromRGB(86,86,92)); corner.BackgroundTransparency=.48; corner.ZIndex=0
+        local wm=label(decor,o.DecorText or "XERO",28,Color3.fromRGB(255,255,255),{AnchorPoint=Vector2.new(1,1),Position=UDim2.fromScale(.968,.9),
+            Size=UDim2.fromScale(.46,.30),Font=BOLD,TextTransparency=.952,TextXAlignment=Enum.TextXAlignment.Right,TextYAlignment=Enum.TextYAlignment.Bottom,ZIndex=0})
         c.ElementFrame.BackgroundColor3=o.Color or Color3.fromRGB(11,11,14)
         c.RowStroke.Color=o.StrokeColor or Color3.fromRGB(42,42,48)
+        c.TitleLabel.Font=BOLD
+        c.TitleLabel.TextSize=math.max(c.TitleLabel.TextSize,14)
+        c.DescLabel.TextSize=math.max(c.DescLabel.TextSize,11)
+        c.DescLabel.TextColor3=o.DescColor or Color3.fromRGB(178,178,178)
+        if c.Thumbnail then
+            c.HeadMinimum=math.max(c.HeadMinimum or 0,(c.ThumbnailSize or 36)+8)
+            local halo=new("Frame",{Name="Halo",AnchorPoint=Vector2.new(.5,.5),Position=UDim2.new(c.Thumbnail.Position.X.Scale,c.Thumbnail.Position.X.Offset + math.floor((c.ThumbnailSize or 36)/2),c.Thumbnail.Position.Y.Scale,c.Thumbnail.Position.Y.Offset + math.floor((c.ThumbnailSize or 36)/2)),
+                Size=UDim2.fromOffset((c.ThumbnailSize or 36)+18,(c.ThumbnailSize or 36)+18),BackgroundColor3=Color3.fromRGB(255,255,255),BackgroundTransparency=.92,ZIndex=0},c.Head)
+            round(halo,math.floor(((c.ThumbnailSize or 36)+18)/2))
+            local haloStroke=stroke(halo,Color3.fromRGB(236,236,236),1)
+            haloStroke.Transparency=.68
+            c.Thumbnail.ZIndex=2
+        end
+        if o.BadgeText then
+            local badge=label(c.Head,string.upper(plain(o.BadgeText)),9,Color3.fromRGB(252,252,252),{
+                AnchorPoint=Vector2.new(1,0),Position=UDim2.new(1,-4,0,0),Size=UDim2.fromOffset(82,22),
+                TextXAlignment=Enum.TextXAlignment.Center,Font=Enum.Font.Code,BackgroundColor3=Color3.fromRGB(18,18,18),BackgroundTransparency=.05,ZIndex=3})
+            round(badge,9); stroke(badge,Color3.fromRGB(54,54,58),1)
+        end
     end
     function c:Set(value) return self:SetDesc(value) end
     return c
@@ -701,8 +740,8 @@ function Nox:CreateWindow(options)
     end
     local top=new("Frame",{Name="Topbar",BackgroundTransparency=1,Size=UDim2.new(1,0,0,58),ZIndex=5},root)
     local logo=mark(top,28); logo.Position=UDim2.fromOffset(16,12)
-    local brand=label(top,"XERO | DUELS",16,C.Text,{Position=UDim2.fromOffset(50,10),Size=UDim2.fromOffset(132,22),Font=BOLD})
-    local statusLabel=label(top,"-- activos",13,C.Text,{Position=UDim2.fromOffset(186,10),Size=UDim2.fromOffset(110,22),Font=BOLD})
+    local brand=label(top,"XERO | DUELS",16,C.Text,{Position=UDim2.fromOffset(50,10),Size=UDim2.fromOffset(128,22),Font=BOLD})
+    local statusLabel=label(top,"-- activos",13,C.Text,{Position=UDim2.fromOffset(172,10),Size=UDim2.fromOffset(110,22),Font=BOLD})
     local subtitle=label(top,"N O X  /  "..tostring(o.Subtitle or "DUELS"),8,C.Faint,{Position=UDim2.fromOffset(52,37),Size=UDim2.fromOffset(180,14)})
     local author=label(top,w.Author,11,C.Muted,{Position=UDim2.new(1,-248,0,27),Size=UDim2.fromOffset(104,20),TextXAlignment=Enum.TextXAlignment.Right})
     local controls=new("Frame",{BackgroundTransparency=1,Position=UDim2.new(1,-76,0,8),Size=UDim2.fromOffset(64,28)},top)
@@ -868,12 +907,14 @@ function Nox:CreateWindow(options)
         top.Size=UDim2.new(1,0,0,topHeight)
         logo.Position=UDim2.fromOffset(tight and 10 or 14,tight and 8 or 10)
         brand.Text=(width<520) and "XERO" or "XERO | DUELS"
-        brand.Position=UDim2.fromOffset(tight and 40 or 46,8)
-        brand.Size=UDim2.fromOffset((width<520) and 72 or 132,22)
+        local brandX=tight and 40 or 46
+        local brandWidth=(width<520) and 72 or 128
+        brand.Position=UDim2.fromOffset(brandX,8)
+        brand.Size=UDim2.fromOffset(brandWidth,22)
         brand.TextSize=tight and 13 or 15
         brand.Visible=width>=350
-        statusLabel.Position=UDim2.fromOffset((width<520) and 106 or 172,tight and 7 or 7)
-        statusLabel.Size=UDim2.fromOffset((width<520) and 86 or 108,22)
+        statusLabel.Position=UDim2.fromOffset(brandX+brandWidth+(tight and 2 or 8),tight and 7 or 7)
+        statusLabel.Size=UDim2.fromOffset((width<520) and 84 or 108,22)
         statusLabel.TextSize=tight and 10 or 12
         statusLabel.Visible=width>=410
         logo.Visible=true

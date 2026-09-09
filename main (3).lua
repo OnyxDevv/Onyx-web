@@ -1,5 +1,5 @@
 --[[
-    NoxHub UI / Obsidian 2.0 — responsive + resizable
+    NoxHub UI / Obsidian 2.1 — persistent navigation + full resize
     Creator: Kev
     Native Roblox interface. No WindUI runtime, icon downloads or render loops.
     Compatible with the control API used by the supplied DUELS hub.
@@ -11,7 +11,7 @@ local Players = game:GetService("Players")
 local Input = game:GetService("UserInputService")
 local Workspace = game:GetService("Workspace")
 local TextService = game:GetService("TextService")
-local Nox = { Version = "2.0.0", Brand = "NoxHub", Creator = "Kev", UIScale = 1 }
+local Nox = { Version = "2.1.0", Brand = "NoxHub", Creator = "Kev", UIScale = 1 }
 local C = {
     Window = Color3.fromRGB(9,9,9), Panel = Color3.fromRGB(14,14,14),
     Row = Color3.fromRGB(20,20,20), Field = Color3.fromRGB(11,11,11),
@@ -601,9 +601,15 @@ function Nox:CreateWindow(options)
         Groups={},Opened=true,Destroyed=false,Compact=false,ToggleKey=o.ToggleKey or Enum.KeyCode.RightShift,
         Title=plain(o.Title or "NoxHub"),Author=o.Author or "by Kev",UIScale=1,_navOrder=0}
     self.Window=w; env.__NOX_UI=w
-    local gui=new("ScreenGui",{Name="NoxHubUI",ResetOnSpawn=false,IgnoreGuiInset=false,
+    local gui=new("ScreenGui",{Name="NoxHubUI",ResetOnSpawn=false,IgnoreGuiInset=true,
         DisplayOrder=100,ZIndexBehavior=Enum.ZIndexBehavior.Sibling},parent)
-    -- Only the launcher ignores system insets: its top-left corner can reach Y=0.
+    -- El panel usa todo el viewport real. Así puede tocar Y=0 y no queda atrapado
+    -- debajo del inset de la barra superior de Roblox.
+    pcall(function()
+        gui.ScreenInsets=Enum.ScreenInsets.None
+        gui.ClipToDeviceSafeArea=false
+        gui.SafeAreaCompatibility=Enum.SafeAreaCompatibility.None
+    end)
     local launcherGui=new("ScreenGui",{Name="NoxHubLauncher",ResetOnSpawn=false,IgnoreGuiInset=true,
         DisplayOrder=101,ZIndexBehavior=Enum.ZIndexBehavior.Sibling},parent)
     pcall(function()
@@ -614,10 +620,10 @@ function Nox:CreateWindow(options)
     local launcherSurface=new("Frame",{Name="FullScreen",BackgroundTransparency=1,Size=UDim2.fromScale(1,1)},launcherGui)
     w.LauncherGui=launcherGui
     self.ScreenGui=gui; w.ScreenGui=gui
-    -- Inset-aware bounds are shared by popups, dragging and responsive layout.
+    -- Full-viewport bounds are shared by popups, dragging and responsive layout.
     local surface=new("Frame",{Name="Surface",BackgroundTransparency=1,Size=UDim2.fromScale(1,1)},gui)
     local root=new("Frame",{Name="NoxPanel",BackgroundColor3=Color3.fromRGB(7,7,7),AnchorPoint=Vector2.new(.5,.5),
-        Position=UDim2.fromScale(.5,.5),Size=UDim2.fromOffset(820,590),ClipsDescendants=true},surface)
+        Position=UDim2.fromScale(.5,.5),Size=UDim2.fromOffset(780,540),ClipsDescendants=true},surface)
     round(root,22); stroke(root,Color3.fromRGB(58,58,58))
     local rootGradient=new("UIGradient",{Rotation=22,Color=ColorSequence.new({
         ColorSequenceKeypoint.new(0,Color3.fromRGB(5,5,5)),
@@ -652,22 +658,22 @@ function Nox:CreateWindow(options)
     local brand=label(top,"NOX",19,C.Text,{Position=UDim2.fromOffset(62,14),Size=UDim2.fromOffset(112,26),Font=BOLD})
     local subtitle=label(top,"N O X  /  "..tostring(o.Subtitle or "DUELS"),9,C.Faint,{Position=UDim2.fromOffset(63,41),Size=UDim2.fromOffset(180,14)})
     local author=label(top,w.Author,11,C.Muted,{Position=UDim2.new(1,-248,0,27),Size=UDim2.fromOffset(104,20),TextXAlignment=Enum.TextXAlignment.Right})
-    local controls=new("Frame",{BackgroundTransparency=1,Position=UDim2.new(1,-128,0,18),Size=UDim2.fromOffset(110,34)},top)
-    local menu=button(controls,"",{Name="Menu",Size=UDim2.fromOffset(32,32),Visible=false}); round(menu,8)
-    icon(menu,"menu").Position=UDim2.fromOffset(6,6)
-    local minimize=button(controls,"",{Name="Minimize",Position=UDim2.fromOffset(38,0),Size=UDim2.fromOffset(32,32)}); round(minimize,8)
-    icon(minimize,"minus").Position=UDim2.fromOffset(6,6)
-    local close=button(controls,"",{Name="Close",Position=UDim2.fromOffset(76,0),Size=UDim2.fromOffset(32,32)}); round(close,8)
-    icon(close,"close").Position=UDim2.fromOffset(6,6)
-    hover(w,menu); hover(w,minimize); hover(w,close)
+    local controls=new("Frame",{BackgroundTransparency=1,Position=UDim2.new(1,-98,0,18),Size=UDim2.fromOffset(80,34)},top)
+    -- Navegación siempre visible: ya no existe el botón hamburguesa/drawer.
+    local menu=button(controls,"",{Name="Menu",Size=UDim2.fromOffset(1,1),Visible=false,Active=false})
+    local minimize=button(controls,"",{Name="Minimize",Position=UDim2.fromOffset(0,0),Size=UDim2.fromOffset(36,36)}); round(minimize,8)
+    icon(minimize,"minus").Position=UDim2.fromOffset(8,8)
+    local close=button(controls,"",{Name="Close",Position=UDim2.fromOffset(44,0),Size=UDim2.fromOffset(36,36)}); round(close,8)
+    icon(close,"close").Position=UDim2.fromOffset(8,8)
+    hover(w,minimize); hover(w,close)
     local topRule=line(root,18,69,784,1,0,C.Border); topRule.Size=UDim2.new(1,-36,0,1)
-    local sidebar=new("Frame",{Name="Navigation",BackgroundColor3=C.Panel,Position=UDim2.fromOffset(14,82),
-        Size=UDim2.new(0,176,1,-118),ZIndex=12},root); round(sidebar,12)
+    local sidebar=new("Frame",{Name="Navigation",BackgroundColor3=Color3.fromRGB(11,11,11),Position=UDim2.fromOffset(14,82),
+        Size=UDim2.new(0,176,1,-96),ZIndex=12},root); round(sidebar,12); stroke(sidebar,Color3.fromRGB(38,38,38))
     local nav=scroll(sidebar,{Name="Tabs",Position=UDim2.fromOffset(8,10),Size=UDim2.new(1,-16,1,-58),ScrollBarThickness=0})
     vertical(nav,5)
     local navFooter=label(sidebar,"NOX  /  OBSIDIAN",9,C.Faint,{Position=UDim2.new(0,14,1,-32),Size=UDim2.new(1,-28,0,18),Font=Enum.Font.Code})
-    local drawerShade=button(root,"",{Name="DrawerBackdrop",BackgroundColor3=Color3.new(),BackgroundTransparency=.3,
-        Position=UDim2.fromOffset(0,70),Size=UDim2.new(1,0,1,-70),Visible=false,ZIndex=11})
+    local drawerShade=button(root,"",{Name="DrawerBackdrop",BackgroundTransparency=1,
+        Position=UDim2.fromOffset(0,70),Size=UDim2.new(1,0,1,-70),Visible=false,Active=false,ZIndex=11})
     local content=new("Frame",{Name="Content",BackgroundTransparency=1,Position=UDim2.fromOffset(210,84),Size=UDim2.new(1,-232,1,-120),ZIndex=4},root)
     local pageTitle=label(content,"Inicio",26,C.Text,{Size=UDim2.new(1,-130,0,34),Font=BOLD})
     local pageDesc=label(content,DESCRIPTIONS.Inicio,12,C.Muted,{Position=UDim2.fromOffset(0,42),Size=UDim2.new(1,0,0,32),TextWrapped=true,TextYAlignment=Enum.TextYAlignment.Top})
@@ -689,33 +695,43 @@ function Nox:CreateWindow(options)
     mark(openButton,24).Position=UDim2.fromOffset(8,8)
     local openLabel=label(openButton,"Abrir NoxHub",12,C.Text,{Position=UDim2.fromOffset(40,0),Size=UDim2.new(1,-47,1,0),Font=MEDIUM})
     w.OpenButton=openButton; w.UIElements={Main=root,Title=brand,SideBar=sidebar,MainBar=content,Pages=pages,Search=searchBox,Topbar=top}
-    local desired=o.Size or UDim2.fromOffset(820,590)
-    w._desiredWidth=desired.X.Offset>0 and desired.X.Offset or 820
-    w._desiredHeight=desired.Y.Offset>0 and desired.Y.Offset or 590
+    local desired=o.Size or UDim2.fromOffset(780,540)
+    w._desiredWidth=desired.X.Offset>0 and desired.X.Offset or 780
+    w._desiredHeight=desired.Y.Offset>0 and desired.Y.Offset or 540
     w.Resizable=o.Resizable~=false
     local minSize=o.MinSize or Vector2.new(390,320)
     w._minWidth=math.max(300,tonumber(minSize.X) or 390)
     w._minHeight=math.max(260,tonumber(minSize.Y) or 320)
 
     local resizeHandles={}
-    local function resizeHandle(name,xScale,yScale,xAnchor,yAnchor)
-        local hit=button(root,"",{Name=name,AnchorPoint=Vector2.new(xAnchor,yAnchor),Position=UDim2.fromScale(xScale,yScale),
-            Size=UDim2.fromOffset(30,30),BackgroundTransparency=1,ZIndex=40,Visible=w.Resizable})
-        local xDir=xScale==0 and 1 or -1
-        local yDir=yScale==0 and 1 or -1
-        local ox=xScale==0 and 5 or 15
-        local oy=yScale==0 and 5 or 15
-        local h=line(hit,ox,oy,10,1,0,Color3.fromRGB(118,118,118)); h.ZIndex=41
-        local v=line(hit,ox,oy,10,1,90,Color3.fromRGB(118,118,118)); v.ZIndex=41
-        if xDir<0 then h.Position=UDim2.fromOffset(5,oy) end
-        if yDir<0 then v.Position=UDim2.fromOffset(ox,5) end
-        table.insert(resizeHandles,{Hit=hit,X=xScale==0 and -1 or 1,Y=yScale==0 and -1 or 1})
+    local function addResizeHandle(name,position,anchor,size,xFactor,yFactor,showGrip)
+        local hit=button(root,"",{Name=name,AnchorPoint=anchor,Position=position,
+            Size=size,BackgroundTransparency=1,ZIndex=40,Visible=w.Resizable})
+        if showGrip then
+            local g1=line(hit,6,hit.Size.Y.Offset-8,12,1,-45,Color3.fromRGB(126,126,126)); g1.ZIndex=41
+            local g2=line(hit,11,hit.Size.Y.Offset-8,8,1,-45,Color3.fromRGB(82,82,82)); g2.ZIndex=41
+            if xFactor<0 then
+                g1.Rotation=45; g2.Rotation=45
+                g1.Position=UDim2.fromOffset(6,7); g2.Position=UDim2.fromOffset(11,7)
+            elseif yFactor<0 then
+                g1.Rotation=45; g2.Rotation=45
+                g1.Position=UDim2.fromOffset(6,7); g2.Position=UDim2.fromOffset(11,7)
+                if xFactor>0 then g1.Rotation=-45; g2.Rotation=-45 end
+            end
+        end
+        table.insert(resizeHandles,{Hit=hit,X=xFactor,Y=yFactor})
         return hit
     end
-    resizeHandle("ResizeTL",0,0,0,0)
-    resizeHandle("ResizeTR",1,0,1,0)
-    resizeHandle("ResizeBL",0,1,0,1)
-    resizeHandle("ResizeBR",1,1,1,1)
+    -- Esquinas: cambian ancho y alto a la vez.
+    addResizeHandle("ResizeTL",UDim2.fromScale(0,0),Vector2.new(0,0),UDim2.fromOffset(34,34),-1,-1,true)
+    addResizeHandle("ResizeTR",UDim2.fromScale(1,0),Vector2.new(1,0),UDim2.fromOffset(34,34), 1,-1,true)
+    addResizeHandle("ResizeBL",UDim2.fromScale(0,1),Vector2.new(0,1),UDim2.fromOffset(34,34),-1, 1,true)
+    addResizeHandle("ResizeBR",UDim2.fromScale(1,1),Vector2.new(1,1),UDim2.fromOffset(34,34), 1, 1,true)
+    -- Bordes invisibles más grandes: facilitan especialmente estirar verticalmente en celular.
+    addResizeHandle("ResizeTop",UDim2.fromScale(.5,0),Vector2.new(.5,0),UDim2.new(.34,0,0,12),0,-1,false)
+    addResizeHandle("ResizeBottom",UDim2.fromScale(.5,1),Vector2.new(.5,1),UDim2.new(.34,0,0,14),0,1,false)
+    addResizeHandle("ResizeLeft",UDim2.fromScale(0,.5),Vector2.new(0,.5),UDim2.new(0,12,.34,0),-1,0,false)
+    addResizeHandle("ResizeRight",UDim2.fromScale(1,.5),Vector2.new(1,.5),UDim2.new(0,12,.34,0),1,0,false)
     function w:_endDrag()
         local d=self._drag; self._drag=nil
         if d and d.Scroll and d.Scroll.Parent then d.Scroll.ScrollingEnabled=d.WasScrolling end
@@ -750,16 +766,19 @@ function Nox:CreateWindow(options)
         return panel
     end
     function w:_drawer(value)
-        self._drawerOpen=value==true
-        sidebar.Visible=not self.Compact or self._drawerOpen
-        drawerShade.Visible=self.Compact and self._drawerOpen
+        -- Conservado por compatibilidad con llamadas antiguas. La navegación
+        -- ahora siempre está visible, incluso en layouts compactos.
+        self._drawerOpen=false
+        sidebar.Visible=true
+        drawerShade.Visible=false
     end
     local function clampRoot()
         local bounds=surface.AbsoluteSize; local size=root.AbsoluteSize
         if bounds.X<=0 or bounds.Y<=0 then return end
         local x=root.Position.X.Scale*bounds.X+root.Position.X.Offset
         local y=root.Position.Y.Scale*bounds.Y+root.Position.Y.Offset
-        local minX=math.min(size.X/2+6,bounds.X/2); local minY=math.min(size.Y/2+6,bounds.Y/2)
+        -- Sin margen artificial: el borde superior puede llegar exactamente a Y=0.
+        local minX=math.min(size.X/2,bounds.X/2); local minY=math.min(size.Y/2,bounds.Y/2)
         root.Position=UDim2.fromOffset(math.clamp(x,minX,math.max(minX,bounds.X-minX)),math.clamp(y,minY,math.max(minY,bounds.Y-minY)))
     end
     local function clampLauncher()
@@ -772,44 +791,48 @@ function Nox:CreateWindow(options)
         if w.Destroyed then return end
         local bounds=surface.AbsoluteSize
         if bounds.X<1 or bounds.Y<1 then return end
-        local maxWidth=math.max(280,(bounds.X-12)/w.UIScale)
-        local maxHeight=math.max(240,(bounds.Y-12)/w.UIScale)
+        local maxWidth=math.max(280,bounds.X/w.UIScale)
+        local maxHeight=math.max(240,bounds.Y/w.UIScale)
         local minWidth=math.min(w._minWidth,maxWidth)
         local minHeight=math.min(w._minHeight,maxHeight)
         local width=math.clamp(w._desiredWidth,minWidth,maxWidth)
         local height=math.clamp(w._desiredHeight,minHeight,maxHeight)
         root.Size=UDim2.fromOffset(width,height)
-        w.Short=height<470
+        w.Short=height<450
         w.Narrow=width<520
         w.Compact=width<670 or w.Short
-        local tight=w.Compact or Input.TouchEnabled
-        local topHeight=tight and 54 or 70
-        local contentTop=topHeight+(tight and 9 or 14)
-        local left=w.Compact and 12 or 204
-        local right=w.Compact and 12 or 20
-        local bottom=w.Short and 10 or 30
-        w.ContentWidth=math.max(120,width-left-right)
+        local tight=width<620 or height<480 or Input.TouchEnabled
+        local topHeight=tight and 56 or 68
+        local contentTop=topHeight+10
+        -- Rail persistente. En pantallas estrechas se hace más delgado, nunca desaparece.
+        local sidebarWidth = width<440 and 122 or (width<560 and 138 or (width<700 and 154 or 176))
+        local left=14+sidebarWidth+14
+        local right=tight and 12 or 18
+        local bottom=w.Short and 10 or 18
+        w.ContentWidth=math.max(170,width-left-right)
         top.Size=UDim2.new(1,0,0,topHeight)
-        logo.Position=UDim2.fromOffset(tight and 14 or 20,tight and 11 or 18)
-        brand.Position=UDim2.fromOffset(tight and 54 or 62,tight and 14 or 14)
+        logo.Position=UDim2.fromOffset(tight and 14 or 20,tight and 12 or 17)
+        brand.Position=UDim2.fromOffset(tight and 52 or 62,tight and 14 or 14)
         brand.TextSize=tight and 17 or 19
-        brand.Visible=not w.Narrow or width>=430
+        brand.Visible=width>=370
         logo.Visible=true
         subtitle.Visible=not tight
-        controls.Position=UDim2.new(1,-146,0,tight and 7 or 15)
-        controls.Size=UDim2.fromOffset(132,40)
-        for index,control in ipairs({menu,minimize,close}) do
-            control.Position=UDim2.fromOffset((index-1)*44,0); control.Size=UDim2.fromOffset(40,40)
-            control:FindFirstChildOfClass("Frame").Position=UDim2.fromOffset(10,10)
-        end
+        controls.Position=UDim2.new(1,-100,0,tight and 8 or 16)
+        controls.Size=UDim2.fromOffset(86,40)
+        minimize.Position=UDim2.fromOffset(0,0); minimize.Size=UDim2.fromOffset(40,40)
+        close.Position=UDim2.fromOffset(46,0); close.Size=UDim2.fromOffset(40,40)
+        local minIcon=minimize:FindFirstChildOfClass("Frame"); if minIcon then minIcon.Position=UDim2.fromOffset(10,10) end
+        local closeIcon=close:FindFirstChildOfClass("Frame"); if closeIcon then closeIcon.Position=UDim2.fromOffset(10,10) end
         topRule.Position=UDim2.fromOffset(14,topHeight-1); topRule.Size=UDim2.new(1,-28,0,1)
-        menu.Visible=w.Compact; author.Visible=not tight and width>=700
-        author.Position=UDim2.new(1,-266,0,27)
-        sidebar.Position=UDim2.fromOffset(14,contentTop)
-        sidebar.Size=UDim2.new(0,w.Compact and math.min(242,width-24) or 176,1,-contentTop-bottom)
-        nav.Size=UDim2.new(1,-16,1,w.Short and -20 or -58)
-        nav.ScrollBarThickness=3; navFooter.Visible=not w.Short
-        drawerShade.Position=UDim2.fromOffset(0,topHeight); drawerShade.Size=UDim2.new(1,0,1,-topHeight)
+        menu.Visible=false; author.Visible=not tight and width>=700
+        author.Position=UDim2.new(1,-220,0,26)
+        sidebar.Visible=true
+        sidebar.Position=UDim2.fromOffset(12,contentTop)
+        sidebar.Size=UDim2.new(0,sidebarWidth,1,-contentTop-bottom)
+        nav.Size=UDim2.new(1,-12,1,w.Short and -14 or -46)
+        nav.Position=UDim2.fromOffset(6,8)
+        nav.ScrollBarThickness=2; navFooter.Visible=not w.Short and sidebarWidth>=138
+        drawerShade.Visible=false
         content.Position=UDim2.fromOffset(left,contentTop)
         content.Size=UDim2.new(1,-left-right,1,-contentTop-bottom)
         pageDesc.Visible=not tight and height>=500; count.Visible=not tight and width>=720
@@ -846,9 +869,10 @@ function Nox:CreateWindow(options)
         for _,tab in ipairs(self.Tabs) do
             local selected=tab==target
             tab.Page.Visible=selected
-            tab.NavButton.BackgroundColor3=selected and C.Text or C.Panel
-            tab.NavTitle.TextColor3=selected and C.Window or C.Muted
-            tab.Number.TextColor3=selected and C.Window or C.Faint
+            tab.NavButton.BackgroundColor3=selected and C.Row or Color3.fromRGB(11,11,11)
+            tab.NavTitle.TextColor3=selected and C.Text or C.Muted
+            if tab.Number then tab.Number.TextColor3=selected and C.Text or C.Faint end
+            if tab.SelectionBar then tab.SelectionBar.Visible=selected end
         end
         pageTitle.Text=target.Title; pageDesc.Text=target.Desc
         search.Text=target.Query or ""; clear.Visible=search.Text~=""
@@ -863,16 +887,18 @@ function Nox:CreateWindow(options)
         local page=new("Frame",{Name=title,BackgroundTransparency=1,Size=UDim2.fromScale(1,1),Visible=false},pages)
         local list=scroll(page,{Name="Options",AutomaticCanvasSize=Enum.AutomaticSize.None}); vertical(list,7); padding(list,1,2)
         local empty=label(page,"Sin coincidencias. Prueba otra búsqueda.",12,C.Muted,{Position=UDim2.fromOffset(12,18),Size=UDim2.new(1,-24,0,50),TextWrapped=true,Visible=false})
-        local navButton=button(holder or nav,"",{Name=title,Size=UDim2.new(1,0,0,44),BackgroundColor3=C.Panel,LayoutOrder=index})
-        round(navButton,8)
-        local glyph=icon(navButton,title); glyph.Position=UDim2.fromOffset(8,12)
-        local titleLabel=label(navButton,title,12,C.Muted,{Position=UDim2.fromOffset(35,0),Size=UDim2.new(1,-43,1,0),Font=MEDIUM,TextTruncate=Enum.TextTruncate.AtEnd})
+        local navButton=button(holder or nav,"",{Name=title,Size=UDim2.new(1,0,0,42),BackgroundColor3=Color3.fromRGB(11,11,11),LayoutOrder=index})
+        round(navButton,7)
+        local selectionBar=new("Frame",{Name="Selected",Position=UDim2.fromOffset(1,8),Size=UDim2.fromOffset(2,26),
+            BackgroundColor3=C.Text,Visible=false,ZIndex=3},navButton); round(selectionBar,2)
+        local glyph=icon(navButton,title); glyph.Position=UDim2.fromOffset(10,11)
+        local titleLabel=label(navButton,title,12,C.Muted,{Position=UDim2.fromOffset(37,0),Size=UDim2.new(1,-45,1,0),Font=MEDIUM,TextTruncate=Enum.TextTruncate.AtEnd})
         tab.Page,tab.Content,tab.Empty=page,list,empty; tab.NavButton,tab.NavTitle=navButton,titleLabel
-        tab.Number=glyph:FindFirstChildOfClass("TextLabel")
+        tab.Number=glyph:FindFirstChildOfClass("TextLabel"); tab.SelectionBar=selectionBar
         table.insert(self.Tabs,tab)
         connect(self,navButton.Activated,function() self:SelectTab(tab) end)
-        connect(self,navButton.MouseEnter,function() if self.CurrentTab~=tab then navButton.BackgroundColor3=C.Row end end)
-        connect(self,navButton.MouseLeave,function() if self.CurrentTab~=tab then navButton.BackgroundColor3=C.Panel end end)
+        connect(self,navButton.MouseEnter,function() if self.CurrentTab~=tab then navButton.BackgroundColor3=Color3.fromRGB(18,18,18) end end)
+        connect(self,navButton.MouseLeave,function() if self.CurrentTab~=tab then navButton.BackgroundColor3=Color3.fromRGB(11,11,11) end end)
         connect(self,list:GetPropertyChangedSignal("AbsoluteSize"),function() tab:_queueFilter() end)
         if not self.CurrentTab then self:SelectTab(tab) end
         return tab
@@ -964,8 +990,7 @@ function Nox:CreateWindow(options)
         w:Dialog({Title="Cerrar NoxHub",Content="Se cerrará el panel y se limpiará esta sesión. Puedes volver a ejecutar el hub cuando quieras.",
             Buttons={{Title="Volver"},{Title="Cerrar",Callback=function() w:Destroy() end}}})
     end)
-    connect(w,menu.Activated,function() w:_drawer(not w._drawerOpen) end)
-    connect(w,drawerShade.Activated,function() w:_drawer(false) end)
+    -- Sin drawer: las categorías permanecen visibles todo el tiempo.
     connect(w,clear.Activated,function() search.Text="" end)
     connect(w,search:GetPropertyChangedSignal("Text"),function()
         clear.Visible=search.Text~=""
@@ -1000,8 +1025,8 @@ function Nox:CreateWindow(options)
         local rootCenter=Vector2.new(root.AbsolutePosition.X+root.AbsoluteSize.X/2,root.AbsolutePosition.Y+root.AbsoluteSize.Y/2)
         w:_beginDrag(input,function(position)
             local delta=position-start
-            local maxScreenW=math.max(260,bounds.X-12)
-            local maxScreenH=math.max(220,bounds.Y-12)
+            local maxScreenW=math.max(260,bounds.X)
+            local maxScreenH=math.max(220,bounds.Y)
             local minScreenW=math.min(w._minWidth*w.UIScale,maxScreenW)
             local minScreenH=math.min(w._minHeight*w.UIScale,maxScreenH)
             local screenW=math.clamp(startWidth+info.X*delta.X,minScreenW,maxScreenW)

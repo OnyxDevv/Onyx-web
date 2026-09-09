@@ -4689,7 +4689,11 @@ function runtime.EnsureAppearanceStudio()
     closeBtn.Parent = card
     Instance.new("UICorner", closeBtn).CornerRadius = UDim.new(0, 12)
     closeBtn.Activated:Connect(function()
-        overlay.Visible = false
+        if runtime.CancelAppearanceStudioChanges then
+            runtime.CancelAppearanceStudioChanges()
+        else
+            overlay.Visible = false
+        end
     end)
 
     local previewFrame = Instance.new("Frame")
@@ -4783,28 +4787,83 @@ function runtime.EnsureAppearanceStudio()
     targetHint.BackgroundTransparency = 1
     targetHint.Position = UDim2.fromOffset(0, 22)
     targetHint.Size = UDim2.new(1, 0, 0, 16)
-    targetHint.Text = "Selecciona un accesorio activo para editarlo."
+    targetHint.Text = ""
     targetHint.TextColor3 = Color3.fromRGB(160, 160, 165)
     targetHint.Font = Enum.Font.Gotham
     targetHint.TextSize = 10
     targetHint.TextXAlignment = Enum.TextXAlignment.Left
     targetHint.ZIndex = 603
+    targetHint.Visible = false
     targetHint.Parent = side
+
+    -- Selector compacto: no desperdicia media columna mostrando siempre la lista.
+    local selectorButton = Instance.new("TextButton")
+    selectorButton.Name = "AccessorySelector"
+    selectorButton.Position = UDim2.fromOffset(0, 24)
+    selectorButton.Size = UDim2.new(1, 0, 0, 36)
+    selectorButton.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
+    selectorButton.BorderSizePixel = 0
+    selectorButton.Text = "Seleccionar limited"
+    selectorButton.TextColor3 = Color3.fromRGB(240, 240, 240)
+    selectorButton.Font = Enum.Font.GothamMedium
+    selectorButton.TextSize = 11
+    selectorButton.TextXAlignment = Enum.TextXAlignment.Left
+    selectorButton.AutoButtonColor = false
+    selectorButton.ZIndex = 612
+    selectorButton.Parent = side
+    Instance.new("UICorner", selectorButton).CornerRadius = UDim.new(0, 10)
+    local selectorStroke = Instance.new("UIStroke")
+    selectorStroke.Color = Color3.fromRGB(46, 46, 50)
+    selectorStroke.Transparency = 0.18
+    selectorStroke.Parent = selectorButton
+    local selectorPadding = Instance.new("UIPadding")
+    selectorPadding.PaddingLeft = UDim.new(0, 12)
+    selectorPadding.PaddingRight = UDim.new(0, 38)
+    selectorPadding.Parent = selectorButton
+
+    local selectorArrow = Instance.new("TextLabel")
+    selectorArrow.Name = "Arrow"
+    selectorArrow.AnchorPoint = Vector2.new(1, 0.5)
+    selectorArrow.Position = UDim2.new(1, -10, 0.5, 0)
+    selectorArrow.Size = UDim2.fromOffset(20, 20)
+    selectorArrow.BackgroundTransparency = 1
+    selectorArrow.Text = "⌄"
+    selectorArrow.TextColor3 = Color3.fromRGB(190, 190, 195)
+    selectorArrow.Font = Enum.Font.GothamBold
+    selectorArrow.TextSize = 14
+    selectorArrow.ZIndex = 613
+    selectorArrow.Parent = selectorButton
 
     local list = Instance.new("ScrollingFrame")
     list.Name = "AccessoryList"
-    list.Position = UDim2.fromOffset(0, 46)
-    list.Size = UDim2.new(1, 0, 0, 112)
-    list.BackgroundTransparency = 1
+    list.Position = UDim2.fromOffset(0, 64)
+    list.Size = UDim2.new(1, 0, 0, 116)
+    list.BackgroundColor3 = Color3.fromRGB(13, 13, 13)
+    list.BackgroundTransparency = 0
     list.BorderSizePixel = 0
-    list.ScrollBarThickness = 2
+    list.ScrollBarThickness = 3
+    list.ScrollBarImageColor3 = Color3.fromRGB(86, 86, 92)
     list.CanvasSize = UDim2.fromOffset(0, 0)
     list.AutomaticCanvasSize = Enum.AutomaticSize.Y
     list.ScrollingDirection = Enum.ScrollingDirection.Y
-    list.ZIndex = 603
+    list.ElasticBehavior = Enum.ElasticBehavior.Always
+    list.ClipsDescendants = true
+    list.Visible = false
+    list.ZIndex = 620
     list.Parent = side
+    Instance.new("UICorner", list).CornerRadius = UDim.new(0, 10)
+    local listStroke = Instance.new("UIStroke")
+    listStroke.Color = Color3.fromRGB(54, 54, 60)
+    listStroke.Transparency = 0.12
+    listStroke.Parent = list
+    local listPadding = Instance.new("UIPadding")
+    listPadding.PaddingTop = UDim.new(0, 5)
+    listPadding.PaddingBottom = UDim.new(0, 5)
+    listPadding.PaddingLeft = UDim.new(0, 5)
+    listPadding.PaddingRight = UDim.new(0, 6)
+    listPadding.Parent = list
     local listLayout = Instance.new("UIListLayout")
-    listLayout.Padding = UDim.new(0, 6)
+    listLayout.Padding = UDim.new(0, 5)
     listLayout.Parent = list
 
     local controlTitle = Instance.new("TextLabel")
@@ -4846,26 +4905,40 @@ function runtime.EnsureAppearanceStudio()
     controlsLayout.Parent = controlsScroll
 
     local resetButton = Instance.new("TextButton")
-    resetButton.Size = UDim2.new(0.48, -6, 0, 34)
+    resetButton.Size = UDim2.new(0.30, -4, 0, 34)
     resetButton.Position = UDim2.new(0, 0, 1, -38)
     resetButton.BackgroundColor3 = Color3.fromRGB(24, 24, 24)
     resetButton.BorderSizePixel = 0
     resetButton.Text = "Restablecer"
     resetButton.TextColor3 = Color3.fromRGB(235, 235, 235)
     resetButton.Font = Enum.Font.GothamBold
-    resetButton.TextSize = 11
+    resetButton.TextSize = 10
     resetButton.AutoButtonColor = false
     resetButton.ZIndex = 603
     resetButton.Parent = side
     Instance.new("UICorner", resetButton).CornerRadius = UDim.new(0, 12)
 
+    local saveButton = Instance.new("TextButton")
+    saveButton.Size = UDim2.new(0.34, -6, 0, 34)
+    saveButton.Position = UDim2.new(0.30, 3, 1, -38)
+    saveButton.BackgroundColor3 = Color3.fromRGB(236, 236, 236)
+    saveButton.BorderSizePixel = 0
+    saveButton.Text = "Guardar"
+    saveButton.TextColor3 = Color3.fromRGB(14, 14, 14)
+    saveButton.Font = Enum.Font.GothamBold
+    saveButton.TextSize = 11
+    saveButton.AutoButtonColor = false
+    saveButton.ZIndex = 603
+    saveButton.Parent = side
+    Instance.new("UICorner", saveButton).CornerRadius = UDim.new(0, 12)
+
     local doneButton = Instance.new("TextButton")
-    doneButton.Size = UDim2.new(0.52, -6, 0, 34)
-    doneButton.Position = UDim2.new(0.48, 12, 1, -38)
-    doneButton.BackgroundColor3 = Color3.fromRGB(236, 236, 236)
+    doneButton.Size = UDim2.new(0.36, -3, 0, 34)
+    doneButton.Position = UDim2.new(0.64, 3, 1, -38)
+    doneButton.BackgroundColor3 = Color3.fromRGB(24, 24, 24)
     doneButton.BorderSizePixel = 0
     doneButton.Text = "Cerrar"
-    doneButton.TextColor3 = Color3.fromRGB(14, 14, 14)
+    doneButton.TextColor3 = Color3.fromRGB(235, 235, 235)
     doneButton.Font = Enum.Font.GothamBold
     doneButton.TextSize = 11
     doneButton.AutoButtonColor = false
@@ -4873,7 +4946,20 @@ function runtime.EnsureAppearanceStudio()
     doneButton.Parent = side
     Instance.new("UICorner", doneButton).CornerRadius = UDim.new(0, 12)
     doneButton.Activated:Connect(function()
-        overlay.Visible = false
+        if runtime.CancelAppearanceStudioChanges then
+            runtime.CancelAppearanceStudioChanges()
+        else
+            list.Visible = false
+            overlay.Visible = false
+        end
+    end)
+    saveButton.Activated:Connect(function()
+        if runtime.CommitAppearanceStudioChanges then
+            runtime.CommitAppearanceStudioChanges()
+        else
+            list.Visible = false
+            overlay.Visible = false
+        end
     end)
 
     local noActive = Instance.new("TextLabel")
@@ -4904,11 +4990,14 @@ function runtime.EnsureAppearanceStudio()
         ResetViewButton = resetView,
         Side = side,
         AccessoryList = list,
+        AccessorySelector = selectorButton,
+        AccessorySelectorArrow = selectorArrow,
         TargetTitle = targetTitle,
         TargetHint = targetHint,
         ControlTitle = controlTitle,
         ControlsScroll = controlsScroll,
         ResetButton = resetButton,
+        SaveButton = saveButton,
         DoneButton = doneButton,
         NoActiveLabel = noActive,
         Controls = {},
@@ -4929,6 +5018,62 @@ function runtime.EnsureAppearanceStudio()
             Pan = Vector3.new(),
         },
     }
+
+    selectorButton.Activated:Connect(function()
+        local studio = runtime.AppearanceStudio
+        if not studio then return end
+        local keys = runtime.GetEnabledAppearanceEditorKeys()
+        if #keys == 0 then
+            showBottomMessage("Activa un limited primero.")
+            return
+        end
+        studio.AccessoryList.Visible = not studio.AccessoryList.Visible
+        studio.AccessorySelectorArrow.Text = studio.AccessoryList.Visible and "⌃" or "⌄"
+    end)
+
+    local function copyStudioOffset(state)
+        return {
+            Position = Vector3.new(state.Position.X, state.Position.Y, state.Position.Z),
+            Rotation = Vector3.new(state.Rotation.X, state.Rotation.Y, state.Rotation.Z),
+            Scale = tonumber(state.Scale) or 1,
+        }
+    end
+
+    function runtime.BeginAppearanceStudioChanges()
+        local studio = runtime.AppearanceStudio
+        if not studio then return end
+        studio.OpenSnapshot = {}
+        for _, key in ipairs(runtime.GetEnabledAppearanceEditorKeys()) do
+            studio.OpenSnapshot[key] = copyStudioOffset(runtime.GetAppearanceOffset(key))
+        end
+    end
+
+    function runtime.CancelAppearanceStudioChanges()
+        local studio = runtime.AppearanceStudio
+        if not studio then return end
+        if studio.OpenSnapshot then
+            for key, state in pairs(studio.OpenSnapshot) do
+                runtime.Appearance.AccessoryOffsets[key] = copyStudioOffset(state)
+                runtime.ApplyAppearanceOffset(key, nil, true)
+            end
+        end
+        studio.OpenSnapshot = nil
+        studio.AccessoryList.Visible = false
+        studio.AccessorySelectorArrow.Text = "⌄"
+        studio.Overlay.Visible = false
+        runtime.RefreshAppearanceControls()
+    end
+
+    function runtime.CommitAppearanceStudioChanges()
+        local studio = runtime.AppearanceStudio
+        if not studio then return end
+        studio.OpenSnapshot = nil
+        studio.AccessoryList.Visible = false
+        studio.AccessorySelectorArrow.Text = "⌄"
+        studio.Overlay.Visible = false
+        runtime.RefreshAppearanceControls()
+        showBottomMessage("Ajustes del limited guardados.")
+    end
 
     -- Editor responsive real: escritorio/landscape usa dos columnas; móvil
     -- portrait apila preview + controles sin reducir toda la interfaz a miniatura.
@@ -5020,41 +5165,37 @@ function runtime.EnsureAppearanceStudio()
             studio.Viewport.Size = UDim2.new(1, -16, 1, -(viewportY + 8))
 
             studio.TargetTitle.Position = UDim2.fromOffset(0, 0)
-            studio.TargetTitle.Size = UDim2.new(1, 0, 0, 20)
-            studio.TargetTitle.TextSize = sideW < 250 and 11 or 13
+            studio.TargetTitle.Size = UDim2.new(1, 0, 0, 18)
+            studio.TargetTitle.Text = "Limited activo"
+            studio.TargetTitle.TextSize = sideW < 250 and 10 or 12
+            studio.TargetHint.Visible = false
 
-            studio.TargetHint.Visible = bodyH >= 245
-            studio.TargetHint.Position = UDim2.fromOffset(0, 20)
-            studio.TargetHint.Size = UDim2.new(1, 0, 0, 16)
-            studio.TargetHint.TextSize = 9
+            studio.AccessorySelector.Position = UDim2.fromOffset(0, 22)
+            studio.AccessorySelector.Size = UDim2.new(1, 0, 0, 34)
+            studio.AccessoryList.Position = UDim2.fromOffset(0, 60)
+            studio.AccessoryList.Size = UDim2.new(1, 0, 0, math.min(126, math.max(76, bodyH - 98)))
 
-            local listY = studio.TargetHint.Visible and 38 or 22
-            local listH
-            if bodyH < 250 then listH = 36
-            elseif bodyH < 330 then listH = 42
-            else listH = math.min(60, math.floor(bodyH * 0.14)) end
-            studio.AccessoryList.Position = UDim2.fromOffset(0, listY)
-            studio.AccessoryList.Size = UDim2.new(1, 0, 0, listH)
-
-            local controlTitleY = listY + listH + 8
+            local controlTitleY = 64
             studio.ControlTitle.Position = UDim2.fromOffset(0, controlTitleY)
             studio.ControlTitle.Size = UDim2.new(1, 0, 0, 18)
             studio.ControlTitle.TextSize = 12
 
             local buttonH = 34
             local buttonsY = bodyH - buttonH
-            local controlsY = controlTitleY + 21
-            local controlsH = math.max(76, buttonsY - controlsY - 9)
+            local controlsY = controlTitleY + 22
+            local controlsH = math.max(112, buttonsY - controlsY - 10)
             studio.ControlsScroll.Position = UDim2.fromOffset(0, controlsY)
             studio.ControlsScroll.Size = UDim2.new(1, 0, 0, controlsH)
 
-            studio.ResetButton.Size = UDim2.new(0.48, -5, 0, buttonH)
+            local gapB = 6
+            studio.ResetButton.Size = UDim2.new(0.30, -4, 0, buttonH)
             studio.ResetButton.Position = UDim2.fromOffset(0, buttonsY)
-            studio.DoneButton.Size = UDim2.new(0.52, -5, 0, buttonH)
-            studio.DoneButton.Position = UDim2.new(0.48, 10, 0, buttonsY)
+            studio.SaveButton.Size = UDim2.new(0.34, -6, 0, buttonH)
+            studio.SaveButton.Position = UDim2.new(0.30, 3, 0, buttonsY)
+            studio.DoneButton.Size = UDim2.new(0.36, -3, 0, buttonH)
+            studio.DoneButton.Position = UDim2.new(0.64, 3, 0, buttonsY)
 
-            studio.NoActiveLabel.Position = UDim2.fromOffset(0, listY + 8)
-            studio.NoActiveLabel.Size = UDim2.new(1, 0, 0, math.max(30, listH - 8))
+            studio.NoActiveLabel.Visible = false
         else
             local bodyY = headerH + 4
             local bodyH = math.max(250, cardH - bodyY - 14)
@@ -5089,37 +5230,37 @@ function runtime.EnsureAppearanceStudio()
             studio.Viewport.Size = UDim2.new(1, -14, 1, -(viewportY + 7))
 
             studio.TargetTitle.Position = UDim2.fromOffset(0, 0)
-            studio.TargetTitle.Size = UDim2.new(1, 0, 0, 19)
+            studio.TargetTitle.Size = UDim2.new(1, 0, 0, 18)
+            studio.TargetTitle.Text = "Limited activo"
             studio.TargetTitle.TextSize = 11
-            studio.TargetHint.Visible = sideH >= 220
-            studio.TargetHint.Position = UDim2.fromOffset(0, 19)
-            studio.TargetHint.Size = UDim2.new(1, 0, 0, 15)
-            studio.TargetHint.TextSize = 9
+            studio.TargetHint.Visible = false
 
-            local listY = studio.TargetHint.Visible and 34 or 20
-            local listH = math.clamp(math.floor(sideH * 0.14), 34, 48)
-            studio.AccessoryList.Position = UDim2.fromOffset(0, listY)
-            studio.AccessoryList.Size = UDim2.new(1, 0, 0, listH)
+            studio.AccessorySelector.Position = UDim2.fromOffset(0, 21)
+            studio.AccessorySelector.Size = UDim2.new(1, 0, 0, 34)
+            studio.AccessoryList.Position = UDim2.fromOffset(0, 59)
+            studio.AccessoryList.Size = UDim2.new(1, 0, 0, math.min(112, math.max(70, sideH - 94)))
 
-            local controlTitleY = listY + listH + 6
+            local controlTitleY = 62
             studio.ControlTitle.Position = UDim2.fromOffset(0, controlTitleY)
             studio.ControlTitle.Size = UDim2.new(1, 0, 0, 17)
             studio.ControlTitle.TextSize = 11
 
             local buttonH = 32
             local buttonsY = sideH - buttonH
-            local controlsY = controlTitleY + 19
-            local controlsH = math.max(72, buttonsY - controlsY - 8)
+            local controlsY = controlTitleY + 20
+            local controlsH = math.max(100, buttonsY - controlsY - 8)
             studio.ControlsScroll.Position = UDim2.fromOffset(0, controlsY)
             studio.ControlsScroll.Size = UDim2.new(1, 0, 0, controlsH)
 
-            studio.ResetButton.Size = UDim2.new(0.48, -4, 0, buttonH)
+            local gapB = 6
+            studio.ResetButton.Size = UDim2.new(0.30, -4, 0, buttonH)
             studio.ResetButton.Position = UDim2.fromOffset(0, buttonsY)
-            studio.DoneButton.Size = UDim2.new(0.52, -4, 0, buttonH)
-            studio.DoneButton.Position = UDim2.new(0.48, 8, 0, buttonsY)
+            studio.SaveButton.Size = UDim2.new(0.34, -6, 0, buttonH)
+            studio.SaveButton.Position = UDim2.new(0.30, 3, 0, buttonsY)
+            studio.DoneButton.Size = UDim2.new(0.36, -3, 0, buttonH)
+            studio.DoneButton.Position = UDim2.new(0.64, 3, 0, buttonsY)
 
-            studio.NoActiveLabel.Position = UDim2.fromOffset(0, listY + 4)
-            studio.NoActiveLabel.Size = UDim2.new(1, 0, 0, math.max(28, listH - 4))
+            studio.NoActiveLabel.Visible = false
         end
 
         -- Sólo para viewports extremos (<~280 px), evitando overflow sin hacer
@@ -5391,6 +5532,10 @@ function runtime.EnsureAppearanceStudio()
                 and input.UserInputType == Enum.UserInputType.MouseButton1) then
             return
         end
+        -- Un toque corto sobre el track sigue funcionando como tap-to-set.
+        if active.Mode == "pending" and input then
+            active.Api:SetFromScreenX(input.Position.X)
+        end
         activeStudioSlider = nil
         if controlsScroll and controlsScroll.Parent then
             controlsScroll.ScrollingEnabled = true
@@ -5403,10 +5548,28 @@ function runtime.EnsureAppearanceStudio()
 
         local mouseDrag = active.Input.UserInputType == Enum.UserInputType.MouseButton1
             and input.UserInputType == Enum.UserInputType.MouseMovement
-        local touchDrag = active.Input.UserInputType == Enum.UserInputType.Touch
-            and input == active.Input
+        if mouseDrag then
+            active.Mode = "slider"
+            active.Api:SetFromScreenX(input.Position.X)
+            return
+        end
 
-        if mouseDrag or touchDrag then
+        local touchDrag = active.Input.UserInputType == Enum.UserInputType.Touch and input == active.Input
+        if not touchDrag then return end
+
+        local delta = input.Position - active.Start
+        if active.Mode == "pending" and delta.Magnitude >= 8 then
+            -- Horizontal = mover slider. Vertical = dejar que el ScrollingFrame haga scroll.
+            if math.abs(delta.X) > math.abs(delta.Y) * 1.15 then
+                active.Mode = "slider"
+                controlsScroll.ScrollingEnabled = false
+            else
+                activeStudioSlider = nil
+                controlsScroll.ScrollingEnabled = true
+                return
+            end
+        end
+        if active.Mode == "slider" then
             active.Api:SetFromScreenX(input.Position.X)
         end
     end))
@@ -5420,7 +5583,7 @@ function runtime.EnsureAppearanceStudio()
     local function makeStudioSlider(titleText, component, minValue, maxValue, stepValue, defaultValue)
         local row = Instance.new("Frame")
         row.Name = component .. "Slider"
-        row.Size = UDim2.new(1, -3, 0, 72)
+        row.Size = UDim2.new(1, -10, 0, 78)
         row.BackgroundColor3 = Color3.fromRGB(18, 18, 18)
         row.BorderSizePixel = 0
         row.ClipsDescendants = true
@@ -5435,8 +5598,8 @@ function runtime.EnsureAppearanceStudio()
 
         local titleLabel = Instance.new("TextLabel")
         titleLabel.BackgroundTransparency = 1
-        titleLabel.Position = UDim2.fromOffset(12, 6)
-        titleLabel.Size = UDim2.new(1, -104, 0, 22)
+        titleLabel.Position = UDim2.fromOffset(14, 7)
+        titleLabel.Size = UDim2.new(1, -112, 0, 22)
         titleLabel.Text = titleText
         titleLabel.TextColor3 = Color3.fromRGB(236, 236, 236)
         titleLabel.Font = Enum.Font.GothamMedium
@@ -5448,8 +5611,8 @@ function runtime.EnsureAppearanceStudio()
 
         local box = Instance.new("TextBox")
         box.AnchorPoint = Vector2.new(1, 0)
-        box.Size = UDim2.fromOffset(74, 24)
-        box.Position = UDim2.new(1, -10, 0, 5)
+        box.Size = UDim2.fromOffset(72, 24)
+        box.Position = UDim2.new(1, -12, 0, 6)
         box.BackgroundColor3 = Color3.fromRGB(9, 9, 9)
         box.BorderSizePixel = 0
         box.ClearTextOnFocus = false
@@ -5464,7 +5627,7 @@ function runtime.EnsureAppearanceStudio()
 
         local minus = Instance.new("TextButton")
         minus.Size = UDim2.fromOffset(28, 28)
-        minus.Position = UDim2.fromOffset(10, 34)
+        minus.Position = UDim2.fromOffset(12, 38)
         minus.BackgroundColor3 = Color3.fromRGB(27, 27, 27)
         minus.BorderSizePixel = 0
         minus.Text = "−"
@@ -5479,7 +5642,7 @@ function runtime.EnsureAppearanceStudio()
         local plus = Instance.new("TextButton")
         plus.AnchorPoint = Vector2.new(1, 0)
         plus.Size = UDim2.fromOffset(28, 28)
-        plus.Position = UDim2.new(1, -10, 0, 34)
+        plus.Position = UDim2.new(1, -12, 0, 38)
         plus.BackgroundColor3 = Color3.fromRGB(27, 27, 27)
         plus.BorderSizePixel = 0
         plus.Text = "+"
@@ -5493,8 +5656,8 @@ function runtime.EnsureAppearanceStudio()
 
         local track = Instance.new("Frame")
         track.Name = "Track"
-        track.Position = UDim2.fromOffset(48, 45)
-        track.Size = UDim2.new(1, -106, 0, 6)
+        track.Position = UDim2.fromOffset(54, 49)
+        track.Size = UDim2.new(1, -122, 0, 6)
         track.BackgroundColor3 = Color3.fromRGB(48, 48, 52)
         track.BorderSizePixel = 0
         track.ZIndex = 604
@@ -5529,8 +5692,8 @@ function runtime.EnsureAppearanceStudio()
         -- una línea de 5 px para deslizar.
         local sliderHit = Instance.new("TextButton")
         sliderHit.Name = "TouchTrack"
-        sliderHit.Position = UDim2.fromOffset(44, 36)
-        sliderHit.Size = UDim2.new(1, -100, 0, 20)
+        sliderHit.Position = UDim2.fromOffset(48, 39)
+        sliderHit.Size = UDim2.new(1, -110, 0, 26)
         sliderHit.BackgroundTransparency = 1
         sliderHit.Text = ""
         sliderHit.AutoButtonColor = false
@@ -5597,9 +5760,16 @@ function runtime.EnsureAppearanceStudio()
                 and input.UserInputType ~= Enum.UserInputType.Touch then
                 return
             end
-            activeStudioSlider = {Api = api, Input = input}
-            controlsScroll.ScrollingEnabled = false
-            api:SetFromScreenX(input.Position.X)
+            if input.UserInputType == Enum.UserInputType.MouseButton1 then
+                activeStudioSlider = {Api = api, Input = input, Start = input.Position, Mode = "slider"}
+                controlsScroll.ScrollingEnabled = false
+                api:SetFromScreenX(input.Position.X)
+            else
+                -- En touch primero detectamos intención: swipe vertical hace scroll,
+                -- swipe horizontal mueve el slider.
+                activeStudioSlider = {Api = api, Input = input, Start = input.Position, Mode = "pending"}
+                controlsScroll.ScrollingEnabled = true
+            end
         end)
 
         minus.Activated:Connect(function()
@@ -5930,7 +6100,9 @@ function runtime.RefreshAppearanceStudio()
         end
     end
 
-    studio.NoActiveLabel.Visible = #keys == 0
+    studio.NoActiveLabel.Visible = false
+    studio.AccessoryList.Visible = false
+    studio.AccessorySelectorArrow.Text = "⌄"
 
     for _, key in ipairs(keys) do
         local asset = runtime.AppearanceCatalog[key]
@@ -5948,6 +6120,8 @@ function runtime.RefreshAppearanceStudio()
         Instance.new("UICorner", row).CornerRadius = UDim.new(0, 10)
         row.Activated:Connect(function()
             studio.SelectedKey = key
+            studio.AccessoryList.Visible = false
+            studio.AccessorySelectorArrow.Text = "⌄"
             task.defer(runtime.RefreshAppearanceStudio)
         end)
     end
@@ -5956,7 +6130,9 @@ function runtime.RefreshAppearanceStudio()
     if studio.SelectedKey then
         local asset = runtime.AppearanceCatalog[studio.SelectedKey]
         local state = runtime.GetAppearanceOffset(studio.SelectedKey)
-        studio.TargetTitle.Text = asset and asset.Name or studio.SelectedKey
+        studio.TargetTitle.Text = "Limited activo"
+        studio.AccessorySelector.Text = asset and asset.Name or studio.SelectedKey
+        studio.AccessorySelector.TextColor3 = Color3.fromRGB(240, 240, 240)
         local values = {
             X = state.Position.X,
             Y = state.Position.Y,
@@ -5974,6 +6150,8 @@ function runtime.RefreshAppearanceStudio()
         end
     else
         studio.TargetTitle.Text = "Limited activo"
+        studio.AccessorySelector.Text = "Sin limiteds activos"
+        studio.AccessorySelector.TextColor3 = Color3.fromRGB(132, 132, 138)
         for component, control in pairs(studio.Controls) do
             control:Set(component == "SCALE" and 1 or 0, true)
         end
@@ -5996,6 +6174,11 @@ function runtime.OpenAppearanceStudio(initialKey)
         runtime.AppearanceStudioGui.DisplayOrder = 2147483647
     end
 
+    studio.AccessoryList.Visible = false
+    studio.AccessorySelectorArrow.Text = "⌄"
+    if runtime.BeginAppearanceStudioChanges then
+        runtime.BeginAppearanceStudioChanges()
+    end
     studio.Overlay.Visible = true
     local targetScale = runtime.ApplyAppearanceStudioResponsiveLayout()
     studio.Scale.Scale = targetScale * 0.975

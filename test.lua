@@ -470,7 +470,7 @@ local Window = WindUI:CreateWindow({
     Subtitle = "DUELS",
     Theme = "Xero",
     Author = "by Kev",
-    Size = UDim2.fromOffset(720, 460),
+    Size = UDim2.fromOffset(700, 440),
     MinSize = Vector2.new(390, 320),
     Resizable = true,
     OpenButton = {Title = "Abrir XeroHub", Enabled = true},
@@ -490,7 +490,7 @@ task.spawn(function()
     if not req then return end
     
     
-    while runtime.Alive and task.wait(10) do -- Se actualiza cada 10 segs
+    while runtime.Alive do
         local success, response = pcall(function()
             return req({
                 Url = "https://hub.onyx-scripts.com/ping?user=" .. tostring(player.Name) .. "&jobid=" .. tostring(game.JobId),
@@ -505,9 +505,10 @@ task.spawn(function()
         if success and response and response.StatusCode == 200 then
             local vivos = tonumber(response.Body)
             if vivos then
-                Window:SetTitle("NOXHUB / DUELS · " .. tostring(vivos) .. " activos")
+                Window:SetTitle("XEROHUB / DUELS · " .. tostring(vivos) .. " activos")
             end
         end
+        if runtime.Alive then task.wait(10) end
     end
 end)
 

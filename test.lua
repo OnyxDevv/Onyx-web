@@ -831,7 +831,7 @@ Tabs.Inicio:Paragraph({
         .. "\nCuenta: " .. tostring(player.AccountAge or 0) .. " días"
         .. "\nPlan: " .. tostring(accountPlan),
     Image = "rbxthumb://type=AvatarHeadShot&id=" .. tostring(player.UserId) .. "&w=150&h=150",
-    ImageSize = 64,
+    ImageSize = 58,
     CircleImage = true,
     ImageAlign = "left",
     ImageStrokeColor = Color3.fromRGB(244, 244, 244),
@@ -886,7 +886,7 @@ Tabs.Creditos:Paragraph({
     Title = "Kev",
     Desc = "Creador de XeroHub\nTikTok: @kevzzx_",
     Image = XERO_CREDITS_PROFILE,
-    ImageSize = 72,
+    ImageSize = 62,
     CircleImage = true,
     ImageAlign = "left",
     ImageStrokeColor = Color3.fromRGB(244, 244, 244),
@@ -9609,9 +9609,9 @@ Tabs.Config:Paragraph({
 
 Tabs.Config:Toggle({
     Title = "Ocultar Botón Flotante",
-    Desc = "En PC usa Shift derecho. En móvil el botón reaparece al minimizar el panel.",
+    Desc = "Lo deja invisible pero sigue en su sitio y sigue siendo tocable para reabrir el hub.",
     Callback = function(value)
-        Window:SetOpenButtonVisible(not value)
+        Window:SetOpenButtonGhosted(value)
     end,
 })
 

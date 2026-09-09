@@ -17,8 +17,8 @@ local workspace = game:GetService("Workspace")
 
 -- Estilo iOS: radios consistentes para ventana, controles y overlays.
 local IOS_STYLE = {
-    WindowRadius = 20,
-    ElementRadius = 14,
+    WindowRadius = 22,
+    ElementRadius = 15,
     OverlayRadius = 14,
     OpenButtonRadius = 16,
 }
@@ -438,7 +438,7 @@ end
 -- INICIALIZACIÓN WINDUI (CON CACHÉ 24HRS)
 -- ==========================================
 local WindUI
-local _version = "1.9.1_ILUNX_FIXED"
+local _version = "1.9.2_ILUNX_PANEL"
 local uiFileName = "iLunXHubUI_Cache_v" .. _version .. ".txt"
 local timeFileName = "iLunXHubUI_Cache_v" .. _version .. "_Time.txt"
 
@@ -459,7 +459,7 @@ local ok, result = pcall(function()
     else
         -- Si guardas ambos archivos juntos, prioriza la UI local.
         -- Si no existe, conserva el fallback remoto actual.
-        local localUiFile = "main_iLunX_PRO.lua"
+        local localUiFile = "main_iLunX_PRO_PANEL.lua"
         local codigoUi
         if isfile and readfile and isfile(localUiFile) then
             codigoUi = readfile(localUiFile)
@@ -506,8 +506,8 @@ local Window = WindUI:CreateWindow({
     MaxSize = Vector2.new(900, 650),
     Radius = IOS_STYLE.WindowRadius,
     ElementsRadius = IOS_STYLE.ElementRadius,
-    SideBarWidth = 184,
-    ShadowTransparency = 0.76,
+    SideBarWidth = 190,
+    ShadowTransparency = 0.66,
     Acrylic = false,
     Transparent = false,
     NewElements = false,
@@ -516,14 +516,14 @@ local Window = WindUI:CreateWindow({
     AmbientBackground = true,
     HideSearchBar = true,
     OpenButton = {
-        Title = "iLunXHub",
+        Title = "Open iLunXHub",
         Icon = "x",
         CornerRadius = UDim.new(0, IOS_STYLE.OpenButtonRadius),
         StrokeThickness = 1,
         Enabled = true,
         Draggable = true,
-        OnlyIcon = true,
-        Scale = 0.86,
+        OnlyIcon = false,
+        Scale = 0.92,
         Color = ColorSequence.new({
             ColorSequenceKeypoint.new(0, Color3.fromRGB(42, 42, 45)),
             ColorSequenceKeypoint.new(0.50, Color3.fromRGB(146, 146, 151)),

@@ -470,7 +470,7 @@ local Window = WindUI:CreateWindow({
     Subtitle = "DUELS",
     Theme = "Xero",
     Author = "by Kev",
-    Size = UDim2.fromOffset(700, 440),
+    Size = UDim2.fromOffset(680, 430),
     MinSize = Vector2.new(390, 320),
     Resizable = true,
     OpenButton = {Title = "Abrir XeroHub", Enabled = true},
@@ -761,7 +761,8 @@ local Tabs = {
     Graficos = MainSection:Tab({Title = "Gráficos", Icon = "solar:palette-bold"}), -- 🔥 NUEVA PESTAÑA AQUÍ
     Emotes = TrollSection:Tab({Title = "Animaciones", Icon = "solar:smile-circle-bold"}),
     Apariencia = TrollSection:Tab({Title = "Apariencia", Icon = "solar:palette-bold"}),
-    Config = TrollSection:Tab({Title = "Configuración", Icon = "solar:settings-bold"})
+    Config = TrollSection:Tab({Title = "Configuración", Icon = "solar:settings-bold"}),
+    Creditos = TrollSection:Tab({Title = "Créditos", Icon = "solar:user-bold"})
 }
 
 -- Todos los toggles avisan automáticamente. Si el callback ya manda un
@@ -812,14 +813,26 @@ end
 
 Tabs.Inicio:Paragraph({
     Title = "Bienvenido a XeroHub",
-    Desc = "Elige una categoría y encuentra cada ajuste con el buscador. Tu panel, a tu manera.\nCreado por Kev.",
+    Desc = "Elige una categoría y encuentra cada ajuste con el buscador.",
 })
 
 local nombreEjecutor = identifyexecutor and identifyexecutor() or "Desconocido"
+local accountPlan = "Free"
+pcall(function()
+    if player.MembershipType == Enum.MembershipType.Premium then
+        accountPlan = "Premium"
+    end
+end)
 
-Tabs.Inicio:Paragraph({ 
-    Title = "Ejecutor",
-    Desc = "" .. tostring(nombreEjecutor)
+Tabs.Inicio:Paragraph({
+    Title = tostring(player.DisplayName),
+    Desc = "@" .. tostring(player.Name)
+        .. "\nEjecutor: " .. tostring(nombreEjecutor)
+        .. "\nCuenta: " .. tostring(player.AccountAge or 0) .. " días"
+        .. "\nPlan: " .. tostring(accountPlan),
+    Image = "rbxthumb://type=AvatarHeadShot&id=" .. tostring(player.UserId) .. "&w=150&h=150",
+    ImageSize = 40,
+    CircleImage = true,
 })
 
 -- ==========================================
@@ -857,6 +870,23 @@ Tabs.Inicio:Paragraph({
     Desc = gameNameStr .. "\nPlace ID: " .. game.PlaceId,
     Image = "rbxthumb://type=GameIcon&id=" .. game.GameId .. "&w=150&h=150", --  Extrae la foto oficial del juego
     ImageSize = 48 
+})
+
+
+
+local XERO_CREDITS_PROFILE = "rbxassetid://0" -- Reemplaza 0 por la ID del asset de tu foto.
+
+Tabs.Creditos:Paragraph({
+    Title = "Kev",
+    Desc = "Creador de XeroHub\nTikTok: @kevzzx_",
+    Image = XERO_CREDITS_PROFILE,
+    ImageSize = 52,
+    CircleImage = true,
+})
+
+Tabs.Creditos:Paragraph({
+    Title = "Proyecto",
+    Desc = "XeroHub UI minimalista y separada del script principal para actualizar el main con más facilidad.",
 })
 
 Tabs.Inicio:Section({ Title = "Juegos Soportados" })

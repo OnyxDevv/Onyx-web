@@ -4459,131 +4459,17 @@ for _, key in ipairs({"Headless", "Korblox", "HideHair"}) do
     if capturedKey == "HideHair" then UIElements.TogHideHair = toggle end
 end
 
-local function setInlineAccessoryControlVisible(control, visible)
-    if control and control.ElementFrame then
-        control.ElementFrame.Visible = visible == true
-    end
-end
-
-local function updateInlineAccessoryOffset(key, component, value)
-    if runtime.Appearance.EditorSyncing then return end
-    if not runtime.Appearance.Enabled[key] then return end
-
-    local state = runtime.GetAppearanceOffset(key)
-    if component == "X" then
-        state.Position = Vector3.new(value, state.Position.Y, state.Position.Z)
-    elseif component == "Y" then
-        state.Position = Vector3.new(state.Position.X, value, state.Position.Z)
-    elseif component == "Z" then
-        state.Position = Vector3.new(state.Position.X, state.Position.Y, value)
-    elseif component == "RX" then
-        state.Rotation = Vector3.new(value, state.Rotation.Y, state.Rotation.Z)
-    elseif component == "RY" then
-        state.Rotation = Vector3.new(state.Rotation.X, value, state.Rotation.Z)
-    elseif component == "RZ" then
-        state.Rotation = Vector3.new(state.Rotation.X, state.Rotation.Y, value)
-    elseif component == "SCALE" then
-        state.Scale = math.clamp(tonumber(value) or 1, 0.25, 3)
-    end
-
-    runtime.ApplyAppearanceOffset(key, nil, component == "SCALE")
-    if runtime.RefreshAppearanceStudio then
-        task.defer(runtime.RefreshAppearanceStudio)
-    end
-end
-
+-- Los ajustes de posición/rotación/tamaño de limiteds viven EXCLUSIVAMENTE
+-- dentro del editor visual. Se conservan estos hooks para no romper llamadas
+-- antiguas de SetAppearance/configs, pero ya no crean sliders debajo del toggle.
 function runtime.EnsureInlineAppearanceControls(key)
-    local slot = runtime.Appearance.EditorSlots[key]
-    if not slot then return nil end
-    if slot.Controls then return slot.Controls end
-
-    local function make(title, component, minValue, maxValue, step, relativeOrder, defaultValue)
-        local control = Tabs.Apariencia:Slider({
-            Title = title,
-            Step = step,
-            Value = {Min = minValue, Max = maxValue, Default = defaultValue or 0},
-            Callback = function(value)
-                updateInlineAccessoryOffset(key, component, value)
-            end,
-        })
-        placeAppearanceElement(control, slot.BaseOrder + relativeOrder)
-        setInlineAccessoryControlVisible(control, false)
-        return control
-    end
-
-    local controls = {
-        X = make("Posición X · Izquierda / Derecha", "X", -3, 3, 0.05, 1),
-        Y = make("Posición Y · Abajo / Arriba", "Y", -3, 3, 0.05, 2),
-        Z = make("Posición Z · Atrás / Adelante", "Z", -3, 3, 0.05, 3),
-        RX = make("Rotación X", "RX", -180, 180, 1, 4),
-        RY = make("Rotación Y", "RY", -180, 180, 1, 5),
-        RZ = make("Rotación Z", "RZ", -180, 180, 1, 6),
-    }
-
-    local reset = Tabs.Apariencia:Button({
-        Title = "Restablecer ajustes · " .. runtime.AppearanceCatalog[key].Name,
-        Desc = "Devuelve posición, rotación y tamaño a sus valores originales.",
-        Callback = function()
-            runtime.Appearance.AccessoryOffsets[key] = {
-                Position = Vector3.new(),
-                Rotation = Vector3.new(),
-                Scale = 1,
-            }
-            runtime.ApplyAppearanceOffset(key, nil, true)
-            runtime.RefreshAppearanceControls()
-            showBottomMessage("Ajustes restaurados: " .. runtime.AppearanceCatalog[key].Name)
-        end,
-    })
-    placeAppearanceElement(reset, slot.BaseOrder + 8)
-    setInlineAccessoryControlVisible(reset, false)
-    controls.Reset = reset
-
-    slot.Controls = controls
-    runtime.Appearance.EditorControls[key] = controls
-    return controls
+    return nil
 end
 
 function runtime.RefreshAppearanceControls()
-    runtime.Appearance.EditorSyncing = true
-
-    for key, slot in pairs(runtime.Appearance.EditorSlots) do
-        local enabled = runtime.Appearance.Enabled[key] == true
-        local controls = slot.Controls
-
-        -- Lazy creation: posición/rotación inline sólo aparecen al usar ese limited;
-        -- el tamaño vive únicamente en el editor visual.
-        if enabled and not controls then
-            controls = runtime.EnsureInlineAppearanceControls(key)
-        end
-
-        if controls then
-            local state = runtime.GetAppearanceOffset(key)
-            local values = {
-                X = state.Position.X,
-                Y = state.Position.Y,
-                Z = state.Position.Z,
-                RX = state.Rotation.X,
-                RY = state.Rotation.Y,
-                RZ = state.Rotation.Z,
-                SCALE = tonumber(state.Scale) or 1,
-            }
-
-            for component, control in pairs(controls) do
-                setInlineAccessoryControlVisible(control, enabled)
-                if enabled then
-                    local value = values[component]
-                    if value ~= nil then
-                        pcall(function() control:Set(value) end)
-                    end
-                end
-            end
-        end
-    end
-
     runtime.Appearance.EditorSyncing = false
 end
 
--- Nombre anterior conservado para SetAppearance y carga de configs.
 runtime.RefreshAppearanceEditor = runtime.RefreshAppearanceControls
 
 runtime.GetEnabledAppearanceEditorKeys = function()
@@ -5067,12 +4953,51 @@ function runtime.EnsureAppearanceStudio()
     function runtime.CommitAppearanceStudioChanges()
         local studio = runtime.AppearanceStudio
         if not studio then return end
+
+        -- Guardar no sólo conserva el estado del editor: fuerza que el Character
+        -- real vuelva a montar los limiteds usando los offsets actuales. Esto evita
+        -- que un AccessoryWeld recreado por Roblox deje el accesorio en su posición
+        -- original después de cerrar el Viewport.
+        local char = player.Character
+        if char and char.Parent then
+            runtime.ReapplyAppearanceAccessories(char)
+
+            task.defer(function()
+                if not runtime.Alive then return end
+                RunService.Heartbeat:Wait()
+                if char ~= player.Character or not char.Parent then return end
+
+                for _, key in ipairs(runtime.GetEnabledAppearanceEditorKeys()) do
+                    local applied = runtime.ApplyAppearanceOffset(key, char, true)
+                    if not applied then
+                        runtime.EnsureAppearanceAccessoryKey(key, char)
+                    end
+                end
+
+                -- Segundo pase corto: algunos juegos/rigs terminan de recrear el
+                -- weld un frame tarde, especialmente en móvil.
+                task.delay(0.08, function()
+                    if not runtime.Alive or char ~= player.Character or not char.Parent then return end
+                    for _, key in ipairs(runtime.GetEnabledAppearanceEditorKeys()) do
+                        runtime.ApplyAppearanceOffset(key, char, true)
+                    end
+                    runtime.EnforceBodyAppearance(char)
+
+                    local cloneState = runtime.Appearance.AvatarClone
+                    if cloneState and cloneState.Active and cloneState.Overlay and cloneState.Overlay.Parent then
+                        runtime.AvatarCloneHideBase(char)
+                        runtime.UpdateAvatarCloneLayers()
+                    end
+                end)
+            end)
+        end
+
         studio.OpenSnapshot = nil
         studio.AccessoryList.Visible = false
         studio.AccessorySelectorArrow.Text = "⌄"
         studio.Overlay.Visible = false
         runtime.RefreshAppearanceControls()
-        showBottomMessage("Ajustes del limited guardados.")
+        showBottomMessage("Ajustes aplicados y guardados.")
     end
 
     -- Editor responsive real: escritorio/landscape usa dos columnas; móvil

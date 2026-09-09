@@ -899,11 +899,14 @@ function Nox:CreateWindow(options)
         -- Después de esto no vuelve a forzar tamaño y el resize manual manda.
         if not w._initialFitDone then
             if maxHeight < 500 then
-                w._desiredHeight=math.min(w._desiredHeight,math.max(minHeight,maxHeight*0.82))
-                w._desiredWidth=math.min(w._desiredWidth,math.max(minWidth,maxWidth*0.80))
+                w._desiredHeight=math.min(w._desiredHeight,math.max(minHeight,maxHeight*0.78))
+                w._desiredWidth=math.min(w._desiredWidth,math.max(minWidth,maxWidth*0.76))
             elseif maxWidth < 650 then
-                w._desiredWidth=math.min(w._desiredWidth,math.max(minWidth,maxWidth*0.90))
-                w._desiredHeight=math.min(w._desiredHeight,math.max(minHeight,maxHeight*0.88))
+                w._desiredWidth=math.min(w._desiredWidth,math.max(minWidth,maxWidth*0.86))
+                w._desiredHeight=math.min(w._desiredHeight,math.max(minHeight,maxHeight*0.84))
+            elseif maxWidth < 900 then
+                w._desiredWidth=math.min(w._desiredWidth,math.max(minWidth,maxWidth*0.78))
+                w._desiredHeight=math.min(w._desiredHeight,math.max(minHeight,maxHeight*0.80))
             end
             w._initialFitDone=true
         end
@@ -1042,7 +1045,7 @@ function Nox:CreateWindow(options)
             if tab.SelectionBar then
                 tab.SelectionBar.Position=UDim2.fromOffset(1,phone and 6 or 5)
                 tab.SelectionBar.Size=UDim2.fromOffset(2,18)
-                tab.SelectionBar.Visible=true
+                tab.SelectionBar.Visible=(w.CurrentTab==tab)
                 tab.SelectionBar.BackgroundTransparency=(w.CurrentTab==tab) and 0 or 1
             end
             local glyph=tab.NavButton and tab.NavButton:FindFirstChildOfClass("Frame")
@@ -1101,7 +1104,7 @@ function Nox:CreateWindow(options)
             tab.NavTitle.TextColor3=selected and C.Text or C.Muted
             if tab.Number then tab.Number.TextColor3=selected and C.Text or C.Faint end
             if tab.SelectionBar then
-                tab.SelectionBar.Visible=true
+                tab.SelectionBar.Visible=selected
                 tab.SelectionBar.BackgroundTransparency=selected and 0 or 1
             end
         end
@@ -1121,7 +1124,7 @@ function Nox:CreateWindow(options)
         local navButton=button(holder or nav,"",{Name=title,Size=UDim2.new(1,0,0,28),BackgroundColor3=Color3.fromRGB(10,10,10),LayoutOrder=index})
         round(navButton,8)
         local selectionBar=new("Frame",{Name="Selected",Position=UDim2.fromOffset(1,5),Size=UDim2.fromOffset(2,18),
-            BackgroundColor3=C.Text,BackgroundTransparency=1,Visible=true,ZIndex=3},navButton); round(selectionBar,2)
+            BackgroundColor3=C.Text,BackgroundTransparency=0,Visible=false,ZIndex=3},navButton); round(selectionBar,2)
         local glyph=icon(navButton,title); glyph.Position=UDim2.fromOffset(6,4)
         local titleLabel=label(navButton,title,10,C.Muted,{Position=UDim2.fromOffset(26,0),Size=UDim2.new(1,-30,1,0),Font=MEDIUM,TextTruncate=Enum.TextTruncate.AtEnd})
         tab.Page,tab.Content,tab.Empty=page,list,empty; tab.NavButton,tab.NavTitle=navButton,titleLabel

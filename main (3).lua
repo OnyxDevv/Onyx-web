@@ -955,6 +955,11 @@ function Nox:CreateWindow(options)
     addResizeVisual("ResizeGuideBR_Outer", UDim2.new(1, -13, 1, -10), Vector2.new(.5, .5), UDim2.fromOffset(16, 3), 45)
     addResizeVisual("ResizeGuideBR_Inner", UDim2.new(1, -20, 1, -10), Vector2.new(.5, .5), UDim2.fromOffset(10, 3), 45)
 
+    -- Guías laterales: cápsulas verticales discretas, un poco metidas hacia
+    -- dentro del marco para conservar el redondeo exterior del hub.
+    addResizeVisual("ResizeGuideLeft", UDim2.new(0, 6, .5, 0), Vector2.new(.5, .5), UDim2.fromOffset(3, 36), 0)
+    addResizeVisual("ResizeGuideRight", UDim2.new(1, -6, .5, 0), Vector2.new(.5, .5), UDim2.fromOffset(3, 36), 0)
+
     local function addResizeHandle(name,position,anchor,size,xFactor,yFactor,showGrip)
         local hit=button(root,"",{Name=name,AnchorPoint=anchor,Position=position,
             Size=size,BackgroundTransparency=1,ZIndex=40,Visible=w.Resizable})

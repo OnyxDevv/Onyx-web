@@ -7461,6 +7461,14 @@ do
 
     local function classifyThumbnail(target, forcedMode)
         if forcedMode then return forcedMode end
+
+        -- IMPORTANTE: el menú Personas puede montar una tarjeta GRANDE usando una
+        -- URL interna de HeadShot como placeholder/origen. Si miramos primero la URL,
+        -- terminamos pidiendo el HeadShot del avatar clonado y sale la cara gigante.
+        -- La geometría del control manda: una tarjeta grande es preview de cuerpo.
+        local size = target and target.AbsoluteSize or Vector2.new(0, 0)
+        if math.max(size.X, size.Y) >= 130 then return "full" end
+
         local image = ""
         if target and (target:IsA("ImageLabel") or target:IsA("ImageButton")) then
             pcall(function() image = string_lower(target.Image or "") end)
@@ -7468,8 +7476,6 @@ do
         if string_find(image, "avatarthumbnail", 1, true) then return "full" end
         if string_find(image, "avatarbust", 1, true) then return "bust" end
         if string_find(image, "headshot", 1, true) then return "head" end
-        local size = target and target.AbsoluteSize or Vector2.new(0, 0)
-        if math.max(size.X, size.Y) >= 130 then return "full" end
         return "head"
     end
 

@@ -2164,6 +2164,18 @@ runtime.Appearance = {
     OriginalKorblox = setmetatable({}, {__mode = "k"}),
     HairVisualCache = setmetatable({}, {__mode = "k"}),
 
+    -- Korblox opcional: por defecto conserva el comportamiento clásico.
+    -- El modo Fit crea una pieza visual NO física fuera del rig para evitar
+    -- que cuerpos/clones extremos estiren la pierna o afecten la física.
+    KorbloxFit = {
+        Enabled = false,
+        Scale = 1,
+        Height = 0,
+        Depth = 0,
+        Visual = nil,
+        Connection = nil,
+    },
+
     -- Clonador de avatar: overlay visual local, sin ApplyDescription.
     -- Headless/Korblox/HideHair/limiteds siguen siendo capas independientes.
     AvatarClone = {
@@ -2243,6 +2255,136 @@ local function appearanceSafeSet(obj, prop, value)
     pcall(function()
         if obj[prop] ~= value then obj[prop] = value end
     end)
+end
+
+function runtime.ClearKorbloxFitVisual()
+    local fit = runtime.Appearance and runtime.Appearance.KorbloxFit
+    if not fit then return end
+
+    if fit.Connection then
+        pcall(function() fit.Connection:Disconnect() end)
+        fit.Connection = nil
+    end
+    if fit.Visual then
+        pcall(function() fit.Visual:Destroy() end)
+        fit.Visual = nil
+    end
+end
+
+function runtime.GetKorbloxFitSource()
+    local cloneState = runtime.Appearance and runtime.Appearance.AvatarClone
+    if cloneState and cloneState.Active then
+        local overlay = cloneState.Overlay
+        local cloneUpper = overlay and overlay:FindFirstChild("RightUpperLeg")
+        if cloneUpper and cloneUpper:IsA("BasePart") then
+            return cloneUpper
+        end
+        -- Si el clon todavía está cambiando/respawneando, no mostramos una
+        -- Korblox pegada temporalmente al Character real.
+        return nil
+    end
+
+    local char = player.Character
+    local upper = char and char:FindFirstChild("RightUpperLeg")
+    if upper and upper:IsA("BasePart") then return upper end
+    return nil
+end
+
+function runtime.GetKorbloxFitReferenceSize()
+    local char = player.Character
+    local snap = char and runtime.Appearance.OriginalKorblox[char]
+    if snap and snap.Upper and snap.Upper.Parent then
+        return snap.Upper.Size
+    end
+
+    local upper = char and char:FindFirstChild("RightUpperLeg")
+    if upper and upper:IsA("BasePart") then return upper.Size end
+    return Vector3.new(1, 2, 1)
+end
+
+function runtime.ComputeKorbloxFitSize(sourceSize, baseSize)
+    local fit = runtime.Appearance.KorbloxFit
+    baseSize = baseSize or runtime.GetKorbloxFitReferenceSize()
+    sourceSize = sourceSize or baseSize
+
+    local safeX = math.max(baseSize.X, 0.05)
+    local safeY = math.max(baseSize.Y, 0.05)
+    local safeZ = math.max(baseSize.Z, 0.05)
+
+    local widthRatio = ((sourceSize.X / safeX) + (sourceSize.Z / safeZ)) * 0.5
+    local heightRatio = sourceSize.Y / safeY
+
+    -- Límites intencionalmente conservadores: skins muy altas/anchas ya no
+    -- pueden convertir la Korblox en una pata larguísima. El usuario todavía
+    -- puede afinarla con el slider manual.
+    widthRatio = math.clamp(widthRatio, 0.82, 1.18)
+    heightRatio = math.clamp(heightRatio, 0.82, 1.22)
+
+    local manualScale = math.clamp(tonumber(fit.Scale) or 1, 0.75, 1.35)
+    return Vector3.new(
+        baseSize.X * widthRatio * manualScale,
+        baseSize.Y * heightRatio * manualScale,
+        baseSize.Z * widthRatio * manualScale
+    )
+end
+
+function runtime.UpdateKorbloxFitVisual()
+    local fit = runtime.Appearance and runtime.Appearance.KorbloxFit
+    if not fit or not fit.Enabled or not runtime.Appearance.Enabled.Korblox then
+        return false
+    end
+
+    local source = runtime.GetKorbloxFitSource()
+    local visual = fit.Visual
+
+    if not source or not source.Parent then
+        if visual and visual.Parent then visual.Transparency = 1 end
+        return false
+    end
+
+    if not visual or not visual.Parent then
+        visual = Instance.new("MeshPart")
+        visual.Name = "iLunX_KorbloxFitVisual"
+        visual.MeshId = KORBLOX_UPPER_MESH
+        visual.TextureID = KORBLOX_TEXTURE
+        visual.Anchored = true
+        visual.CanCollide = false
+        visual.CanTouch = false
+        visual.CanQuery = false
+        visual.Massless = true
+        visual.CastShadow = true
+        visual.Parent = runtime.GetAvatarCloneVisualContainer()
+        fit.Visual = visual
+    end
+
+    local baseSize = runtime.GetKorbloxFitReferenceSize()
+    local targetSize = runtime.ComputeKorbloxFitSize(source.Size, baseSize)
+    local autoHeight = math.clamp((source.Size.Y - targetSize.Y) * 0.5, -0.35, 0.35)
+    local manualHeight = math.clamp(tonumber(fit.Height) or 0, -0.65, 0.65)
+    local manualDepth = math.clamp(tonumber(fit.Depth) or 0, -0.65, 0.65)
+
+    visual.Size = targetSize
+    visual.CFrame = source.CFrame * CFrame.new(0, autoHeight + manualHeight, manualDepth)
+    visual.Transparency = 0
+    visual.LocalTransparencyModifier = 0
+    return true
+end
+
+function runtime.EnsureKorbloxFitVisual()
+    local fit = runtime.Appearance.KorbloxFit
+    if not fit.Enabled or not runtime.Appearance.Enabled.Korblox then
+        runtime.ClearKorbloxFitVisual()
+        return
+    end
+
+    if not fit.Connection then
+        fit.Connection = RunService.RenderStepped:Connect(function()
+            if runtime.Alive and fit.Enabled and runtime.Appearance.Enabled.Korblox then
+                runtime.UpdateKorbloxFitVisual()
+            end
+        end)
+    end
+    runtime.UpdateKorbloxFitVisual()
 end
 
 function runtime.ClearAppearanceBodyGuards()
@@ -2334,30 +2476,54 @@ function runtime.ApplyKorbloxLayer(char)
         if runtime.Appearance.Enabled.Korblox then
             showBottomMessage("Korblox local requiere R15.")
         end
+        runtime.ClearKorbloxFitVisual()
         return false
     end
 
     local snap = runtime.GetKorbloxSnapshot(char)
     if not snap then return false end
+    local fitEnabled = runtime.Appearance.KorbloxFit.Enabled == true
 
     if runtime.Appearance.Enabled.Korblox then
-        -- Reemplazo visual directo: NO ApplyDescription. Así no reconstruye Head ni accesorios.
-        appearanceSafeSet(snap.Upper, "MeshId", KORBLOX_UPPER_MESH)
-        appearanceSafeSet(snap.Upper, "TextureID", KORBLOX_TEXTURE)
-        appearanceSafeSet(snap.Upper, "Transparency", 0)
-        appearanceSafeSet(snap.Upper, "LocalTransparencyModifier", 0)
+        if fitEnabled then
+            -- MODO OPCIONAL: no cambiamos el MeshPart corporal. Lo ocultamos y
+            -- dibujamos una Korblox externa, anclada y sin física. Así el modo
+            -- clásico sigue intacto cuando Auto-ajustar está OFF.
+            appearanceSafeSet(snap.Upper, "MeshId", snap.UpperMeshId)
+            appearanceSafeSet(snap.Upper, "TextureID", snap.UpperTextureID)
+            appearanceSafeSet(snap.Upper, "Transparency", snap.UpperTransparency)
+            appearanceSafeSet(snap.Upper, "LocalTransparencyModifier", 1)
 
-        -- El esqueleto se conserva para no romper animaciones, pero estas dos piezas
-        -- quedan totalmente ocultas en cliente. Esto evita el "pie cortado" mezclado.
-        if snap.Lower and snap.Lower.Parent then
-            appearanceSafeSet(snap.Lower, "Transparency", 1)
-            appearanceSafeSet(snap.Lower, "LocalTransparencyModifier", 1)
-        end
-        if snap.Foot and snap.Foot.Parent then
-            appearanceSafeSet(snap.Foot, "Transparency", 1)
-            appearanceSafeSet(snap.Foot, "LocalTransparencyModifier", 1)
+            if snap.Lower and snap.Lower.Parent then
+                appearanceSafeSet(snap.Lower, "Transparency", snap.LowerTransparency or 0)
+                appearanceSafeSet(snap.Lower, "LocalTransparencyModifier", 1)
+            end
+            if snap.Foot and snap.Foot.Parent then
+                appearanceSafeSet(snap.Foot, "Transparency", snap.FootTransparency or 0)
+                appearanceSafeSet(snap.Foot, "LocalTransparencyModifier", 1)
+            end
+
+            runtime.EnsureKorbloxFitVisual()
+        else
+            runtime.ClearKorbloxFitVisual()
+
+            -- Comportamiento clásico original.
+            appearanceSafeSet(snap.Upper, "MeshId", KORBLOX_UPPER_MESH)
+            appearanceSafeSet(snap.Upper, "TextureID", KORBLOX_TEXTURE)
+            appearanceSafeSet(snap.Upper, "Transparency", 0)
+            appearanceSafeSet(snap.Upper, "LocalTransparencyModifier", 0)
+
+            if snap.Lower and snap.Lower.Parent then
+                appearanceSafeSet(snap.Lower, "Transparency", 1)
+                appearanceSafeSet(snap.Lower, "LocalTransparencyModifier", 1)
+            end
+            if snap.Foot and snap.Foot.Parent then
+                appearanceSafeSet(snap.Foot, "Transparency", 1)
+                appearanceSafeSet(snap.Foot, "LocalTransparencyModifier", 1)
+            end
         end
     else
+        runtime.ClearKorbloxFitVisual()
         appearanceSafeSet(snap.Upper, "MeshId", snap.UpperMeshId)
         appearanceSafeSet(snap.Upper, "TextureID", snap.UpperTextureID)
         appearanceSafeSet(snap.Upper, "Transparency", snap.UpperTransparency)
@@ -2418,36 +2584,45 @@ function runtime.RebuildAppearanceBodyGuards(char)
         local upper = char:FindFirstChild("RightUpperLeg")
         local lower = char:FindFirstChild("RightLowerLeg")
         local foot = char:FindFirstChild("RightFoot")
+        local fitEnabled = runtime.Appearance.KorbloxFit.Enabled == true
+
         if upper and upper:IsA("MeshPart") then
-            appearanceGuard(upper, "Transparency", 0)
-            appearanceGuard(upper, "LocalTransparencyModifier", 0)
+            if fitEnabled then
+                appearanceGuard(upper, "LocalTransparencyModifier", 1)
+            else
+                appearanceGuard(upper, "Transparency", 0)
+                appearanceGuard(upper, "LocalTransparencyModifier", 0)
 
-            -- Duels puede restaurar la pierna normal al volver al lobby sin crear un
-            -- Character nuevo. Comparamos el ID numérico porque Roblox normaliza URLs.
-            local meshConn = upper:GetPropertyChangedSignal("MeshId"):Connect(function()
-                if not runtime.Alive or not runtime.Appearance.Enabled.Korblox or not upper.Parent then return end
-                if not string.find(tostring(upper.MeshId), "9598310133", 1, true) then
-                    appearanceSafeSet(upper, "MeshId", KORBLOX_UPPER_MESH)
-                end
-            end)
-            table_insert(runtime.Appearance.BodyGuardConnections, meshConn)
+                -- Duels puede restaurar la pierna normal al volver al lobby sin crear un
+                -- Character nuevo. Comparamos el ID numérico porque Roblox normaliza URLs.
+                local meshConn = upper:GetPropertyChangedSignal("MeshId"):Connect(function()
+                    if not runtime.Alive or not runtime.Appearance.Enabled.Korblox or not upper.Parent then return end
+                    if runtime.Appearance.KorbloxFit.Enabled then return end
+                    if not string.find(tostring(upper.MeshId), "9598310133", 1, true) then
+                        appearanceSafeSet(upper, "MeshId", KORBLOX_UPPER_MESH)
+                    end
+                end)
+                table_insert(runtime.Appearance.BodyGuardConnections, meshConn)
 
-            local textureConn = upper:GetPropertyChangedSignal("TextureID"):Connect(function()
-                if not runtime.Alive or not runtime.Appearance.Enabled.Korblox or not upper.Parent then return end
-                if not string.find(tostring(upper.TextureID), "902843398", 1, true) then
-                    appearanceSafeSet(upper, "TextureID", KORBLOX_TEXTURE)
-                end
-            end)
-            table_insert(runtime.Appearance.BodyGuardConnections, textureConn)
+                local textureConn = upper:GetPropertyChangedSignal("TextureID"):Connect(function()
+                    if not runtime.Alive or not runtime.Appearance.Enabled.Korblox or not upper.Parent then return end
+                    if runtime.Appearance.KorbloxFit.Enabled then return end
+                    if not string.find(tostring(upper.TextureID), "902843398", 1, true) then
+                        appearanceSafeSet(upper, "TextureID", KORBLOX_TEXTURE)
+                    end
+                end)
+                table_insert(runtime.Appearance.BodyGuardConnections, textureConn)
+            end
         end
         if lower and lower:IsA("BasePart") then
-            appearanceGuard(lower, "Transparency", 1)
+            if not fitEnabled then appearanceGuard(lower, "Transparency", 1) end
             appearanceGuard(lower, "LocalTransparencyModifier", 1)
         end
         if foot and foot:IsA("BasePart") then
-            appearanceGuard(foot, "Transparency", 1)
+            if not fitEnabled then appearanceGuard(foot, "Transparency", 1) end
             appearanceGuard(foot, "LocalTransparencyModifier", 1)
         end
+        if fitEnabled then runtime.EnsureKorbloxFitVisual() end
     end
 
     if runtime.Appearance.Enabled.Headless or runtime.Appearance.Enabled.Korblox then
@@ -3780,7 +3955,10 @@ function runtime.AvatarCloneEnforceBaseHidden(char)
         if not object or not object.Parent or not cache[object] then
             runtime.AvatarCloneUntrackHiddenObject(object)
         else
-            if not (korblox and object.Name == "RightUpperLeg" and object.Parent == char)
+            if not (korblox
+                    and not runtime.Appearance.KorbloxFit.Enabled
+                    and object.Name == "RightUpperLeg"
+                    and object.Parent == char)
                 and object.LocalTransparencyModifier ~= 1 then
                 object.LocalTransparencyModifier = 1
             end
@@ -5391,9 +5569,16 @@ function runtime.SerializeAppearanceConfig()
             Scale = tonumber(state.Scale) or 1,
         }
     end
+    local fit = runtime.Appearance.KorbloxFit
     return {
         Enabled = enabled,
         Offsets = offsets,
+        KorbloxFit = {
+            Enabled = fit.Enabled == true,
+            Scale = tonumber(fit.Scale) or 1,
+            Height = tonumber(fit.Height) or 0,
+            Depth = tonumber(fit.Depth) or 0,
+        },
         -- compatibilidad con configs anteriores
         Korblox = enabled.Korblox,
         RC = enabled.RC,
@@ -5415,6 +5600,14 @@ function runtime.LoadAppearanceConfig(data)
                 }
             end
         end
+    end
+
+    local fit = runtime.Appearance.KorbloxFit
+    if type(data.KorbloxFit) == "table" then
+        fit.Enabled = data.KorbloxFit.Enabled == true
+        fit.Scale = math.clamp(tonumber(data.KorbloxFit.Scale) or 1, 0.75, 1.35)
+        fit.Height = math.clamp(tonumber(data.KorbloxFit.Height) or 0, -0.65, 0.65)
+        fit.Depth = math.clamp(tonumber(data.KorbloxFit.Depth) or 0, -0.65, 0.65)
     end
 
     local desired = {}
@@ -5453,6 +5646,19 @@ function runtime.LoadAppearanceConfig(data)
             end
         end
     end
+    if UIElements.TogKorbloxFit then pcall(function() UIElements.TogKorbloxFit:Set(fit.Enabled, true) end) end
+    if UIElements.SliKorbloxFitScale then pcall(function() UIElements.SliKorbloxFitScale:Set(fit.Scale, true) end) end
+    if UIElements.SliKorbloxFitHeight then pcall(function() UIElements.SliKorbloxFitHeight:Set(fit.Height, true) end) end
+    if UIElements.SliKorbloxFitDepth then pcall(function() UIElements.SliKorbloxFitDepth:Set(fit.Depth, true) end) end
+
+    if runtime.Appearance.Enabled.Korblox then
+        runtime.ApplyKorbloxLayer(player.Character)
+        runtime.RebuildAppearanceBodyGuards(player.Character)
+        runtime.UpdateAvatarCloneLayers()
+    else
+        runtime.ClearKorbloxFitVisual()
+    end
+
     runtime.Appearance.BatchLoading = false
     runtime.SuppressNotifications = wasSuppressed
 
@@ -5464,6 +5670,7 @@ end
 
 runtime.AppearanceCleanup = function()
     pcall(runtime.RestoreAppearance)
+    runtime.ClearKorbloxFitVisual()
     runtime.ClearAppearanceBodyGuards()
     runtime.ClearAppearanceAccessoryGuard()
 
@@ -5786,6 +5993,70 @@ for _, key in ipairs({"Headless", "Korblox", "HideHair"}) do
     if capturedKey == "Headless" then UIElements.TogHeadless = toggle end
     if capturedKey == "HideHair" then UIElements.TogHideHair = toggle end
 end
+
+local korbloxFitSection = Tabs.Apariencia:Section({Title = "Ajuste de Korblox"})
+placeAppearanceElement(korbloxFitSection, nextAppearanceOrder())
+
+local korbloxFitToggle = Tabs.Apariencia:Toggle({
+    Title = "Auto-ajustar Korblox",
+    Desc = "Opcional. Ajusta la Korblox al cuerpo visible con límites para evitar patas estiradas.",
+    Value = false,
+    Callback = function(state)
+        runtime.Appearance.KorbloxFit.Enabled = state == true
+        if runtime.Appearance.Enabled.Korblox then
+            runtime.ApplyKorbloxLayer(player.Character)
+            runtime.RebuildAppearanceBodyGuards(player.Character)
+            runtime.UpdateAvatarCloneLayers()
+        else
+            runtime.ClearKorbloxFitVisual()
+        end
+        if runtime.RefreshAppearanceStudioPreview then task.defer(runtime.RefreshAppearanceStudioPreview) end
+    end,
+})
+placeAppearanceElement(korbloxFitToggle, nextAppearanceOrder())
+UIElements.TogKorbloxFit = korbloxFitToggle
+
+local korbloxScaleSlider = Tabs.Apariencia:Slider({
+    Title = "Escala Korblox",
+    Desc = "Ajuste fino después del auto-acople.",
+    Step = 0.01,
+    Value = {Min = 0.75, Max = 1.35, Default = 1},
+    Callback = function(value)
+        runtime.Appearance.KorbloxFit.Scale = math.clamp(tonumber(value) or 1, 0.75, 1.35)
+        runtime.UpdateKorbloxFitVisual()
+        if runtime.RefreshAppearanceStudioPreview then task.defer(runtime.RefreshAppearanceStudioPreview) end
+    end,
+})
+placeAppearanceElement(korbloxScaleSlider, nextAppearanceOrder())
+UIElements.SliKorbloxFitScale = korbloxScaleSlider
+
+local korbloxHeightSlider = Tabs.Apariencia:Slider({
+    Title = "Altura Korblox",
+    Desc = "Sube o baja únicamente la Korblox visual.",
+    Step = 0.01,
+    Value = {Min = -0.65, Max = 0.65, Default = 0},
+    Callback = function(value)
+        runtime.Appearance.KorbloxFit.Height = math.clamp(tonumber(value) or 0, -0.65, 0.65)
+        runtime.UpdateKorbloxFitVisual()
+        if runtime.RefreshAppearanceStudioPreview then task.defer(runtime.RefreshAppearanceStudioPreview) end
+    end,
+})
+placeAppearanceElement(korbloxHeightSlider, nextAppearanceOrder())
+UIElements.SliKorbloxFitHeight = korbloxHeightSlider
+
+local korbloxDepthSlider = Tabs.Apariencia:Slider({
+    Title = "Profundidad Korblox",
+    Desc = "Mueve la Korblox hacia delante o atrás.",
+    Step = 0.01,
+    Value = {Min = -0.65, Max = 0.65, Default = 0},
+    Callback = function(value)
+        runtime.Appearance.KorbloxFit.Depth = math.clamp(tonumber(value) or 0, -0.65, 0.65)
+        runtime.UpdateKorbloxFitVisual()
+        if runtime.RefreshAppearanceStudioPreview then task.defer(runtime.RefreshAppearanceStudioPreview) end
+    end,
+})
+placeAppearanceElement(korbloxDepthSlider, nextAppearanceOrder())
+UIElements.SliKorbloxFitDepth = korbloxDepthSlider
 
 -- Los ajustes de posición/rotación/tamaño de limiteds viven EXCLUSIVAMENTE
 -- dentro del editor visual. Se conservan estos hooks para no romper llamadas
@@ -7182,17 +7453,49 @@ local function applyAppearanceStudioBodyLayers(model)
         local lower = model:FindFirstChild("RightLowerLeg")
         local foot = model:FindFirstChild("RightFoot")
         if humanoid and humanoid.RigType == Enum.HumanoidRigType.R15 and upper and upper:IsA("MeshPart") then
-            pcall(function() upper.MeshId = KORBLOX_UPPER_MESH end)
-            pcall(function() upper.TextureID = KORBLOX_TEXTURE end)
-            upper.Transparency = 0
-            upper.LocalTransparencyModifier = 0
-            if lower and lower:IsA("BasePart") then
-                lower.Transparency = 1
-                lower.LocalTransparencyModifier = 1
-            end
-            if foot and foot:IsA("BasePart") then
-                foot.Transparency = 1
-                foot.LocalTransparencyModifier = 1
+            if runtime.Appearance.KorbloxFit.Enabled then
+                upper.Transparency = 1
+                upper.LocalTransparencyModifier = 1
+                if lower and lower:IsA("BasePart") then
+                    lower.Transparency = 1
+                    lower.LocalTransparencyModifier = 1
+                end
+                if foot and foot:IsA("BasePart") then
+                    foot.Transparency = 1
+                    foot.LocalTransparencyModifier = 1
+                end
+
+                local visual = Instance.new("MeshPart")
+                visual.Name = "Xero_KorbloxFitPreview"
+                visual.MeshId = KORBLOX_UPPER_MESH
+                visual.TextureID = KORBLOX_TEXTURE
+                visual.Anchored = true
+                visual.CanCollide = false
+                visual.CanTouch = false
+                visual.CanQuery = false
+                visual.Massless = true
+                local targetSize = runtime.ComputeKorbloxFitSize(upper.Size, runtime.GetKorbloxFitReferenceSize())
+                local autoHeight = math.clamp((upper.Size.Y - targetSize.Y) * 0.5, -0.35, 0.35)
+                visual.Size = targetSize
+                visual.CFrame = upper.CFrame * CFrame.new(
+                    0,
+                    autoHeight + runtime.Appearance.KorbloxFit.Height,
+                    runtime.Appearance.KorbloxFit.Depth
+                )
+                visual.Parent = model
+            else
+                pcall(function() upper.MeshId = KORBLOX_UPPER_MESH end)
+                pcall(function() upper.TextureID = KORBLOX_TEXTURE end)
+                upper.Transparency = 0
+                upper.LocalTransparencyModifier = 0
+                if lower and lower:IsA("BasePart") then
+                    lower.Transparency = 1
+                    lower.LocalTransparencyModifier = 1
+                end
+                if foot and foot:IsA("BasePart") then
+                    foot.Transparency = 1
+                    foot.LocalTransparencyModifier = 1
+                end
             end
         end
     end

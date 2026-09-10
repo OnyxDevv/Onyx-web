@@ -7255,6 +7255,30 @@ do
         return userId
     end
 
+    -- Ruta exacta confirmada por el diagnóstico del CoreGui de Personas.
+    -- No depende de tamaños, texto, UserId embebido en otros controles ni heurísticas.
+    local function isPeopleAvatarThumbnail(target)
+        if not target or not target:IsA("ImageLabel") or target.Name ~= "AvatarThumbnail" then
+            return false
+        end
+        local container = target.Parent
+        if not container or container.Name ~= "AvatarThumbnailContainer" then return false end
+        local cardThumbnail = container.Parent
+        if not cardThumbnail or cardThumbnail.Name ~= "CardThumbnail" then return false end
+        local cardContent = cardThumbnail.Parent
+        if not cardContent or cardContent.Name ~= "CardContent" then return false end
+        return target:IsDescendantOf(CoreGui)
+    end
+
+    -- Personas usa exactamente type=Avatar a 150x150 y ScaleType.Stretch.
+    -- Usamos la misma URL que usa la tarjeta real del jugador clonado; así no existe
+    -- posibilidad de coger por accidente una imagen del hub (por ejemplo Créditos).
+    local function getPeopleAvatarThumbnailContent()
+        local targetUserId = getCloneTargetUserId()
+        if not targetUserId then return nil end
+        return "rbxthumb://type=Avatar&id=" .. tostring(targetUserId) .. "&w=150&h=150"
+    end
+
     -- Para las tarjetas grandes de Personas, reutilizamos la MISMA ImageLabel que
     -- CoreGui ya está mostrando para el jugador clonado. Esto conserva exactamente
     -- el pose, zoom, encuadre, ImageRect y ScaleType que Roblox eligió para esa tarjeta.
@@ -7654,14 +7678,8 @@ do
         -- El diagnóstico del CoreGui nos dio una ruta estable para Personas.
         -- Esta estructura SIEMPRE es avatar de cuerpo completo, aunque AbsoluteSize
         -- todavía sea 0/20 durante el primer frame de montaje del menú.
-        if target
-            and target.Name == "AvatarThumbnail"
-            and target.Parent
-            and target.Parent.Name == "AvatarThumbnailContainer" then
-            local cardThumbnail = target.Parent.Parent
-            if cardThumbnail and cardThumbnail.Name == "CardThumbnail" then
-                return "full"
-            end
+        if isPeopleAvatarThumbnail(target) then
+            return "full"
         end
 
         -- IMPORTANTE: el menú Personas puede montar una tarjeta GRANDE usando una
@@ -7691,29 +7709,31 @@ do
             end
         end
 
-        -- En Personas no regeneramos la imagen si el jugador clonado está visible:
-        -- clonamos la ImageLabel REAL de su tarjeta para heredar el mismo pose,
-        -- encuadre, ScaleType, ImageRectOffset/ImageRectSize y cualquier crop nativo.
-        if mode == "full" then
-            local liveCardImage = findLiveCloneCardImage(viewport.Parent)
-            if liveCardImage then
-                local okImage, image = pcall(function() return liveCardImage:Clone() end)
-                if okImage and image then
-                    image.Name = "XeroCloneProfileImage"
-                    image.Size = UDim2.fromScale(1, 1)
-                    image.Position = UDim2.fromScale(0, 0)
-                    image.AnchorPoint = Vector2.new(0, 0)
-                    image.BackgroundTransparency = 1
-                    image.BorderSizePixel = 0
-                    image.Rotation = 0
-                    image.ZIndex = viewport.ZIndex
-                    image.Active = false
-                    image.Selectable = false
-                    pcall(function() image.Interactable = false end)
-                    pcall(function() image.ImageTransparency = 0 end)
-                    image.Parent = viewport
-                    return
-                end
+        -- PERSONAS: usamos la URL exacta que el propio CoreGui usa para las tarjetas.
+        -- Nada de clonar ImageLabels del árbol global: gethui puede vivir bajo CoreGui y
+        -- eso permitía que una imagen del hub (como la foto de Créditos) terminara aquí.
+        if mode == "full"
+            and isPeopleAvatarThumbnail(viewport.Parent)
+            and canUseExactCloneProfileThumbnail() then
+            local content = getPeopleAvatarThumbnailContent()
+            if content then
+                local image = Instance.new("ImageLabel")
+                image.Name = "XeroCloneProfileImage"
+                image.Size = UDim2.fromScale(1, 1)
+                image.Position = UDim2.fromScale(0, 0)
+                image.AnchorPoint = Vector2.new(0, 0)
+                image.BackgroundTransparency = 1
+                image.BorderSizePixel = 0
+                image.Image = content
+                image.ScaleType = Enum.ScaleType.Stretch
+                image.ImageRectOffset = Vector2.new(0, 0)
+                image.ImageRectSize = Vector2.new(0, 0)
+                image.ZIndex = viewport.ZIndex
+                image.Active = false
+                image.Selectable = false
+                pcall(function() image.Interactable = false end)
+                image.Parent = viewport
+                return
             end
         end
 

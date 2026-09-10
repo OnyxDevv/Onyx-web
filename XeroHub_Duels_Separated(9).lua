@@ -4063,26 +4063,39 @@ function runtime.BeginAvatarCloneRespawnMask(char, generation)
             overlay:SetAttribute("iLunXAvatarClone", true)
             runtime.PrepareAvatarCloneTemplate(overlay)
 
+            -- La máscara nace aislada: nunca participa en la física del Character real.
+            for _, object in ipairs(overlay:GetDescendants()) do
+                if object:IsA("BasePart") then
+                    local accessory = object:FindFirstAncestorWhichIsA("Accoutrement")
+                    object.Anchored = accessory == nil
+                    object.CanCollide = false
+                    object.CanTouch = false
+                    object.CanQuery = false
+                    object.Massless = true
+                    object.AssemblyLinearVelocity = Vector3.zero
+                    object.AssemblyAngularVelocity = Vector3.zero
+                elseif object:IsA("Motor6D") then
+                    pcall(function() object.Enabled = false end)
+                end
+            end
+
             overlay.Parent = runtime.GetAvatarCloneVisualContainer()
             state.Overlay = overlay
             runtime.AvatarCloneCaptureOverlayVisuals(overlay)
-        end
-
-        -- La máscara temporal es visual al 100%: body parts ancladas y sin colisión.
-        -- Los handles de accesorios pueden quedar sueltos del anchor porque sus welds
-        -- sólo dependen de partes ancladas del overlay y jamás tocan al Character real.
-        for _, object in ipairs(overlay:GetDescendants()) do
-            if object:IsA("BasePart") then
-                local accessory = object:FindFirstAncestorWhichIsA("Accoutrement")
-                object.Anchored = accessory == nil
-                object.CanCollide = false
-                object.CanTouch = false
-                object.CanQuery = false
-                object.Massless = true
-                object.AssemblyLinearVelocity = Vector3.zero
-                object.AssemblyAngularVelocity = Vector3.zero
-            elseif object:IsA("Motor6D") then
-                pcall(function() object.Enabled = false end)
+        else
+            for _, object in ipairs(overlay:GetDescendants()) do
+                if object:IsA("BasePart") then
+                    local accessory = object:FindFirstAncestorWhichIsA("Accoutrement")
+                    object.Anchored = accessory == nil
+                    object.CanCollide = false
+                    object.CanTouch = false
+                    object.CanQuery = false
+                    object.Massless = true
+                    object.AssemblyLinearVelocity = Vector3.zero
+                    object.AssemblyAngularVelocity = Vector3.zero
+                elseif object:IsA("Motor6D") then
+                    pcall(function() object.Enabled = false end)
+                end
             end
         end
 
@@ -4101,18 +4114,18 @@ function runtime.BeginAvatarCloneRespawnMask(char, generation)
         overlayRoot.Transparency = 1
         overlayRoot.LocalTransparencyModifier = 1
 
-        -- Primer posicionamiento antes de ocultar el Character nuevo.
         pcall(function() overlay:PivotTo(root.CFrame) end)
 
         -- --------------------------------------------------------------
-        -- POSE SYNC DE RESPawn
+        -- RESPAWN MASK · LIVE MOTOR POSE
         -- --------------------------------------------------------------
-        -- La máscara anterior sólo seguía el HRP, así que quedaba tiesa durante
-        -- caída/idle/caminar. Estos pares copian la pose REAL del Character nuevo
-        -- usando RigAttachments, pero mueven únicamente piezas ancladas del overlay.
-        local respawnMaskJointSpecs
+        -- Duels reconstruye partes/Motor6D del MISMO Character durante el countdown.
+        -- No guardamos referencias a sus piezas: cada frame resolvemos las actuales.
+        -- Además usamos Motor6D.Transform directamente, que es la pose que Animator
+        -- escribe para caída/idle/salto/caminar incluso durante el freeze inicial.
+        local jointSpecs
         if humanoid.RigType == Enum.HumanoidRigType.R15 then
-            respawnMaskJointSpecs = {
+            jointSpecs = {
                 {"HumanoidRootPart", "LowerTorso"},
                 {"LowerTorso", "UpperTorso"},
                 {"UpperTorso", "Head"},
@@ -4134,7 +4147,7 @@ function runtime.BeginAvatarCloneRespawnMask(char, generation)
                 {"RightLowerLeg", "RightFoot"},
             }
         else
-            respawnMaskJointSpecs = {
+            jointSpecs = {
                 {"HumanoidRootPart", "Torso"},
                 {"Torso", "Head"},
                 {"Torso", "Left Arm"},
@@ -4159,63 +4172,54 @@ function runtime.BeginAvatarCloneRespawnMask(char, generation)
             return nil, nil
         end
 
-        local posePairs = {}
-        local posePairKeys = {}
+        local function findJointMotor(model, part0Name, part1Name)
+            for _, object in ipairs(model:GetDescendants()) do
+                if object:IsA("Motor6D")
+                    and object.Part0 and object.Part1
+                    and object.Part0.Name == part0Name
+                    and object.Part1.Name == part1Name then
+                    return object
+                end
+            end
+            return nil
+        end
 
-        local function tryBuildPosePairs()
-            for _, spec in ipairs(respawnMaskJointSpecs) do
-                local parentName, childName = spec[1], spec[2]
-                local key = parentName .. ">" .. childName
+        -- Sólo cacheamos geometría DEL CLON, porque esa no cambia durante el respawn.
+        local cloneJointData = {}
+        for i = 1, #jointSpecs do
+            local parentName, childName = jointSpecs[i][1], jointSpecs[i][2]
+            local cloneParent = overlay:FindFirstChild(parentName)
+            local cloneChild = overlay:FindFirstChild(childName)
 
-                if not posePairKeys[key] then
-                    local realParent = char:FindFirstChild(parentName)
-                    local realChild = char:FindFirstChild(childName)
-                    local cloneParent = overlay:FindFirstChild(parentName)
-                    local cloneChild = overlay:FindFirstChild(childName)
+            if cloneParent and cloneParent:IsA("BasePart")
+                and cloneChild and cloneChild:IsA("BasePart") then
 
-                    if realParent and realParent:IsA("BasePart")
-                        and realChild and realChild:IsA("BasePart")
-                        and cloneParent and cloneParent:IsA("BasePart")
-                        and cloneChild and cloneChild:IsA("BasePart") then
+                local cloneMotor = findJointMotor(overlay, parentName, childName)
+                local cloneC0, cloneC1
 
-                        local realA0, realA1 = findSharedRigAttachment(realParent, realChild)
-                        local cloneA0, cloneA1 = findSharedRigAttachment(cloneParent, cloneChild)
-
-                        if realA0 and realA1 and cloneA0 and cloneA1 then
-                            posePairKeys[key] = true
-                            table.insert(posePairs, {
-                                RealParent = realParent,
-                                RealChild = realChild,
-                                CloneParent = cloneParent,
-                                CloneChild = cloneChild,
-                                RealC0 = realA0.CFrame,
-                                RealC1 = realA1.CFrame,
-                                CloneC0 = cloneA0.CFrame,
-                                CloneC1 = cloneA1.CFrame,
-                            })
-                        elseif humanoid.RigType == Enum.HumanoidRigType.R6 then
-                            -- R6 muchas veces no trae RigAttachments. Este fallback
-                            -- conserva las proporciones del clon y copia los cambios
-                            -- relativos de pose que ocurran desde que aparece la pieza.
-                            posePairKeys[key] = true
-                            table.insert(posePairs, {
-                                RealParent = realParent,
-                                RealChild = realChild,
-                                CloneParent = cloneParent,
-                                CloneChild = cloneChild,
-                                R6Fallback = true,
-                                InitialRealRelative = realParent.CFrame:ToObjectSpace(realChild.CFrame),
-                                InitialCloneRelative = cloneParent.CFrame:ToObjectSpace(cloneChild.CFrame),
-                            })
-                        end
+                if cloneMotor then
+                    cloneC0 = cloneMotor.C0
+                    cloneC1 = cloneMotor.C1
+                else
+                    local a0, a1 = findSharedRigAttachment(cloneParent, cloneChild)
+                    if a0 and a1 then
+                        cloneC0 = a0.CFrame
+                        cloneC1 = a1.CFrame
                     end
+                end
+
+                if cloneC0 and cloneC1 then
+                    cloneJointData[i] = {
+                        ParentName = parentName,
+                        ChildName = childName,
+                        CloneParent = cloneParent,
+                        CloneChild = cloneChild,
+                        CloneC0 = cloneC0,
+                        CloneC1 = cloneC1,
+                    }
                 end
             end
         end
-
-        -- Intenta construir lo que ya existe; las piezas que Duels agregue un poco
-        -- después se incorporan dinámicamente en RenderStepped.
-        tryBuildPosePairs()
 
         runtime.AvatarCloneHideBase(char)
         runtime.UpdateAvatarCloneLayers()
@@ -4260,44 +4264,63 @@ function runtime.BeginAvatarCloneRespawnMask(char, generation)
                 overlayRoot.AssemblyAngularVelocity = Vector3.zero
             end
 
-            -- El rig puede terminar de aparecer durante el freeze de la ronda.
-            if #posePairs < #respawnMaskJointSpecs then
-                tryBuildPosePairs()
+            -- Mapa LIVE: si Duels reemplaza partes o joints, este frame ya usa los nuevos.
+            local liveMotorMap = {}
+            for _, object in ipairs(char:GetDescendants()) do
+                if object:IsA("Motor6D") and object.Part0 and object.Part1 then
+                    liveMotorMap[object.Part0.Name .. ">" .. object.Part1.Name] = object
+                end
             end
 
-            -- Copia caída/idle/caminar/salto desde el Character invisible.
-            -- Se procesa en orden raíz -> extremidades para preservar proporciones.
-            for i = 1, #posePairs do
-                local pair = posePairs[i]
-                local realParent = pair.RealParent
-                local realChild = pair.RealChild
-                local cloneParent = pair.CloneParent
-                local cloneChild = pair.CloneChild
+            for i = 1, #jointSpecs do
+                local data = cloneJointData[i]
+                if data then
+                    local parentName = data.ParentName
+                    local childName = data.ChildName
+                    local realParent = char:FindFirstChild(parentName)
+                    local realChild = char:FindFirstChild(childName)
+                    local cloneParent = data.CloneParent
+                    local cloneChild = data.CloneChild
 
-                if realParent and realParent.Parent
-                    and realChild and realChild.Parent
-                    and cloneParent and cloneParent.Parent
-                    and cloneChild and cloneChild.Parent then
+                    if realParent and realParent:IsA("BasePart")
+                        and realChild and realChild:IsA("BasePart")
+                        and cloneParent and cloneParent.Parent
+                        and cloneChild and cloneChild.Parent then
 
-                    pcall(function()
-                        if pair.R6Fallback then
-                            local currentRelative = realParent.CFrame:ToObjectSpace(realChild.CFrame)
-                            local delta = pair.InitialRealRelative:ToObjectSpace(currentRelative)
-                            cloneChild.CFrame = cloneParent.CFrame * pair.InitialCloneRelative * delta
-                        else
-                            local parentJointWorld = realParent.CFrame * pair.RealC0
-                            local childJointWorld = realChild.CFrame * pair.RealC1
-                            local poseTransform = parentJointWorld:ToObjectSpace(childJointWorld)
+                        local liveMotor = liveMotorMap[parentName .. ">" .. childName]
 
-                            cloneChild.CFrame = cloneParent.CFrame
-                                * pair.CloneC0
-                                * poseTransform
-                                * pair.CloneC1:Inverse()
-                        end
+                        pcall(function()
+                            local poseTransform
 
-                        cloneChild.AssemblyLinearVelocity = Vector3.zero
-                        cloneChild.AssemblyAngularVelocity = Vector3.zero
-                    end)
+                            if liveMotor
+                                and liveMotor.Part0 == realParent
+                                and liveMotor.Part1 == realChild then
+                                -- Fuente principal: pose exacta escrita por Animator.
+                                poseTransform = liveMotor.Transform
+                            else
+                                -- Fallback mientras Duels todavía está reconstruyendo el joint.
+                                local realA0, realA1 = findSharedRigAttachment(realParent, realChild)
+                                if realA0 and realA1 then
+                                    local parentJointWorld = realParent.CFrame * realA0.CFrame
+                                    local childJointWorld = realChild.CFrame * realA1.CFrame
+                                    poseTransform = parentJointWorld:ToObjectSpace(childJointWorld)
+                                else
+                                    -- Si el joint aún no existe, conservamos el último frame válido.
+                                    poseTransform = nil
+                                end
+                            end
+
+                            if poseTransform then
+                                cloneChild.CFrame = cloneParent.CFrame
+                                    * data.CloneC0
+                                    * poseTransform
+                                    * data.CloneC1:Inverse()
+                            end
+
+                            cloneChild.AssemblyLinearVelocity = Vector3.zero
+                            cloneChild.AssemblyAngularVelocity = Vector3.zero
+                        end)
+                    end
                 end
             end
 

@@ -7280,6 +7280,29 @@ do
         local destinationSize = destinationTarget and destinationTarget.AbsoluteSize or Vector2.new(0, 0)
         local wantsLargeCard = math.max(destinationSize.X, destinationSize.Y) >= 130
 
+        -- EXACT PEOPLE CARD SOURCE: el diagnóstico confirmó que la miniatura real
+        -- vive exactamente en CardThumbnail > AvatarThumbnailContainer > AvatarThumbnail
+        -- y que su Image usa rbxthumb://type=Avatar&id=<UserId>&w=150&h=150.
+        -- Probamos esta ruta estructural ANTES de cualquier heurística.
+        for _, obj in ipairs(CoreGui:GetDescendants()) do
+            if obj:IsA("ImageLabel")
+                and obj.Name == "AvatarThumbnail"
+                and obj.Parent
+                and obj.Parent.Name == "AvatarThumbnailContainer" then
+
+                local cardThumbnail = obj.Parent.Parent
+                local imageText = ""
+                pcall(function() imageText = string_lower(obj.Image or "") end)
+
+                if cardThumbnail
+                    and cardThumbnail.Name == "CardThumbnail"
+                    and string_find(imageText, "type=avatar", 1, true)
+                    and string_find(imageText, "id=" .. targetIdText, 1, true) then
+                    return obj
+                end
+            end
+        end
+
         local function textMatchesTarget(value)
             local text = normalizeGuiText(value)
             if text == "" then return false end
@@ -7628,6 +7651,19 @@ do
     local function classifyThumbnail(target, forcedMode)
         if forcedMode then return forcedMode end
 
+        -- El diagnóstico del CoreGui nos dio una ruta estable para Personas.
+        -- Esta estructura SIEMPRE es avatar de cuerpo completo, aunque AbsoluteSize
+        -- todavía sea 0/20 durante el primer frame de montaje del menú.
+        if target
+            and target.Name == "AvatarThumbnail"
+            and target.Parent
+            and target.Parent.Name == "AvatarThumbnailContainer" then
+            local cardThumbnail = target.Parent.Parent
+            if cardThumbnail and cardThumbnail.Name == "CardThumbnail" then
+                return "full"
+            end
+        end
+
         -- IMPORTANTE: el menú Personas puede montar una tarjeta GRANDE usando una
         -- URL interna de HeadShot como placeholder/origen. Si miramos primero la URL,
         -- terminamos pidiendo el HeadShot del avatar clonado y sale la cara gigante.
@@ -7842,7 +7878,9 @@ do
             pcall(function() target.ImageTransparency = 1 end)
             if current.Mode ~= mode then
                 current.Mode = mode
-                if not spoofState.Dirty then renderSnapshot(current.Viewport, mode) end
+                if canUseExactCloneProfileThumbnail() or not spoofState.Dirty then
+                    renderSnapshot(current.Viewport, mode)
+                end
             end
             return true
         end
@@ -7917,6 +7955,13 @@ do
     local function candidateImageScore(gui)
         if not gui or (not gui:IsA("ImageLabel") and not gui:IsA("ImageButton")) then return nil end
         if isOurSpoofObject(gui) then return nil end
+
+        -- ConnectButton/CardDetails son ImageButtons pero no son thumbnails.
+        -- El diagnóstico mostró que el fallback por nombre los estaba capturando.
+        local image = ""
+        pcall(function() image = string_lower(gui.Image or "") end)
+        if image == "" then return nil end
+
         local size = gui.AbsoluteSize
         if size.X < 28 or size.Y < 28 or size.X > 260 or size.Y > 260 then return nil end
         local ratio = size.X / math.max(1, size.Y)

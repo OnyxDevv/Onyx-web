@@ -906,10 +906,10 @@ Tabs.Creditos:Paragraph({
     StrokeColor = Color3.fromRGB(44, 44, 50),
 })
 Tabs.Creditos:Paragraph({
-    Title = "Proyecto",
-    Desc = "XeroHub UI minimalista, compacta y separada del script principal para actualizar el main con más facilidad.",
+    Title = "Agradecimientos",
+    Desc = "Gracias a quienes usan y apoyan XeroHub. Su apoyo hace posible seguir mejorándolo.",
     Gothic = true,
-    DecorText = "XERO",
+    DecorText = "THANKS",
     Color = Color3.fromRGB(11, 11, 14),
     StrokeColor = Color3.fromRGB(44, 44, 50),
 })
@@ -11658,4 +11658,3 @@ end)
 -- después de este punto permanece completamente instantáneo.
 startupSplashState.Finish()
 runtime.NotificationsReady = true
-

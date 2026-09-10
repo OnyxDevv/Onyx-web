@@ -1,4 +1,4 @@
--- XeroHub | DUELS MURDERS VS SHERIFF | Kev --
+-- XeroHub | DUELS MURDERS VS SHERIFF | AlexDev --
 
 
 local MM2_PLACE_ID = 142823291
@@ -149,6 +149,11 @@ function runtime.Cleanup()
         runtime.StartupGui = nil
     end
 
+    if runtime.NotificationGui then
+        pcall(function() runtime.NotificationGui:Destroy() end)
+        runtime.NotificationGui = nil
+    end
+
     if runtime.ScreenGui then
         pcall(function() runtime.ScreenGui:Destroy() end)
         runtime.ScreenGui = nil
@@ -234,7 +239,7 @@ end
 -- ==========================================
 -- ÚNICA ANIMACIÓN: SPLASH REAL AL EJECUTAR
 -- ==========================================
-local startupSplashState = {StartedAt = os.clock()}
+local startupSplashState = {}
 
 do
     -- Splash: negro real, nítido y cubriendo todo el viewport.
@@ -270,7 +275,7 @@ do
     splash.BackgroundColor3 = Color3.new(0, 0, 0)
     splash.BackgroundTransparency = 0
     splash.BorderSizePixel = 0
-    splash.GroupTransparency = 1
+    splash.GroupTransparency = 0
     splash.Active = true
     splash.ZIndex = 1
     splash.Parent = startupGui
@@ -285,7 +290,7 @@ do
     content.Parent = splash
 
     local contentScale = Instance.new("UIScale")
-    contentScale.Scale = 0.965
+    contentScale.Scale = 1
     contentScale.Parent = content
 
     local brand = Instance.new("TextLabel")
@@ -294,7 +299,7 @@ do
     brand.Position = UDim2.new(0.5, 0, 0, 10)
     brand.BackgroundTransparency = 1
     brand.RichText = true
-    brand.Text = '<font color="#FFFFFF">NOX</font><font color="#A7A7A7"> HUB</font>'
+    brand.Text = '<font color="#FFFFFF">XERO</font><font color="#A7A7A7"> HUB</font>'
     brand.TextColor3 = Color3.new(1, 1, 1)
     brand.TextTransparency = 0
     brand.Font = Enum.Font.GothamBold
@@ -339,41 +344,29 @@ do
     startupSplashState.Card = content
     startupSplashState.Status = status
 
-    RunService.RenderStepped:Wait()
-    TweenService:Create(splash, TweenInfo.new(0.16, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {GroupTransparency = 0}):Play()
-    TweenService:Create(contentScale, TweenInfo.new(0.24, Enum.EasingStyle.Quart, Enum.EasingDirection.Out), {Scale = 1}):Play()
-    TweenService:Create(progress, TweenInfo.new(0.95, Enum.EasingStyle.Quint, Enum.EasingDirection.Out), {Size = UDim2.fromScale(1, 1)}):Play()
-    task.wait(0.22)
+    startupSplashState.Progress = progress
 end
 
 function startupSplashState.Finish(message)
     local startupGui = startupSplashState.Gui
-    local splash = startupSplashState.Group
-    if not startupGui or not startupGui.Parent or not splash or not splash.Parent then return end
+    if not startupGui or not startupGui.Parent then return end
 
+    -- Sólo los errores conservan un momento de lectura. La carga correcta
+    -- termina inmediatamente, sin duración mínima ni esperar animaciones.
     if message and startupSplashState.Status then
         startupSplashState.Status.Text = message
         task.wait(0.65)
-    else
-        local remaining = 1.2 - (os.clock() - startupSplashState.StartedAt)
-        if remaining > 0 then task.wait(remaining) end
     end
-
-    RunService.RenderStepped:Wait()
-    local fadeOut = TweenService:Create(
-        splash,
-        TweenInfo.new(0.16, Enum.EasingStyle.Quad, Enum.EasingDirection.In),
-        {GroupTransparency = 1}
-    )
-    fadeOut:Play()
-    fadeOut.Completed:Wait()
-
+    if startupSplashState.Progress then
+        startupSplashState.Progress.Size = UDim2.fromScale(1, 1)
+    end
     if startupGui.Parent then startupGui:Destroy() end
     runtime.StartupGui = nil
     startupSplashState.Gui = nil
     startupSplashState.Group = nil
     startupSplashState.Card = nil
     startupSplashState.Status = nil
+    startupSplashState.Progress = nil
 end
 
 local screenGui = Instance.new("ScreenGui")
@@ -478,12 +471,18 @@ local Window = WindUI:CreateWindow({
     Title = "Xero | DUELS",
     Subtitle = "DUELS",
     Theme = "Xero",
-    Author = "by Kev",
+    Author = "by AlexDev",
     Size = UDim2.fromOffset(620, 350),
     MinSize = Vector2.new(330, 270),
     Resizable = true,
     OpenButton = {Title = "Abrir XeroHub", Enabled = true},
 })
+
+-- La UI ya está cargada; el resto del arranque prepara sus controles.
+if startupSplashState.Progress then
+    startupSplashState.Progress.Size = UDim2.fromScale(0.65, 1)
+    startupSplashState.Status.Text = "Preparando controles..."
+end
 
 pcall(function()
     Window:OnDestroy(runtime.Cleanup)
@@ -522,7 +521,7 @@ task.spawn(function()
 end)
 
 -- ==========================================
--- NOTIFICACIONES iLunX FAST: banner estilo iPhone
+-- NOTIFICACIONES XERO: tarjetas monocromáticas desde la derecha
 -- Entra y sale rápido; la cola corta descarta avisos viejos para no atrasarse.
 -- ==========================================
 local sendNotification
@@ -534,13 +533,22 @@ local NOTIFICATION_TIMING = {
     Gap = 0.015,
 }
 
+local notificationGui = Instance.new("ScreenGui")
+notificationGui.Name = "XeroHub_Notifications"
+notificationGui.ResetOnSpawn = false
+notificationGui.IgnoreGuiInset = true
+notificationGui.DisplayOrder = 2147483647
+notificationGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+notificationGui.Parent = playerGui
+runtime.NotificationGui = notificationGui
+
 local NotifContainer = Instance.new("Frame")
-NotifContainer.Name = "iLunXIOSNotificationsFast"
+NotifContainer.Name = "XeroNotifications"
 NotifContainer.Size = UDim2.fromScale(1, 1)
 NotifContainer.BackgroundTransparency = 1
 NotifContainer.Active = false
 NotifContainer.ZIndex = 200
-NotifContainer.Parent = screenGui
+NotifContainer.Parent = notificationGui
 
 local notificationQueue = {}
 local notificationWorkerRunning = false
@@ -549,108 +557,71 @@ local lastNotificationAt = 0
 runtime.NotificationSerial = 0
 runtime.NotificationsReady = false
 
-local function createIOSBanner(payload)
+local function createMinimalBanner(payload)
     local banner = Instance.new("CanvasGroup")
-    banner.Name = "iOSBannerFast"
-    banner.AnchorPoint = Vector2.new(0.5, 0)
-    banner.Position = UDim2.new(0.5, 0, 0, -96)
-    banner.Size = UDim2.new(1, -24, 0, 78)
-    banner.BackgroundColor3 = Color3.fromHex("#161616")
-    banner.BackgroundTransparency = 0.035
+    banner.Name = "XeroToast"
+    banner.AnchorPoint = Vector2.new(1, 0)
+    banner.Position = UDim2.new(1, 374, 0, 64)
+    banner.Size = UDim2.new(1, -24, 0, 82)
+    banner.BackgroundColor3 = Color3.fromRGB(13, 13, 13)
+    banner.BackgroundTransparency = 0.02
     banner.BorderSizePixel = 0
     banner.ClipsDescendants = true
     banner.GroupTransparency = 1
     banner.ZIndex = 201
     banner.Parent = NotifContainer
-
-    local sizeConstraint = Instance.new("UISizeConstraint")
-    sizeConstraint.MinSize = Vector2.new(270, 78)
-    sizeConstraint.MaxSize = Vector2.new(390, 78)
-    sizeConstraint.Parent = banner
-
-    Instance.new("UICorner", banner).CornerRadius = UDim.new(0, 20)
-
-    local stroke = Instance.new("UIStroke")
-    stroke.Color = Color3.fromHex("#686868")
-    stroke.Transparency = 0.38
+    local limit = Instance.new("UISizeConstraint", banner)
+    limit.MaxSize = Vector2.new(350, 82)
+    Instance.new("UICorner", banner).CornerRadius = UDim.new(0, 12)
+    local stroke = Instance.new("UIStroke", banner)
+    stroke.Color = Color3.fromRGB(68, 68, 68)
+    stroke.Transparency = 0.2
     stroke.Thickness = 1
-    stroke.Parent = banner
 
-    local gradient = Instance.new("UIGradient")
-    gradient.Color = ColorSequence.new({
-        ColorSequenceKeypoint.new(0, Color3.fromHex("#292929")),
-        ColorSequenceKeypoint.new(0.52, Color3.fromHex("#202020")),
-        ColorSequenceKeypoint.new(1, Color3.fromHex("#151515"))
-    })
-    gradient.Rotation = 105
-    gradient.Parent = banner
+    local accent = Instance.new("Frame", banner)
+    accent.Size = UDim2.new(0, 2, 1, -28)
+    accent.Position = UDim2.fromOffset(12, 14)
+    accent.BackgroundColor3 = Color3.fromRGB(220, 220, 220)
+    accent.BorderSizePixel = 0
+    accent.ZIndex = 202
+    Instance.new("UICorner", accent).CornerRadius = UDim.new(1, 0)
 
-    local icon = Instance.new("Frame")
-    icon.Size = UDim2.fromOffset(36, 36)
-    icon.Position = UDim2.fromOffset(13, 11)
-    icon.BackgroundColor3 = payload.accent
-    icon.BorderSizePixel = 0
-    icon.ZIndex = 203
-    icon.Parent = banner
-    Instance.new("UICorner", icon).CornerRadius = UDim.new(0, 10)
+    local title = Instance.new("TextLabel", banner)
+    title.Size = UDim2.new(1, -46, 0, 16)
+    title.Position = UDim2.fromOffset(25, 11)
+    title.BackgroundTransparency = 1
+    title.Text = string.upper(payload.title)
+    title.TextColor3 = Color3.fromRGB(245, 245, 245)
+    title.Font = Enum.Font.GothamMedium
+    title.TextSize = 10
+    title.TextTruncate = Enum.TextTruncate.AtEnd
+    title.TextXAlignment = Enum.TextXAlignment.Left
+    title.ZIndex = 202
 
-    local iconGradient = Instance.new("UIGradient")
-    iconGradient.Color = ColorSequence.new({
-        ColorSequenceKeypoint.new(0, Color3.new(1, 1, 1)),
-        ColorSequenceKeypoint.new(1, payload.accent)
-    })
-    iconGradient.Rotation = 135
-    iconGradient.Parent = icon
-
-    local iconText = Instance.new("TextLabel")
-    iconText.Size = UDim2.fromScale(1, 1)
-    iconText.BackgroundTransparency = 1
-    iconText.Text = payload.icon
-    iconText.TextColor3 = Color3.fromHex("#111113")
-    iconText.Font = Enum.Font.GothamBlack
-    iconText.TextSize = 18
-    iconText.ZIndex = 204
-    iconText.Parent = icon
-
-    local appLabel = Instance.new("TextLabel")
-    appLabel.Size = UDim2.new(1, -124, 0, 18)
-    appLabel.Position = UDim2.fromOffset(59, 8)
-    appLabel.BackgroundTransparency = 1
-    appLabel.Text = payload.title
-    appLabel.TextColor3 = Color3.fromHex("#F5F5F7")
-    appLabel.Font = Enum.Font.GothamBold
-    appLabel.TextSize = 12
-    appLabel.TextXAlignment = Enum.TextXAlignment.Left
-    appLabel.ZIndex = 203
-    appLabel.Parent = banner
-
-    local timeLabel = Instance.new("TextLabel")
-    timeLabel.AnchorPoint = Vector2.new(1, 0)
-    timeLabel.Size = UDim2.fromOffset(48, 18)
-    timeLabel.Position = UDim2.new(1, -13, 0, 8)
-    timeLabel.BackgroundTransparency = 1
-    timeLabel.Text = "ahora"
-    timeLabel.TextColor3 = Color3.fromHex("#A7A7AD")
-    timeLabel.Font = Enum.Font.GothamMedium
-    timeLabel.TextSize = 10
-    timeLabel.TextXAlignment = Enum.TextXAlignment.Right
-    timeLabel.ZIndex = 203
-    timeLabel.Parent = banner
-
-    local body = Instance.new("TextLabel")
-    body.Size = UDim2.new(1, -74, 0, 40)
-    body.Position = UDim2.fromOffset(59, 27)
+    local body = Instance.new("TextLabel", banner)
+    body.Size = UDim2.new(1, -46, 0, 44)
+    body.Position = UDim2.fromOffset(25, 29)
     body.BackgroundTransparency = 1
     body.Text = payload.text
-    body.TextColor3 = Color3.fromHex("#EAEAEE")
-    body.Font = Enum.Font.GothamMedium
-    body.TextSize = 13
+    body.TextColor3 = Color3.fromRGB(185, 185, 185)
+    body.Font = Enum.Font.Gotham
+    body.TextSize = 12
     body.TextWrapped = true
     body.TextXAlignment = Enum.TextXAlignment.Left
     body.TextYAlignment = Enum.TextYAlignment.Top
-    body.ZIndex = 203
-    body.Parent = banner
-
+    body.ZIndex = 202
+    -- Grow for longer messages and narrow screens, without clipping their text.
+    local function fitText()
+        local width = math.max(1, banner.AbsoluteSize.X - 46)
+        local measured = game:GetService("TextService"):GetTextSize(
+            payload.text, 12, Enum.Font.Gotham, Vector2.new(width, 10000))
+        local height = math.max(82, math.ceil(measured.Y) + 44)
+        limit.MaxSize = Vector2.new(350, height)
+        banner.Size = UDim2.new(1, -24, 0, height)
+        body.Size = UDim2.new(1, -46, 1, -40)
+    end
+    banner:GetPropertyChangedSignal("AbsoluteSize"):Connect(fitText)
+    fitText()
     return banner
 end
 
@@ -661,12 +632,12 @@ local function runNotificationQueue()
     task.spawn(function()
         while runtime.Alive and #notificationQueue > 0 do
             local payload = table.remove(notificationQueue, 1)
-            local banner = createIOSBanner(payload)
+            local banner = createMinimalBanner(payload)
 
             local enterTween = TweenService:Create(
                 banner,
                 TweenInfo.new(NOTIFICATION_TIMING.Enter, Enum.EasingStyle.Quint, Enum.EasingDirection.Out),
-                {Position = UDim2.new(0.5, 0, 0, 10), GroupTransparency = 0}
+                {Position = UDim2.new(1, -12, 0, 64), GroupTransparency = 0}
             )
             enterTween:Play()
             enterTween.Completed:Wait()
@@ -677,7 +648,7 @@ local function runNotificationQueue()
             local exitTween = TweenService:Create(
                 banner,
                 TweenInfo.new(NOTIFICATION_TIMING.Exit, Enum.EasingStyle.Quint, Enum.EasingDirection.In),
-                {Position = UDim2.new(0.5, 0, 0, -96), GroupTransparency = 1}
+                {Position = UDim2.new(1, 374, 0, 64), GroupTransparency = 1}
             )
             exitTween:Play()
             exitTween.Completed:Wait()
@@ -892,7 +863,7 @@ Tabs.Inicio:Paragraph({
 local XERO_CREDITS_PROFILE = "rbxassetid://74846094133538" -- Foto del creador para Créditos.
 
 Tabs.Creditos:Paragraph({
-    Title = "Kev",
+    Title = "AlexDev",
     Desc = "Creador de XeroHub\nTikTok: @kevzzx_",
     Image = XERO_CREDITS_PROFILE,
     ImageSize = 72,
@@ -908,7 +879,7 @@ Tabs.Creditos:Paragraph({
 })
 Tabs.Creditos:Paragraph({
     Title = "Agradecimientos",
-    Desc = "Gracias por usar y apoyar XeroHub. Cada persona que confía en el proyecto forma parte de su evolución.",
+    Desc = "Gracias por usar XeroHub, su apoyo ayuda a mejorarlo más.",
     Gothic = true,
     DecorText = "THANKS",
     Color = Color3.fromRGB(11, 11, 14),
@@ -958,76 +929,77 @@ Tabs.Inicio:Button({
 
 Tabs.Inicio:Section({Title = "Optimización"})
 
+do
 local Stats = game:GetService("Stats")
 local statsContainer = Instance.new("Frame")
-statsContainer.Size = UDim2.new(0, 150, 0, 50)
-statsContainer.Position = UDim2.new(1, -170, 0, 10) -- Esquina superior derecha, sin estorbar
-statsContainer.BackgroundTransparency = 1
-statsContainer.Visible = false 
+statsContainer.Name = "XeroPerformance"
+statsContainer.Size = UDim2.fromOffset(184, 44)
+statsContainer.AnchorPoint = Vector2.new(1, 0)
+statsContainer.Position = UDim2.new(1, -12, 0, 12)
+statsContainer.BackgroundColor3 = Color3.fromRGB(12, 12, 12)
+statsContainer.BackgroundTransparency = 0.06
+statsContainer.BorderSizePixel = 0
+statsContainer.Visible = false
 statsContainer.ZIndex = 100
 statsContainer.Parent = screenGui
-
-local fpsLabel = Instance.new("TextLabel", statsContainer)
-fpsLabel.Size = UDim2.new(1, 0, 0, 25)
-fpsLabel.Position = UDim2.new(0, 0, 0, 0)
-fpsLabel.BackgroundTransparency = 1
-fpsLabel.Text = "FPS: --"
-fpsLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
-fpsLabel.Font = Enum.Font.GothamBlack -- Fuente más gruesa y moderna
-fpsLabel.TextSize = 16 
-fpsLabel.TextXAlignment = Enum.TextXAlignment.Right
-fpsLabel.TextStrokeTransparency = 0 -- Borde negro al 100% para que resalte
-fpsLabel.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
-
-local pingLabel = Instance.new("TextLabel", statsContainer)
-pingLabel.Size = UDim2.new(1, 0, 0, 25)
-pingLabel.Position = UDim2.new(0, 0, 0, 25) 
-pingLabel.BackgroundTransparency = 1
-pingLabel.Text = "Ping: -- ms"
-pingLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
-pingLabel.Font = Enum.Font.GothamBlack
-pingLabel.TextSize = 16
-pingLabel.TextXAlignment = Enum.TextXAlignment.Right
-pingLabel.TextStrokeTransparency = 0
-pingLabel.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
-
+Instance.new("UICorner", statsContainer).CornerRadius = UDim.new(0, 12)
+local outline = Instance.new("UIStroke", statsContainer)
+outline.Color = Color3.fromRGB(60, 60, 60)
+outline.Thickness = 1
+local divider = Instance.new("Frame", statsContainer)
+divider.Position = UDim2.new(0.5, 0, 0, 12)
+divider.Size = UDim2.fromOffset(1, 20)
+divider.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
+divider.BorderSizePixel = 0
+divider.ZIndex = 101
+local function metric(caption, x)
+    local label = Instance.new("TextLabel", statsContainer)
+    label.Size = UDim2.fromOffset(72, 12)
+    label.Position = UDim2.fromOffset(x, 6)
+    label.BackgroundTransparency = 1
+    label.Text = caption
+    label.TextColor3 = Color3.fromRGB(140, 140, 140)
+    label.Font = Enum.Font.GothamMedium
+    label.TextSize = 8
+    label.ZIndex = 101
+    local value = Instance.new("TextLabel", statsContainer)
+    value.Size = UDim2.fromOffset(72, 20)
+    value.Position = UDim2.fromOffset(x, 18)
+    value.BackgroundTransparency = 1
+    value.Text = "--"
+    value.TextColor3 = Color3.fromRGB(240, 240, 240)
+    value.Font = Enum.Font.GothamMedium
+    value.TextSize = 14
+    value.ZIndex = 101
+    return value
+end
+local fpsLabel = metric("FPS", 10)
+local pingLabel = metric("PING / ms", 102)
 local showStatsEnabled = false
+local fpsFrames, statsElapsed = 0, 0
 Tabs.Inicio:Toggle({
     Title = "Mostrar FPS y Ping",
     Callback = function(Value)
         showStatsEnabled = Value
         statsContainer.Visible = Value
+        fpsFrames, statsElapsed = 0, 0
+        fpsLabel.Text, pingLabel.Text = "--", "--"
     end,
 })
-
-local fpsFrames = 0
-local statsElapsed = 0
 runtime.Track(RunService.RenderStepped:Connect(function(deltaTime)
-    if not showStatsEnabled then return end 
-    
+    if not showStatsEnabled then return end
     fpsFrames = fpsFrames + 1
     statsElapsed = statsElapsed + deltaTime
     if statsElapsed >= 1 then
-        fpsLabel.Text = "FPS: " .. fpsFrames
-        
-        -- Colores más agradables a la vista (Verde esmeralda, amarillo brillante y rojo suave)
-        if fpsFrames >= 50 then fpsLabel.TextColor3 = Color3.fromRGB(46, 204, 113) 
-        elseif fpsFrames >= 30 then fpsLabel.TextColor3 = Color3.fromRGB(241, 196, 15) 
-        else fpsLabel.TextColor3 = Color3.fromRGB(231, 76, 60) end
-        
-        local pingValue = 0
-        pcall(function() pingValue = math.floor(Stats.Network.ServerStatsItem["Data Ping"]:GetValue()) end)
-        
-        pingLabel.Text = "Ping: " .. tostring(pingValue) .. " ms"
-        
-        if pingValue < 90 then pingLabel.TextColor3 = Color3.fromRGB(46, 204, 113) 
-        elseif pingValue < 150 then pingLabel.TextColor3 = Color3.fromRGB(241, 196, 15) 
-        else pingLabel.TextColor3 = Color3.fromRGB(231, 76, 60) end
-        
-        fpsFrames = 0
-        statsElapsed = 0
+        fpsLabel.Text = tostring(math.floor(fpsFrames / statsElapsed + 0.5))
+        local ok, pingValue = pcall(function()
+            return math.floor(Stats.Network.ServerStatsItem["Data Ping"]:GetValue())
+        end)
+        pingLabel.Text = ok and tostring(pingValue) or "--"
+        fpsFrames, statsElapsed = 0, 0
     end
 end))
+end
 
 local fpsBoostEnabled = false
 runtime.FPSBoost = {
@@ -9737,50 +9709,74 @@ local floatingButtonsList = {}
 function createFloatingBtn(name, startPos, internalId)
     local btn = Instance.new("TextButton")
     btn.Name = internalId or name
-    btn.Size = UDim2.new(0, 150, 0, 45)
+    btn.Size = UDim2.fromOffset(156, 48)
     btn.Position = startPos
-    btn.BackgroundColor3 = Color3.fromHex("#161616")
-    btn.BackgroundTransparency = 0.08 
+    btn.BackgroundColor3 = Color3.fromRGB(14, 14, 14)
+    btn.BackgroundTransparency = 0.06
     btn.Text = name
-    
-    -- 🔥 MEJORAS DE TEXTO AQUÍ 🔥
-    btn.TextColor3 = Color3.fromHex("#F3F4F5")
-    btn.Font = Enum.Font.GothamBold -- En negritas para resaltar
-    btn.TextSize = 14
-    btn.TextScaled = true -- Para que se autoajuste si lo hacen cuadrado
-    btn.TextStrokeTransparency = 0.2 -- Contorno oscuro activado
-    btn.TextStrokeColor3 = Color3.new(0, 0, 0) -- Contorno negro puro
-    
+    btn.TextTransparency = 1
+    btn.TextSize = 12
     btn.AutoButtonColor = false
     btn.Visible = false
     btn.ZIndex = 50
     btn.Parent = screenGui
-    
-    local corner = Instance.new("UICorner", btn)
-    corner.CornerRadius = UDim.new(0, IOS_STYLE.OverlayRadius)
+    Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 12)
+    local stroke = Instance.new("UIStroke", btn)
+    stroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+    stroke.Thickness = 1
+    stroke.Color = Color3.fromRGB(60, 60, 60)
+    stroke.Transparency = 0.2
 
-    -- ❌ ELIMINAMOS EL UIGradient AQUÍ PARA QUE NO MANCHE LAS LETRAS ❌
-
-    local stroke = Instance.new("UIStroke")
-    stroke.Thickness = 1.2
-    stroke.Color = Color3.fromHex("#48484A")
-    stroke.Transparency = 0.35
-    stroke.Parent = btn
-
-    btn.MouseEnter:Connect(function()
-        if _G.AstraBotonesOcultos then return end
-        btn.BackgroundColor3 = Color3.fromHex("#3A3A3C")
-        btn.BackgroundTransparency = 0.02
-        stroke.Color = Color3.fromHex("#D8DCE1")
-        stroke.Transparency = 0
-    end)
-    btn.MouseLeave:Connect(function()
-        if _G.AstraBotonesOcultos then return end
-        btn.BackgroundColor3 = Color3.fromHex("#161616")
-        btn.BackgroundTransparency = 0.08
-        stroke.Color = Color3.fromHex("#48484A")
-        stroke.Transparency = 0.35
-    end)
+    local title = Instance.new("TextLabel", btn)
+    title.Name = "ControlTitle"
+    title.BackgroundTransparency = 1
+    title.Position = UDim2.fromOffset(14, 6)
+    title.Size = UDim2.new(1, -42, 0, 20)
+    title.Font = Enum.Font.GothamMedium
+    title.TextSize = 12
+    title.TextColor3 = Color3.fromRGB(240, 240, 240)
+    title.TextXAlignment = Enum.TextXAlignment.Left
+    title.TextTruncate = Enum.TextTruncate.AtEnd
+    title.ZIndex = 51
+    local stateLabel = Instance.new("TextLabel", btn)
+    stateLabel.Name = "ControlState"
+    stateLabel.BackgroundTransparency = 1
+    stateLabel.Position = UDim2.fromOffset(14, 26)
+    stateLabel.Size = UDim2.new(1, -42, 0, 14)
+    stateLabel.Font = Enum.Font.GothamMedium
+    stateLabel.TextSize = 8
+    stateLabel.TextColor3 = Color3.fromRGB(135, 135, 135)
+    stateLabel.TextXAlignment = Enum.TextXAlignment.Left
+    stateLabel.ZIndex = 51
+    local dot = Instance.new("Frame", btn)
+    dot.Name = "StateDot"
+    dot.AnchorPoint = Vector2.new(1, 0.5)
+    dot.Position = UDim2.new(1, -14, 0.5, 0)
+    dot.Size = UDim2.fromOffset(6, 6)
+    dot.BorderSizePixel = 0
+    dot.ZIndex = 51
+    Instance.new("UICorner", dot).CornerRadius = UDim.new(1, 0)
+    local hovered = false
+    local function updateVisual()
+        local hidden = _G.AstraBotonesOcultos == true
+        local enabled = btn.Text:match(":%s*ON$") ~= nil
+        title.Text = btn.Text:gsub(":%s*O[NF]+$", ""):gsub("AutoShoot", "Auto Shoot")
+        stateLabel.Text = enabled and "ACTIVO" or "INACTIVO"
+        title.TextTransparency = hidden and 1 or 0
+        stateLabel.TextTransparency = hidden and 1 or 0
+        dot.BackgroundTransparency = hidden and 1 or 0
+        dot.BackgroundColor3 = enabled and Color3.fromRGB(242, 242, 242) or Color3.fromRGB(80, 80, 80)
+        btn.BackgroundTransparency = hidden and 1 or 0.06
+        btn.BackgroundColor3 = hovered and Color3.fromRGB(25, 25, 25) or Color3.fromRGB(14, 14, 14)
+        stroke.Transparency = hidden and 1 or 0.2
+        stroke.Color = enabled and Color3.fromRGB(175, 175, 175) or Color3.fromRGB(60, 60, 60)
+        if btn.TextTransparency ~= 1 then btn.TextTransparency = 1 end
+    end
+    runtime.Track(btn:GetPropertyChangedSignal("Text"):Connect(updateVisual))
+    runtime.Track(btn:GetAttributeChangedSignal("Ghosted"):Connect(updateVisual))
+    runtime.Track(btn.MouseEnter:Connect(function() hovered = true; updateVisual() end))
+    runtime.Track(btn.MouseLeave:Connect(function() hovered = false; updateVisual() end))
+    updateVisual()
 
     makeDraggable(btn, btn)
     
@@ -11309,8 +11305,8 @@ end)
 Tabs.Config:Section({ Title = "Personalización de Interfaz" })
 
 Tabs.Config:Paragraph({
-    Title = "Nox / Obsidian",
-    Desc = "Negro, blanco y una interfaz hecha para XeroHub. Creado por Kev.",
+    Title = "Xero / Obsidian",
+    Desc = "Negro, blanco y una interfaz hecha para XeroHub. Creado por AlexDev.",
 })
 
 Tabs.Config:Toggle({
@@ -11327,17 +11323,8 @@ Tabs.Config:Toggle({
     Value = false,
     Callback = function(Value)
         _G.AstraBotonesOcultos = Value 
-        local bgTrans = Value and 1 or 0.08
-        local txtTrans = Value and 1 or 0
-        local strTrans = Value and 1 or 0.35
-        
         for _, btn in ipairs(floatingButtonsList) do
-            if btn then
-                btn.BackgroundTransparency = bgTrans
-                btn.TextTransparency = txtTrans
-                local stroke = btn:FindFirstChildOfClass("UIStroke")
-                if stroke then stroke.Transparency = strTrans end
-            end
+            if btn then btn:SetAttribute("Ghosted", Value) end
         end
     end
 })

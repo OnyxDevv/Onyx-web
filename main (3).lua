@@ -377,6 +377,54 @@ function Tab:Paragraph(options)
                 TextXAlignment=Enum.TextXAlignment.Center,Font=Enum.Font.Code,BackgroundColor3=Color3.fromRGB(18,18,18),BackgroundTransparency=.05,ZIndex=3})
             round(badge,9); stroke(badge,Color3.fromRGB(54,54,58),1)
         end
+
+        -- Variante de tarjeta para Créditos: gótico monocromático, con detalles
+        -- ornamentales discretos. Se activa explícitamente para no alterar el
+        -- resto de Paragraphs Gothic (perfil del usuario, agradecimientos, etc.).
+        if o.GothicProfile then
+            c.ElementFrame.BackgroundColor3 = o.Color or Color3.fromRGB(8,8,11)
+            c.RowStroke.Color = o.StrokeColor or Color3.fromRGB(66,66,74)
+            c.RowStroke.Transparency = .05
+
+            local gothicGradient = new("UIGradient",{
+                Rotation=12,
+                Color=ColorSequence.new({
+                    ColorSequenceKeypoint.new(0,Color3.fromRGB(8,8,11)),
+                    ColorSequenceKeypoint.new(.56,Color3.fromRGB(15,15,20)),
+                    ColorSequenceKeypoint.new(1,Color3.fromRGB(7,7,9)),
+                })
+            },c.ElementFrame)
+
+            c.TitleLabel.Font=BOLD
+            c.TitleLabel.TextSize=16
+            c.DescLabel.TextSize=10
+            c.DescLabel.TextColor3=o.DescColor or Color3.fromRGB(184,184,190)
+
+            if c.Thumbnail then
+                c.HeadMinimum=math.max(c.HeadMinimum or 0,(c.ThumbnailSize or 36)+12)
+                local innerStroke=stroke(c.Thumbnail,Color3.fromRGB(112,112,122),1)
+                innerStroke.Transparency=.42
+            end
+
+            -- Ornamentación lateral: una estrella/rombo central y líneas finas.
+            local ornament = new("Frame",{Name="GothicOrnament",BackgroundTransparency=1,
+                AnchorPoint=Vector2.new(1,.5),Position=UDim2.fromScale(.972,.58),Size=UDim2.fromOffset(104,38),ZIndex=1},c.ElementFrame)
+            local leftWing=line(ornament,4,19,28,1,0,Color3.fromRGB(130,130,140)); leftWing.BackgroundTransparency=.42
+            local rightWing=line(ornament,72,19,28,1,0,Color3.fromRGB(130,130,140)); rightWing.BackgroundTransparency=.42
+            local sigil=label(ornament,"✦",17,Color3.fromRGB(235,235,240),{
+                Position=UDim2.fromOffset(37,1),Size=UDim2.fromOffset(30,36),Font=BOLD,
+                TextXAlignment=Enum.TextXAlignment.Center,TextYAlignment=Enum.TextYAlignment.Center,TextTransparency=.12,ZIndex=2})
+
+            local footerMark=label(c.ElementFrame,"XEROHUB  //  CREATOR",8,Color3.fromRGB(145,145,154),{
+                AnchorPoint=Vector2.new(1,1),Position=UDim2.new(1,-14,1,-9),Size=UDim2.fromOffset(150,14),
+                Font=Enum.Font.Code,TextXAlignment=Enum.TextXAlignment.Right,TextTransparency=.28,ZIndex=2})
+
+            -- Pequeñas esquinas tipo filigrana, sin círculos decorativos vacíos.
+            local tlA=line(c.ElementFrame,9,9,18,1,0,Color3.fromRGB(118,118,128)); tlA.BackgroundTransparency=.48; tlA.ZIndex=1
+            local tlB=line(c.ElementFrame,9,9,1,12,0,Color3.fromRGB(118,118,128)); tlB.BackgroundTransparency=.48; tlB.ZIndex=1
+            local brA=line(c.ElementFrame,0,0,18,1,0,Color3.fromRGB(118,118,128)); brA.AnchorPoint=Vector2.new(1,1); brA.Position=UDim2.new(1,-9,1,-9); brA.BackgroundTransparency=.48; brA.ZIndex=1
+            local brB=line(c.ElementFrame,0,0,1,12,0,Color3.fromRGB(118,118,128)); brB.AnchorPoint=Vector2.new(1,1); brB.Position=UDim2.new(1,-9,1,-9); brB.BackgroundTransparency=.48; brB.ZIndex=1
+        end
     end
     function c:Set(value) return self:SetDesc(value) end
     return c

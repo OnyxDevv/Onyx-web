@@ -4046,7 +4046,10 @@ function runtime.BeginAvatarCloneRespawnMask(char, generation)
 
         local root = char:FindFirstChild("HumanoidRootPart")
             or char:WaitForChild("HumanoidRootPart", 1.5)
-        if not valid() or not root or not root:IsA("BasePart") then
+        local humanoid = char:FindFirstChildOfClass("Humanoid")
+            or char:WaitForChild("Humanoid", 1.5)
+
+        if not valid() or not root or not root:IsA("BasePart") or not humanoid then
             if state.RespawnMaskGeneration == generation then
                 state.RespawnMaskPending = false
             end
@@ -4060,36 +4063,26 @@ function runtime.BeginAvatarCloneRespawnMask(char, generation)
             overlay:SetAttribute("iLunXAvatarClone", true)
             runtime.PrepareAvatarCloneTemplate(overlay)
 
-            -- Se ancla ANTES de entrar a Workspace; esta máscara nunca toca física.
-            for _, object in ipairs(overlay:GetDescendants()) do
-                if object:IsA("BasePart") then
-                    object.Anchored = true
-                    object.CanCollide = false
-                    object.CanTouch = false
-                    object.CanQuery = false
-                    object.Massless = true
-                    object.AssemblyLinearVelocity = Vector3.zero
-                    object.AssemblyAngularVelocity = Vector3.zero
-                elseif object:IsA("Motor6D") then
-                    pcall(function() object.Enabled = false end)
-                end
-            end
-
             overlay.Parent = runtime.GetAvatarCloneVisualContainer()
             state.Overlay = overlay
             runtime.AvatarCloneCaptureOverlayVisuals(overlay)
-        else
-            -- El overlay de la ronda anterior se convierte en máscara temporal.
-            for _, object in ipairs(overlay:GetDescendants()) do
-                if object:IsA("BasePart") then
-                    object.Anchored = true
-                    object.CanCollide = false
-                    object.CanTouch = false
-                    object.CanQuery = false
-                    object.Massless = true
-                    object.AssemblyLinearVelocity = Vector3.zero
-                    object.AssemblyAngularVelocity = Vector3.zero
-                end
+        end
+
+        -- La máscara temporal es visual al 100%: body parts ancladas y sin colisión.
+        -- Los handles de accesorios pueden quedar sueltos del anchor porque sus welds
+        -- sólo dependen de partes ancladas del overlay y jamás tocan al Character real.
+        for _, object in ipairs(overlay:GetDescendants()) do
+            if object:IsA("BasePart") then
+                local accessory = object:FindFirstAncestorWhichIsA("Accoutrement")
+                object.Anchored = accessory == nil
+                object.CanCollide = false
+                object.CanTouch = false
+                object.CanQuery = false
+                object.Massless = true
+                object.AssemblyLinearVelocity = Vector3.zero
+                object.AssemblyAngularVelocity = Vector3.zero
+            elseif object:IsA("Motor6D") then
+                pcall(function() object.Enabled = false end)
             end
         end
 
@@ -4097,8 +4090,133 @@ function runtime.BeginAvatarCloneRespawnMask(char, generation)
             return
         end
 
+        local overlayRoot = overlay:FindFirstChild("HumanoidRootPart")
+        if not overlayRoot or not overlayRoot:IsA("BasePart") then
+            if state.RespawnMaskGeneration == generation then
+                state.RespawnMaskPending = false
+            end
+            return
+        end
+        overlayRoot.Anchored = true
+        overlayRoot.Transparency = 1
+        overlayRoot.LocalTransparencyModifier = 1
+
         -- Primer posicionamiento antes de ocultar el Character nuevo.
         pcall(function() overlay:PivotTo(root.CFrame) end)
+
+        -- --------------------------------------------------------------
+        -- POSE SYNC DE RESPawn
+        -- --------------------------------------------------------------
+        -- La máscara anterior sólo seguía el HRP, así que quedaba tiesa durante
+        -- caída/idle/caminar. Estos pares copian la pose REAL del Character nuevo
+        -- usando RigAttachments, pero mueven únicamente piezas ancladas del overlay.
+        local respawnMaskJointSpecs
+        if humanoid.RigType == Enum.HumanoidRigType.R15 then
+            respawnMaskJointSpecs = {
+                {"HumanoidRootPart", "LowerTorso"},
+                {"LowerTorso", "UpperTorso"},
+                {"UpperTorso", "Head"},
+
+                {"UpperTorso", "LeftUpperArm"},
+                {"LeftUpperArm", "LeftLowerArm"},
+                {"LeftLowerArm", "LeftHand"},
+
+                {"UpperTorso", "RightUpperArm"},
+                {"RightUpperArm", "RightLowerArm"},
+                {"RightLowerArm", "RightHand"},
+
+                {"LowerTorso", "LeftUpperLeg"},
+                {"LeftUpperLeg", "LeftLowerLeg"},
+                {"LeftLowerLeg", "LeftFoot"},
+
+                {"LowerTorso", "RightUpperLeg"},
+                {"RightUpperLeg", "RightLowerLeg"},
+                {"RightLowerLeg", "RightFoot"},
+            }
+        else
+            respawnMaskJointSpecs = {
+                {"HumanoidRootPart", "Torso"},
+                {"Torso", "Head"},
+                {"Torso", "Left Arm"},
+                {"Torso", "Right Arm"},
+                {"Torso", "Left Leg"},
+                {"Torso", "Right Leg"},
+            }
+        end
+
+        local function findSharedRigAttachment(part0, part1)
+            if not part0 or not part1 then return nil, nil end
+            for _, object in ipairs(part0:GetChildren()) do
+                if object:IsA("Attachment")
+                    and string.find(object.Name, "RigAttachment", 1, true) then
+
+                    local other = part1:FindFirstChild(object.Name)
+                    if other and other:IsA("Attachment") then
+                        return object, other
+                    end
+                end
+            end
+            return nil, nil
+        end
+
+        local posePairs = {}
+        local posePairKeys = {}
+
+        local function tryBuildPosePairs()
+            for _, spec in ipairs(respawnMaskJointSpecs) do
+                local parentName, childName = spec[1], spec[2]
+                local key = parentName .. ">" .. childName
+
+                if not posePairKeys[key] then
+                    local realParent = char:FindFirstChild(parentName)
+                    local realChild = char:FindFirstChild(childName)
+                    local cloneParent = overlay:FindFirstChild(parentName)
+                    local cloneChild = overlay:FindFirstChild(childName)
+
+                    if realParent and realParent:IsA("BasePart")
+                        and realChild and realChild:IsA("BasePart")
+                        and cloneParent and cloneParent:IsA("BasePart")
+                        and cloneChild and cloneChild:IsA("BasePart") then
+
+                        local realA0, realA1 = findSharedRigAttachment(realParent, realChild)
+                        local cloneA0, cloneA1 = findSharedRigAttachment(cloneParent, cloneChild)
+
+                        if realA0 and realA1 and cloneA0 and cloneA1 then
+                            posePairKeys[key] = true
+                            table.insert(posePairs, {
+                                RealParent = realParent,
+                                RealChild = realChild,
+                                CloneParent = cloneParent,
+                                CloneChild = cloneChild,
+                                RealC0 = realA0.CFrame,
+                                RealC1 = realA1.CFrame,
+                                CloneC0 = cloneA0.CFrame,
+                                CloneC1 = cloneA1.CFrame,
+                            })
+                        elseif humanoid.RigType == Enum.HumanoidRigType.R6 then
+                            -- R6 muchas veces no trae RigAttachments. Este fallback
+                            -- conserva las proporciones del clon y copia los cambios
+                            -- relativos de pose que ocurran desde que aparece la pieza.
+                            posePairKeys[key] = true
+                            table.insert(posePairs, {
+                                RealParent = realParent,
+                                RealChild = realChild,
+                                CloneParent = cloneParent,
+                                CloneChild = cloneChild,
+                                R6Fallback = true,
+                                InitialRealRelative = realParent.CFrame:ToObjectSpace(realChild.CFrame),
+                                InitialCloneRelative = cloneParent.CFrame:ToObjectSpace(cloneChild.CFrame),
+                            })
+                        end
+                    end
+                end
+            end
+        end
+
+        -- Intenta construir lo que ya existe; las piezas que Duels agregue un poco
+        -- después se incorporan dinámicamente en RenderStepped.
+        tryBuildPosePairs()
+
         runtime.AvatarCloneHideBase(char)
         runtime.UpdateAvatarCloneLayers()
 
@@ -4137,8 +4255,50 @@ function runtime.BeginAvatarCloneRespawnMask(char, generation)
             local currentRoot = char:FindFirstChild("HumanoidRootPart")
             if currentRoot and currentRoot:IsA("BasePart") then
                 root = currentRoot
-                -- Sólo mueve el modelo visual anclado; nunca modifica al jugador real.
-                pcall(function() overlay:PivotTo(root.CFrame) end)
+                overlayRoot.CFrame = root.CFrame
+                overlayRoot.AssemblyLinearVelocity = Vector3.zero
+                overlayRoot.AssemblyAngularVelocity = Vector3.zero
+            end
+
+            -- El rig puede terminar de aparecer durante el freeze de la ronda.
+            if #posePairs < #respawnMaskJointSpecs then
+                tryBuildPosePairs()
+            end
+
+            -- Copia caída/idle/caminar/salto desde el Character invisible.
+            -- Se procesa en orden raíz -> extremidades para preservar proporciones.
+            for i = 1, #posePairs do
+                local pair = posePairs[i]
+                local realParent = pair.RealParent
+                local realChild = pair.RealChild
+                local cloneParent = pair.CloneParent
+                local cloneChild = pair.CloneChild
+
+                if realParent and realParent.Parent
+                    and realChild and realChild.Parent
+                    and cloneParent and cloneParent.Parent
+                    and cloneChild and cloneChild.Parent then
+
+                    pcall(function()
+                        if pair.R6Fallback then
+                            local currentRelative = realParent.CFrame:ToObjectSpace(realChild.CFrame)
+                            local delta = pair.InitialRealRelative:ToObjectSpace(currentRelative)
+                            cloneChild.CFrame = cloneParent.CFrame * pair.InitialCloneRelative * delta
+                        else
+                            local parentJointWorld = realParent.CFrame * pair.RealC0
+                            local childJointWorld = realChild.CFrame * pair.RealC1
+                            local poseTransform = parentJointWorld:ToObjectSpace(childJointWorld)
+
+                            cloneChild.CFrame = cloneParent.CFrame
+                                * pair.CloneC0
+                                * poseTransform
+                                * pair.CloneC1:Inverse()
+                        end
+
+                        cloneChild.AssemblyLinearVelocity = Vector3.zero
+                        cloneChild.AssemblyAngularVelocity = Vector3.zero
+                    end)
+                end
             end
 
             runtime.AvatarCloneEnforceBaseHidden(char)

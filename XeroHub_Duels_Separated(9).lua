@@ -3118,8 +3118,73 @@ function runtime.AvatarCloneResumeLocalLayers(char, headless, korblox, hideHair)
     runtime.ApplyHairRemoval(char)
 end
 
+-- Las armas equipadas también viven dentro del Character. El overlay sólo debe
+-- ocultar el avatar base; jamás un Tool ni sus Handles/meshes/efectos.
+function runtime.AvatarCloneIsToolVisual(object, char)
+    if not object then return false end
+    char = char or player.Character
+
+    local tool
+    if object:IsA("Tool") then
+        tool = object
+    else
+        tool = object:FindFirstAncestorWhichIsA("Tool")
+    end
+
+    return tool ~= nil and (not char or tool:IsDescendantOf(char))
+end
+
+function runtime.AvatarCloneRestoreCachedVisual(object, cache)
+    cache = cache or runtime.Appearance.AvatarClone.BaseVisualCache
+    local original = cache and cache[object]
+    if not original or not object or not object.Parent then
+        if cache and object then cache[object] = nil end
+        return
+    end
+
+    pcall(function()
+        if original.LocalTransparencyModifier ~= nil and object:IsA("BasePart") then
+            object.LocalTransparencyModifier = original.LocalTransparencyModifier
+        end
+        if original.Transparency ~= nil and (object:IsA("Decal") or object:IsA("Texture")) then
+            object.Transparency = original.Transparency
+        end
+        if original.Enabled ~= nil then
+            object.Enabled = original.Enabled
+        end
+    end)
+
+    cache[object] = nil
+end
+
+function runtime.AvatarCloneReleaseToolVisuals(char, specificTool)
+    local state = runtime.Appearance.AvatarClone
+    local cache = state.BaseVisualCache
+    if not cache then return end
+
+    for object in pairs(cache) do
+        if object and object.Parent then
+            local tool = object:IsA("Tool") and object or object:FindFirstAncestorWhichIsA("Tool")
+            if tool and (not specificTool or tool == specificTool)
+                and (not char or tool:IsDescendantOf(char)) then
+                runtime.AvatarCloneRestoreCachedVisual(object, cache)
+            end
+        else
+            cache[object] = nil
+        end
+    end
+end
+
 function runtime.AvatarCloneCacheAndHideObject(object, cache)
     if not object or not object.Parent then return end
+
+    -- FIX GUN/KNIFE: Handle, MeshPart, SurfaceAppearance, trails, partículas y
+    -- cualquier skin que pertenezca a un Tool equipado deben conservarse visibles.
+    if runtime.AvatarCloneIsToolVisual(object, player.Character) then
+        runtime.AvatarCloneRestoreCachedVisual(object, cache)
+        return
+    end
+
     if cache[object] then
         if object:IsA("BasePart") then
             if runtime.Appearance.Enabled.Korblox and object.Name == "RightUpperLeg"
@@ -3182,7 +3247,10 @@ function runtime.AvatarCloneHideBase(char)
     end
 
     for _, child in ipairs(char:GetChildren()) do
-        if child:IsA("BasePart") and child.Name ~= "HumanoidRootPart" then
+        if child:IsA("Tool") then
+            -- El arma equipada forma parte del Character, pero NO del avatar base.
+            runtime.AvatarCloneReleaseToolVisuals(char, child)
+        elseif child:IsA("BasePart") and child.Name ~= "HumanoidRootPart" then
             runtime.AvatarCloneCacheAndHideObject(child, cache)
             for _, visual in ipairs(child:GetDescendants()) do
                 if visual:IsA("Decal") or visual:IsA("Texture") then
@@ -3276,11 +3344,21 @@ function runtime.AvatarCloneEnforceBaseHidden(char)
     char = char or state.BaseCharacter or player.Character
     if not char or state.BaseCharacter ~= char then return end
 
+    -- Si una pieza que antes pertenecía al avatar ahora está dentro de un Tool,
+    -- la soltamos del caché antes de reafirmar invisibilidad. Esto cubre juegos que
+    -- reciclan/reparentan Handles y skins al equipar el arma.
+    runtime.AvatarCloneReleaseToolVisuals(char)
+
     -- CameraModule y algunos juegos reescriben LocalTransparencyModifier.
     -- Lo reafirmamos sin volver a escanear el Character completo.
     for object in pairs(state.BaseVisualCache) do
         if object and object.Parent then
             pcall(function()
+                if runtime.AvatarCloneIsToolVisual(object, char) then
+                    runtime.AvatarCloneRestoreCachedVisual(object, state.BaseVisualCache)
+                    return
+                end
+
                 if object:IsA("BasePart") then
                     -- El Korblox de iLunX se deja visible como capa superior.
                     if runtime.Appearance.Enabled.Korblox
@@ -3609,6 +3687,14 @@ function runtime.AvatarCloneBuildMotorSync(char, overlay)
         if state.Overlay ~= overlay or not state.Active then return end
         if object:IsDescendantOf(overlay) then return end
 
+        -- EQUIPPED WEAPON FIX: Character.DescendantAdded también dispara por el
+        -- Tool y por TODOS sus descendientes. Nunca los pasamos al hide del avatar.
+        local tool = object:IsA("Tool") and object or object:FindFirstAncestorWhichIsA("Tool")
+        if tool then
+            runtime.AvatarCloneReleaseToolVisuals(char, tool)
+            return
+        end
+
         local acc = object:FindFirstAncestorWhichIsA("Accoutrement")
         if acc and acc:GetAttribute("iLunXAppearanceKey") ~= nil then
             return
@@ -3705,6 +3791,25 @@ function runtime.ApplyAvatarCloneTemplate(char, template)
         local sourceAnimator = sourceHumanoid:FindFirstChildOfClass("Animator")
         if sourceAnimator then
             pcall(function() sourceAnimator:Destroy() end)
+        end
+
+        -- ANTI-FLING DE RESPAWN:
+        -- PrepareAvatarCloneTemplate deja las piezas sin Anchored para que el modelo
+        -- pueda reutilizar sus welds. Antes de meter el overlay a Workspace las
+        -- congelamos TODAS. Así jamás existe ese Heartbeat intermedio en el que el
+        -- solver físico puede mover el clon mientras Duels teletransporta/libera al
+        -- Character al comenzar una ronda. AvatarCloneBuildMotorSync vuelve a dejar
+        -- libres únicamente los handles de accesorios después de fijar el rig visual.
+        for _, object in ipairs(overlay:GetDescendants()) do
+            if object:IsA("BasePart") then
+                object.Anchored = true
+                object.CanCollide = false
+                object.CanTouch = false
+                object.CanQuery = false
+                object.Massless = true
+                object.AssemblyLinearVelocity = Vector3.zero
+                object.AssemblyAngularVelocity = Vector3.zero
+            end
         end
 
         -- Nunca vive dentro de player.Character: queda totalmente aislado de
@@ -3989,6 +4094,69 @@ function runtime.WaitForAvatarCloneRigReady(char, humanoid, generation, maxWait)
     return runtime.AvatarCloneRigReady(char, humanoid)
 end
 
+-- Espera la salida real de la fase de spawn/teleport de Duels.
+-- No modifica el Character: sólo observa que el mismo root permanezca válido y
+-- estable durante varios frames antes de construir/reconstruir el overlay.
+function runtime.WaitForAvatarCloneSpawnStable(char, humanoid, generation, maxWait)
+    local deadline = os.clock() + (tonumber(maxWait) or 6)
+    local startedAt = os.clock()
+    local stableFrames = 0
+    local lastRoot = nil
+    local lastPosition = nil
+
+    while runtime.Alive and os.clock() < deadline do
+        if not char or not char.Parent or player.Character ~= char
+            or (generation and generation ~= runtime.Appearance.RespawnGeneration) then
+            return false
+        end
+
+        humanoid = humanoid or char:FindFirstChildOfClass("Humanoid")
+        local root = char:FindFirstChild("HumanoidRootPart")
+        if not humanoid or not root or humanoid.Health <= 0 then
+            stableFrames = 0
+            RunService.Heartbeat:Wait()
+            continue
+        end
+
+        local stateType = humanoid:GetState()
+        local blockedState =
+            stateType == Enum.HumanoidStateType.Dead
+            or stateType == Enum.HumanoidStateType.PlatformStanding
+            or stateType == Enum.HumanoidStateType.Physics
+            or stateType == Enum.HumanoidStateType.FallingDown
+
+        -- Duels deja al jugador suspendido unos segundos antes de soltar la ronda.
+        -- Mientras siga anclado, en un estado físico bloqueado o todavía flotando
+        -- dentro de esa ventana inicial, NO recreamos el clon. El avatar real queda
+        -- visible hasta que la ronda esté lista.
+        local elapsed = os.clock() - startedAt
+        local airborneSpawnWindow =
+            humanoid.FloorMaterial == Enum.Material.Air
+            and elapsed < 4.5
+
+        local sameRoot = lastRoot == nil or lastRoot == root
+        local teleported = false
+        if lastPosition and sameRoot then
+            teleported = (root.Position - lastPosition).Magnitude > 10
+        end
+
+        if root.Anchored or blockedState or airborneSpawnWindow or not sameRoot or teleported then
+            stableFrames = 0
+        else
+            stableFrames += 1
+            if stableFrames >= 6 then
+                return true
+            end
+        end
+
+        lastRoot = root
+        lastPosition = root.Position
+        RunService.Heartbeat:Wait()
+    end
+
+    return false
+end
+
 function runtime.AvatarCloneIsBoundToCharacter(char)
     local state = runtime.Appearance.AvatarClone
     if not state or not char or state.BaseCharacter ~= char then return false end
@@ -4029,10 +4197,21 @@ function runtime.AvatarCloneIsBoundToCharacter(char)
 end
 
 function runtime.GuardAvatarCloneAfterRespawn(char, generation)
-    -- Algunos rounds dejan al Character suspendido/bloqueado mientras el juego
-    -- termina de cargarlo. Durante esa ventana vigilamos el clon y lo reenganchamos
-    -- si una reconstrucción tardía del Character rompió el overlay o sus MotorPairs.
-    local deadline = os.clock() + 10
+    -- Primero dejamos que Duels termine SU spawn. Antes este guard podía intentar
+    -- reconstruir el overlay cada 0.35 s mientras el jugador seguía suspendido.
+    -- Eso hacía coincidir la recreación del rig visual con el teleport/release de
+    -- ronda. Ahora no hay ningún apply hasta que el root lleve varios frames estable.
+    local humanoid = char and char:FindFirstChildOfClass("Humanoid")
+    if not humanoid then
+        humanoid = char and char:WaitForChild("Humanoid", 1)
+    end
+    if not humanoid then return end
+
+    if not runtime.WaitForAvatarCloneSpawnStable(char, humanoid, generation, 7) then
+        return
+    end
+
+    local deadline = os.clock() + 6
     local nextRetryAt = 0
 
     while runtime.Alive
@@ -4051,12 +4230,13 @@ function runtime.GuardAvatarCloneAfterRespawn(char, generation)
             and not state.Applying
             and os.clock() >= nextRetryAt then
 
-            local humanoid = char:FindFirstChildOfClass("Humanoid")
-            if humanoid and runtime.AvatarCloneRigReady(char, humanoid) then
-                nextRetryAt = os.clock() + 0.35
+            nextRetryAt = os.clock() + 0.45
 
-                -- Si un intento anterior dejó cache visual, primero hacemos visible
-                -- el Character real; sólo volverá a ocultarse tras un apply exitoso.
+            -- Si Duels reemplazó una pieza del rig incluso después de soltar la
+            -- ronda, exigimos otra mini ventana estable antes del rebind.
+            if runtime.WaitForAvatarCloneRigReady(char, humanoid, generation, 0.8)
+                and runtime.WaitForAvatarCloneSpawnStable(char, humanoid, generation, 1.2) then
+
                 runtime.AvatarCloneRestoreBase(char)
                 runtime.ReapplyAppearanceLayers(char)
 
@@ -4075,8 +4255,6 @@ end
 function runtime.FastRestoreAppearanceOnRespawn(char, generation)
     if not runtime.Alive or not char or not char.Parent then return end
 
-    -- No esperamos un tiempo fijo. Sólo esperamos las piezas indispensables y
-    -- continuamos en cuanto existen; normalmente esto tarda uno o pocos frames.
     local humanoid = char:FindFirstChildOfClass("Humanoid")
     if not humanoid then
         humanoid = char:WaitForChild("Humanoid", 0.35)
@@ -4103,11 +4281,16 @@ function runtime.FastRestoreAppearanceOnRespawn(char, generation)
         and cloneState.KeepOnRespawn
         and cloneState.Template then
 
-        -- No construimos MotorPairs contra un rig incompleto. Si el juego todavía
-        -- está armando/reemplazando partes, el guard de respawn hará el apply en
-        -- cuanto el Character quede completo.
-        if not runtime.WaitForAvatarCloneRigReady(char, humanoid, generation, 1.5) then
-            runtime.ReapplyAppearanceLayers(char)
+        -- Durante el freeze de inicio dejamos visible el Character real. No hacemos
+        -- ApplyAvatarCloneTemplate hasta que el rig esté completo Y el spawn haya
+        -- terminado de teletransportar/liberar físicamente al jugador.
+        runtime.AvatarCloneRestoreBase(char)
+        runtime.ReapplyAppearanceLayers(char)
+
+        if not runtime.WaitForAvatarCloneRigReady(char, humanoid, generation, 1.8) then
+            return
+        end
+        if not runtime.WaitForAvatarCloneSpawnStable(char, humanoid, generation, 7) then
             return
         end
     end
@@ -4117,7 +4300,11 @@ function runtime.FastRestoreAppearanceOnRespawn(char, generation)
         and cloneState.Template
         and not cloneState.Applying then
 
-        runtime.ApplyAvatarCloneTemplate(char, cloneState.Template)
+        local ok = runtime.ApplyAvatarCloneTemplate(char, cloneState.Template)
+        if not ok then
+            runtime.AvatarCloneRestoreBase(char)
+            runtime.ReapplyAppearanceLayers(char)
+        end
         if generation and generation ~= runtime.Appearance.RespawnGeneration then return end
     else
         runtime.ReapplyAppearanceLayers(char)
@@ -4354,11 +4541,13 @@ pcall(function()
                         runtime.AvatarCloneHideBase(char)
                         runtime.UpdateAvatarCloneLayers()
                     else
-                        local ok = runtime.ApplyAvatarCloneTemplate(char, cloneState.Template)
-                        if not ok then
-                            runtime.AvatarCloneRestoreBase(char)
-                            runtime.ReapplyAppearanceLayers(char)
-                        end
+                        -- CharacterAppearanceLoaded puede disparar DURANTE el countdown.
+                        -- No hacemos apply aquí; el guard espera el estado físico estable.
+                        runtime.AvatarCloneRestoreBase(char)
+                        runtime.ReapplyAppearanceLayers(char)
+                        task.spawn(function()
+                            runtime.GuardAvatarCloneAfterRespawn(char, generation)
+                        end)
                     end
                 else
                     runtime.ReapplyAppearanceLayers(char)

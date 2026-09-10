@@ -2312,6 +2312,7 @@ function runtime.GetKorbloxSnapshot(char)
             Foot = foot,
             UpperMeshId = upper.MeshId,
             UpperTextureID = upper.TextureID,
+            UpperSize = upper.Size,
             UpperTransparency = upper.Transparency,
             UpperLTM = upper.LocalTransparencyModifier,
             LowerTransparency = lower and lower.Transparency or nil,
@@ -2322,6 +2323,83 @@ function runtime.GetKorbloxSnapshot(char)
         runtime.Appearance.OriginalKorblox[char] = snap
     end
     return snap
+end
+
+-- Korblox visual adaptativo: cuando el clonador está activo, la pierna se aplica
+-- sobre el RightUpperLeg DEL OVERLAY. Al conservar Size + RigAttachments del clon,
+-- el mesh adopta automáticamente su altura/ancho/proporciones en lugar de usar
+-- la pierna del Character real que queda escondida debajo.
+function runtime.HasAvatarCloneOverlayForCharacter(char)
+    local state = runtime.Appearance and runtime.Appearance.AvatarClone
+    return char == player.Character
+        and state ~= nil
+        and state.Overlay ~= nil
+        and state.Overlay.Parent ~= nil
+end
+
+function runtime.RestoreKorbloxCharacterSnapshot(char)
+    local snap = char and runtime.Appearance.OriginalKorblox[char]
+    if not snap then return false end
+
+    if snap.Upper and snap.Upper.Parent then
+        appearanceSafeSet(snap.Upper, "MeshId", snap.UpperMeshId)
+        appearanceSafeSet(snap.Upper, "TextureID", snap.UpperTextureID)
+        if snap.UpperSize then appearanceSafeSet(snap.Upper, "Size", snap.UpperSize) end
+        appearanceSafeSet(snap.Upper, "Transparency", snap.UpperTransparency)
+        appearanceSafeSet(snap.Upper, "LocalTransparencyModifier", snap.UpperLTM)
+    end
+    if snap.Lower and snap.Lower.Parent then
+        if snap.LowerTransparency ~= nil then appearanceSafeSet(snap.Lower, "Transparency", snap.LowerTransparency) end
+        if snap.LowerLTM ~= nil then appearanceSafeSet(snap.Lower, "LocalTransparencyModifier", snap.LowerLTM) end
+    end
+    if snap.Foot and snap.Foot.Parent then
+        if snap.FootTransparency ~= nil then appearanceSafeSet(snap.Foot, "Transparency", snap.FootTransparency) end
+        if snap.FootLTM ~= nil then appearanceSafeSet(snap.Foot, "LocalTransparencyModifier", snap.FootLTM) end
+    end
+
+    runtime.Appearance.OriginalKorblox[char] = nil
+    return true
+end
+
+function runtime.ApplyKorbloxToAvatarCloneOverlay(overlay)
+    if not overlay or not overlay.Parent or not runtime.Appearance.Enabled.Korblox then
+        return false
+    end
+
+    local humanoid = overlay:FindFirstChildOfClass("Humanoid")
+    if humanoid and humanoid.RigType ~= Enum.HumanoidRigType.R15 then
+        return false
+    end
+
+    local upper = overlay:FindFirstChild("RightUpperLeg")
+    local lower = overlay:FindFirstChild("RightLowerLeg")
+    local foot = overlay:FindFirstChild("RightFoot")
+    if not upper or not upper:IsA("MeshPart") then return false end
+
+    -- OverlayVisualCache guarda la geometría ORIGINAL del avatar clonado.
+    -- Esa Size es la clave: el mesh Korblox se ajusta al mismo volumen corporal
+    -- que tenía la pierna del clon (alto/ancho/proporciones).
+    local cloneState = runtime.Appearance.AvatarClone
+    local original = cloneState.OverlayVisualCache and cloneState.OverlayVisualCache[upper]
+    local targetSize = original and original.Size or upper.Size
+    local baseLTM = original and original.LocalTransparencyModifier or 0
+
+    appearanceSafeSet(upper, "MeshId", KORBLOX_UPPER_MESH)
+    appearanceSafeSet(upper, "TextureID", KORBLOX_TEXTURE)
+    appearanceSafeSet(upper, "Size", targetSize)
+    appearanceSafeSet(upper, "Transparency", 0)
+    appearanceSafeSet(upper, "LocalTransparencyModifier", math.clamp(tonumber(baseLTM) or 0, 0, 1))
+
+    -- Conservamos Lower/Foot en el rig para que pose/animación no pierdan su cadena,
+    -- pero visualmente sólo queda el upper Korblox ya adaptado al clon.
+    if lower and lower:IsA("BasePart") then
+        appearanceSafeSet(lower, "LocalTransparencyModifier", 1)
+    end
+    if foot and foot:IsA("BasePart") then
+        appearanceSafeSet(foot, "LocalTransparencyModifier", 1)
+    end
+
+    return true
 end
 
 function runtime.ApplyKorbloxLayer(char)
@@ -2337,18 +2415,26 @@ function runtime.ApplyKorbloxLayer(char)
         return false
     end
 
+    -- Con clon activo NO dejamos visible la pierna del Character real.
+    -- Restauramos cualquier Korblox que hubiera quedado aplicado abajo y usamos
+    -- directamente la geometría/proporciones del overlay clonado.
+    if runtime.Appearance.Enabled.Korblox and runtime.HasAvatarCloneOverlayForCharacter(char) then
+        runtime.RestoreKorbloxCharacterSnapshot(char)
+        return runtime.ApplyKorbloxToAvatarCloneOverlay(runtime.Appearance.AvatarClone.Overlay)
+    end
+
     local snap = runtime.GetKorbloxSnapshot(char)
     if not snap then return false end
 
     if runtime.Appearance.Enabled.Korblox then
-        -- Reemplazo visual directo: NO ApplyDescription. Así no reconstruye Head ni accesorios.
+        -- Avatar sin clon: conservamos exactamente el Size que ya tenga la pierna
+        -- R15 actual. Así respeta BodyHeight/Width/Proportion que Roblox haya aplicado.
         appearanceSafeSet(snap.Upper, "MeshId", KORBLOX_UPPER_MESH)
         appearanceSafeSet(snap.Upper, "TextureID", KORBLOX_TEXTURE)
+        if snap.UpperSize then appearanceSafeSet(snap.Upper, "Size", snap.UpperSize) end
         appearanceSafeSet(snap.Upper, "Transparency", 0)
         appearanceSafeSet(snap.Upper, "LocalTransparencyModifier", 0)
 
-        -- El esqueleto se conserva para no romper animaciones, pero estas dos piezas
-        -- quedan totalmente ocultas en cliente. Esto evita el "pie cortado" mezclado.
         if snap.Lower and snap.Lower.Parent then
             appearanceSafeSet(snap.Lower, "Transparency", 1)
             appearanceSafeSet(snap.Lower, "LocalTransparencyModifier", 1)
@@ -2358,19 +2444,7 @@ function runtime.ApplyKorbloxLayer(char)
             appearanceSafeSet(snap.Foot, "LocalTransparencyModifier", 1)
         end
     else
-        appearanceSafeSet(snap.Upper, "MeshId", snap.UpperMeshId)
-        appearanceSafeSet(snap.Upper, "TextureID", snap.UpperTextureID)
-        appearanceSafeSet(snap.Upper, "Transparency", snap.UpperTransparency)
-        appearanceSafeSet(snap.Upper, "LocalTransparencyModifier", snap.UpperLTM)
-        if snap.Lower and snap.Lower.Parent then
-            if snap.LowerTransparency ~= nil then appearanceSafeSet(snap.Lower, "Transparency", snap.LowerTransparency) end
-            if snap.LowerLTM ~= nil then appearanceSafeSet(snap.Lower, "LocalTransparencyModifier", snap.LowerLTM) end
-        end
-        if snap.Foot and snap.Foot.Parent then
-            if snap.FootTransparency ~= nil then appearanceSafeSet(snap.Foot, "Transparency", snap.FootTransparency) end
-            if snap.FootLTM ~= nil then appearanceSafeSet(snap.Foot, "LocalTransparencyModifier", snap.FootLTM) end
-        end
-        runtime.Appearance.OriginalKorblox[char] = nil
+        runtime.RestoreKorbloxCharacterSnapshot(char)
     end
     return true
 end
@@ -2414,7 +2488,7 @@ function runtime.RebuildAppearanceBodyGuards(char)
         end
     end
 
-    if runtime.Appearance.Enabled.Korblox then
+    if runtime.Appearance.Enabled.Korblox and not runtime.HasAvatarCloneOverlayForCharacter(char) then
         local upper = char:FindFirstChild("RightUpperLeg")
         local lower = char:FindFirstChild("RightLowerLeg")
         local foot = char:FindFirstChild("RightFoot")
@@ -3058,6 +3132,12 @@ function runtime.AvatarCloneRestoreOverlayVisuals()
                 if original.LocalTransparencyModifier ~= nil and object:IsA("BasePart") then
                     object.LocalTransparencyModifier = original.LocalTransparencyModifier
                 end
+                if object:IsA("MeshPart") then
+                    if original.MeshId ~= nil then object.MeshId = original.MeshId end
+                    if original.TextureID ~= nil then object.TextureID = original.TextureID end
+                    if original.Size ~= nil then object.Size = original.Size end
+                    if original.PartTransparency ~= nil then object.Transparency = original.PartTransparency end
+                end
                 if original.Transparency ~= nil and (object:IsA("Decal") or object:IsA("Texture")) then
                     object.Transparency = original.Transparency
                 end
@@ -3075,9 +3155,16 @@ function runtime.AvatarCloneCaptureOverlayVisuals(overlay)
 
     for _, object in ipairs(overlay:GetDescendants()) do
         if object:IsA("BasePart") then
-            state.OverlayVisualCache[object] = {
+            local visual = {
                 LocalTransparencyModifier = object.LocalTransparencyModifier,
             }
+            if object:IsA("MeshPart") then
+                visual.MeshId = object.MeshId
+                visual.TextureID = object.TextureID
+                visual.Size = object.Size
+                visual.PartTransparency = object.Transparency
+            end
+            state.OverlayVisualCache[object] = visual
         elseif object:IsA("Decal") or object:IsA("Texture") then
             state.OverlayVisualCache[object] = {
                 Transparency = object.Transparency,
@@ -3111,12 +3198,7 @@ function runtime.UpdateAvatarCloneLayers()
     end
 
     if runtime.Appearance.Enabled.Korblox then
-        for _, partName in ipairs({"RightUpperLeg", "RightLowerLeg", "RightFoot"}) do
-            local part = overlay:FindFirstChild(partName)
-            if part and part:IsA("BasePart") then
-                part.LocalTransparencyModifier = 1
-            end
-        end
+        runtime.ApplyKorbloxToAvatarCloneOverlay(overlay)
     end
 
     if runtime.Appearance.Enabled.HideHair then
@@ -3251,7 +3333,7 @@ function runtime.AvatarCloneNativeLayerHidden(pair)
     end
 
     if runtime.Appearance.Enabled.Korblox and part.Parent == runtime.Appearance.AvatarClone.Overlay
-        and (part.Name == "RightUpperLeg" or part.Name == "RightLowerLeg" or part.Name == "RightFoot") then
+        and (part.Name == "RightLowerLeg" or part.Name == "RightFoot") then
         return true
     end
 
@@ -3580,10 +3662,6 @@ function runtime.AvatarCloneCacheAndHideObject(object, cache)
 
     if cache[object] then
         if object:IsA("BasePart") then
-            if runtime.Appearance.Enabled.Korblox and object.Name == "RightUpperLeg"
-                and object.Parent == player.Character then
-                return
-            end
             object.LocalTransparencyModifier = 1
         elseif object:IsA("Decal") or object:IsA("Texture") then
             object.Transparency = 1
@@ -3603,10 +3681,7 @@ function runtime.AvatarCloneCacheAndHideObject(object, cache)
         cache[object] = {LocalTransparencyModifier = originalLTM}
         runtime.AvatarCloneTrackHiddenObject(object)
 
-        if not (runtime.Appearance.Enabled.Korblox and object.Name == "RightUpperLeg"
-            and object.Parent == player.Character) then
-            object.LocalTransparencyModifier = 1
-        end
+        object.LocalTransparencyModifier = 1
     elseif object:IsA("Decal") or object:IsA("Texture") then
         cache[object] = {Transparency = object.Transparency}
         runtime.AvatarCloneTrackHiddenObject(object)
@@ -3769,7 +3844,6 @@ function runtime.AvatarCloneEnforceBaseHidden(char)
     if not char or state.BaseCharacter ~= char then return end
 
     local cache = state.BaseVisualCache
-    local korblox = runtime.Appearance.Enabled.Korblox == true
 
     -- Hot path: no pairs(BaseVisualCache), no FindFirstAncestorWhichIsA y no pcall
     -- por objeto. Las armas se liberan por eventos en AvatarCloneBindToolVisualGuard.
@@ -3780,8 +3854,7 @@ function runtime.AvatarCloneEnforceBaseHidden(char)
         if not object or not object.Parent or not cache[object] then
             runtime.AvatarCloneUntrackHiddenObject(object)
         else
-            if not (korblox and object.Name == "RightUpperLeg" and object.Parent == char)
-                and object.LocalTransparencyModifier ~= 1 then
+            if object.LocalTransparencyModifier ~= 1 then
                 object.LocalTransparencyModifier = 1
             end
             i += 1
@@ -4268,9 +4341,16 @@ function runtime.ApplyAvatarCloneTemplate(char, template)
             handoffVisualCache = setmetatable({}, {__mode = "k"})
             for _, object in ipairs(overlay:GetDescendants()) do
                 if object:IsA("BasePart") then
-                    handoffVisualCache[object] = {
+                    local visual = {
                         LocalTransparencyModifier = object.LocalTransparencyModifier,
                     }
+                    if object:IsA("MeshPart") then
+                        visual.MeshId = object.MeshId
+                        visual.TextureID = object.TextureID
+                        visual.Size = object.Size
+                        visual.PartTransparency = object.Transparency
+                    end
+                    handoffVisualCache[object] = visual
                     object.LocalTransparencyModifier = 1
                 elseif object:IsA("Decal") or object:IsA("Texture") then
                     handoffVisualCache[object] = {Transparency = object.Transparency}

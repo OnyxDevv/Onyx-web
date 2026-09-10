@@ -889,7 +889,7 @@ Tabs.Inicio:Paragraph({
 
 
 
-local XERO_CREDITS_PROFILE = "rbxassetid://74846094133538" -- Foto del creador para Créditos.
+local XERO_CREDITS_PROFILE = "rbxassetid://0" -- Reemplaza 0 por la ID del asset de tu foto.
 
 Tabs.Creditos:Paragraph({
     Title = "Kev",

@@ -2178,6 +2178,7 @@ runtime.Appearance = {
         -- No mutamos el MeshId del body part original porque ese MeshPart conserva
         -- los WrapTarget/cages que Roblox usa para layered clothing.
         KorbloxCloneVisual = nil,
+        KorbloxCloneVisualOwner = nil,
         DriverRig = nil,
         BaseCharacter = nil,
         BaseVisualCache = setmetatable({}, {__mode = "k"}),
@@ -2372,18 +2373,22 @@ function runtime.DestroyKorbloxCloneVisual()
         pcall(function() visual:Destroy() end)
     end
     state.KorbloxCloneVisual = nil
+    state.KorbloxCloneVisualOwner = nil
 end
 
 function runtime.SyncKorbloxCloneVisual(overlay)
     local state = runtime.Appearance.AvatarClone
     local visual = state.KorbloxCloneVisual
-    if not visual or visual.Parent ~= overlay then return false end
+    if not visual or not visual.Parent or state.KorbloxCloneVisualOwner ~= overlay then
+        return false
+    end
 
     local upper = overlay and overlay:FindFirstChild("RightUpperLeg")
     if not upper or not upper:IsA("BasePart") then return false end
 
-    -- El visual Korblox sigue la pieza ORIGINAL del clon. Esa pieza conserva su
-    -- MeshId, WrapTarget y RigAttachments, así que layered clothing no pierde su cage.
+    -- El visual Korblox vive FUERA del Model del clon. Sólo copia el transform
+    -- del RightUpperLeg, por lo que no entra en el pivot, joints ni assemblies
+    -- del overlay y no puede alterar su posicionamiento.
     if visual.Size ~= upper.Size then
         appearanceSafeSet(visual, "Size", upper.Size)
     end
@@ -2416,8 +2421,8 @@ function runtime.ApplyKorbloxToAvatarCloneOverlay(overlay)
     local state = runtime.Appearance.AvatarClone
     local visual = state.KorbloxCloneVisual
 
-    if not visual or visual.Parent ~= overlay then
-        if visual then pcall(function() visual:Destroy() end) end
+    if not visual or not visual.Parent or state.KorbloxCloneVisualOwner ~= overlay then
+        runtime.DestroyKorbloxCloneVisual()
 
         visual = Instance.new("MeshPart")
         visual.Name = "iLunX_KorbloxCloneVisual"
@@ -2433,8 +2438,14 @@ function runtime.ApplyKorbloxToAvatarCloneOverlay(overlay)
         visual.CastShadow = upper.CastShadow
         visual.Transparency = 0
         visual.LocalTransparencyModifier = 0
-        visual.Parent = overlay
+
+        -- CRÍTICO: NO parentar esta pieza dentro de `overlay`. El overlay usa
+        -- PivotTo + body parts ancladas como marioneta visual; meter otro BasePart
+        -- anclado dentro del mismo Model puede modificar su pivot/bounds y provocar
+        -- el salto/fling visual. Como sibling en el Folder local queda aislada.
+        visual.Parent = runtime.GetAvatarCloneVisualContainer()
         state.KorbloxCloneVisual = visual
+        state.KorbloxCloneVisualOwner = overlay
     end
 
     -- IMPORTANTE: no cambiamos MeshId/TextureID/Size del RightUpperLeg original.
@@ -3431,7 +3442,7 @@ function runtime.AvatarCloneSyncNativeTransparency(char, overlay, dt)
     state.NativeCameraTransparencyLast = transparency
 
     local korbloxVisual = state.KorbloxCloneVisual
-    if korbloxVisual and korbloxVisual.Parent == overlay then
+    if korbloxVisual and korbloxVisual.Parent and state.KorbloxCloneVisualOwner == overlay then
         if korbloxVisual.LocalTransparencyModifier ~= transparency then
             korbloxVisual.LocalTransparencyModifier = transparency
         end
@@ -3889,7 +3900,7 @@ function runtime.AvatarCloneDestroyOverlay(restoreBase)
         pcall(function() state.Overlay:Destroy() end)
         state.Overlay = nil
     end
-    state.KorbloxCloneVisual = nil
+    runtime.DestroyKorbloxCloneVisual()
     state.OverlayVisualCache = setmetatable({}, {__mode = "k"})
 
     if restoreBase then
@@ -5095,7 +5106,7 @@ function runtime.AvatarCloneResetForRespawn(char, generation)
             pcall(function() state.Overlay:Destroy() end)
             state.Overlay = nil
         end
-        state.KorbloxCloneVisual = nil
+        runtime.DestroyKorbloxCloneVisual()
         state.OverlayVisualCache = setmetatable({}, {__mode = "k"})
 
         -- Incluso si el overlay anterior ya no existía, podemos crear una máscara

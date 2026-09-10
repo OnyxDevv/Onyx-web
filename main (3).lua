@@ -187,11 +187,13 @@ function Control:_resize(width)
         y+=6+fieldHeight
     end
     if self.SliderArea then
+        local sliderAreaHeight=self.SliderAreaHeight or 14
+        local sliderLimitsGap=self.SliderLimitsGap or 2
         self.SliderArea.Position=UDim2.fromOffset(px,y+3)
-        self.SliderArea.Size=UDim2.new(1,-px*2,0,14)
-        self.Limits.Position=UDim2.fromOffset(px,y+19)
+        self.SliderArea.Size=UDim2.new(1,-px*2,0,sliderAreaHeight)
+        self.Limits.Position=UDim2.fromOffset(px,y+3+sliderAreaHeight+sliderLimitsGap)
         self.Limits.Size=UDim2.new(1,-px*2,0,10)
-        y+=26
+        y+=sliderAreaHeight+sliderLimitsGap+14
     end
     if self.Rule then self.Rule.Position=UDim2.fromOffset(px,y+5); self.Rule.Size=UDim2.new(1,-px*2,0,1); y+=7 end
     local height=y+(section and 3 or py)
@@ -454,21 +456,59 @@ function Tab:Slider(options)
     local decimals=0
     while decimals<6 and math.abs(step*10^decimals-math.floor(step*10^decimals+.5))>.000001 do decimals+=1 end
     c.Min,c.Max,c.Step=low,high,step
-    c.Reserve=54; c.HeadMinimum=24
-    local box=field(c.Head,""); box.Name="Value"; box.Size=UDim2.fromOffset(46,24)
-    box.Position=UDim2.new(1,-46,0,0); box.TextXAlignment=Enum.TextXAlignment.Center; box.BackgroundColor3=Color3.fromRGB(14,14,14)
+    c.Reserve=70; c.HeadMinimum=28
+    c.SliderAreaHeight=30; c.SliderLimitsGap=1
+
+    local box=field(c.Head,"")
+    box.Name="Value"
+    box.Size=UDim2.fromOffset(58,26)
+    box.Position=UDim2.new(1,-58,0,0)
+    box.TextXAlignment=Enum.TextXAlignment.Center
+    box.BackgroundColor3=Color3.fromRGB(11,11,11)
+    box.TextColor3=Color3.fromRGB(242,242,242)
+    box.Font=MEDIUM
+    box.TextSize=10
+    if box:FindFirstChildOfClass("UICorner") then box:FindFirstChildOfClass("UICorner").CornerRadius=UDim.new(0,9) end
+    local boxStroke=box:FindFirstChildOfClass("UIStroke")
+    if boxStroke then boxStroke.Color=Color3.fromRGB(42,42,42); boxStroke.Transparency=.12 end
+
     local area=button(c.ElementFrame,"",{Name="SliderArea",BackgroundTransparency=1,
-        Size=UDim2.new(1,0,0,12),LayoutOrder=2})
-    local track=new("Frame",{Name="Track",Position=UDim2.new(0,6,.5,-1),Size=UDim2.new(1,-12,0,2),BackgroundColor3=Color3.fromRGB(38,38,38)},area)
-    round(track,2)
-    local fill=new("Frame",{Name="Fill",Size=UDim2.fromScale(0,1),BackgroundColor3=Color3.fromRGB(218,218,218)},track); round(fill,2)
+        Size=UDim2.new(1,0,0,30),LayoutOrder=2})
+
+    -- Rail oscuro + carril interior. El área táctil sigue siendo toda la fila.
+    local rail=new("Frame",{Name="Rail",Position=UDim2.new(0,8,.5,-5),Size=UDim2.new(1,-16,0,10),
+        BackgroundColor3=Color3.fromRGB(18,18,18)},area)
+    round(rail,7); stroke(rail,Color3.fromRGB(37,37,40),1)
+
+    local track=new("Frame",{Name="Track",Position=UDim2.new(0,6,.5,-3),Size=UDim2.new(1,-12,0,6),
+        BackgroundColor3=Color3.fromRGB(43,43,46)},rail)
+    round(track,4)
+    local trackGradient=new("UIGradient",{Color=ColorSequence.new({
+        ColorSequenceKeypoint.new(0,Color3.fromRGB(36,36,39)),
+        ColorSequenceKeypoint.new(.5,Color3.fromRGB(48,48,51)),
+        ColorSequenceKeypoint.new(1,Color3.fromRGB(36,36,39))
+    })},track)
+
+    local fill=new("Frame",{Name="Fill",Size=UDim2.fromScale(0,1),BackgroundColor3=Color3.fromRGB(232,232,232)},track)
+    round(fill,4)
+    new("UIGradient",{Color=ColorSequence.new({
+        ColorSequenceKeypoint.new(0,Color3.fromRGB(255,255,255)),
+        ColorSequenceKeypoint.new(1,Color3.fromRGB(200,200,204))
+    })},fill)
+
+    local halo=new("Frame",{Name="ThumbHalo",AnchorPoint=Vector2.new(.5,.5),Position=UDim2.fromScale(0,.5),
+        Size=UDim2.fromOffset(20,20),BackgroundColor3=Color3.fromRGB(255,255,255),BackgroundTransparency=.88,ZIndex=3},track)
+    round(halo,10)
     local thumb=new("Frame",{Name="Thumb",AnchorPoint=Vector2.new(.5,.5),Position=UDim2.fromScale(0,.5),
-        Size=UDim2.fromOffset(7,7),BackgroundColor3=Color3.fromRGB(245,245,245)},track); round(thumb,4); stroke(thumb,Color3.fromRGB(90,90,90),1)
-    local limits=new("Frame",{Name="Limits",BackgroundTransparency=1,Size=UDim2.new(1,0,0,8),LayoutOrder=3},c.ElementFrame)
+        Size=UDim2.fromOffset(13,13),BackgroundColor3=Color3.fromRGB(248,248,248),ZIndex=4},track)
+    round(thumb,7); local thumbStroke=stroke(thumb,Color3.fromRGB(72,72,76),1); thumbStroke.Transparency=.05
+
+    local limits=new("Frame",{Name="Limits",BackgroundTransparency=1,Size=UDim2.new(1,0,0,10),LayoutOrder=3},c.ElementFrame)
     c.SliderArea=area; c.Limits=limits
     label(limits,tostring(low),8,C.Faint,{Size=UDim2.fromScale(.5,1),Font=Enum.Font.Code})
     label(limits,tostring(high),8,C.Faint,{Size=UDim2.fromScale(.5,1),Position=UDim2.fromScale(.5,0),
         TextXAlignment=Enum.TextXAlignment.Right,Font=Enum.Font.Code})
+
     local function format(value) return string.format("%." .. decimals .. "f",value) end
     function c:Set(value,silent)
         if self.Destroyed then return self end
@@ -478,7 +518,9 @@ function Tab:Slider(options)
         value=tonumber(format(value)) or low
         local changed=self.Value~=value; self.Value=value; box.Text=format(value)
         local ratio=high>low and (value-low)/(high-low) or 0
-        fill.Size=UDim2.fromScale(ratio,1); thumb.Position=UDim2.fromScale(ratio,.5)
+        fill.Size=UDim2.fromScale(ratio,1)
+        thumb.Position=UDim2.fromScale(ratio,.5)
+        halo.Position=UDim2.fromScale(ratio,.5)
         if changed and not silent then invoke(self.Callback,value) end
         return self
     end
@@ -500,7 +542,6 @@ function Tab:Slider(options)
     c:Set(range.Default or (type(o.Value)=="number" and o.Value) or o.Default or low,true)
     return c
 end
-
 function Tab:Dropdown(options)
     local o=options or {}; local c=self:_control("Dropdown",o)
     c.Values=table.clone(o.Values or {}); c.Multi=o.Multi==true or o.MultiSelect==true
@@ -588,8 +629,9 @@ function Tab:Colorpicker(options)
     local o=options or {}; local c=self:_control("Colorpicker",o)
     c.Reserve=62; c.HeadMinimum=44
     local hit=button(c.Head,"",{Name="Color",Position=UDim2.new(1,-46,0,0),Size=UDim2.fromOffset(46,44)})
-    round(hit,7); stroke(hit)
+    round(hit,9); local hitStroke=stroke(hit,Color3.fromRGB(54,54,58),1); hitStroke.Transparency=.08
     c.Interactive=hit
+
     function c:Set(value,silent)
         if typeof(value)~="Color3" then return self end
         local changed=self.Value~=value; self.Value=value; hit.BackgroundColor3=value
@@ -597,50 +639,142 @@ function Tab:Colorpicker(options)
         if changed and not silent then invoke(self.Callback,value) end
         return self
     end
+
     function c:Open()
         if self.Locked then return end
         local window=self.Window
-        local panel=window:_popup(self.Title,330,340,self)
-        local body=scroll(panel,{Name="ColorBody",Position=UDim2.fromOffset(16,54),Size=UDim2.new(1,-32,1,-68),
-            AutomaticCanvasSize=Enum.AutomaticSize.None,CanvasSize=UDim2.fromOffset(0,270)})
-        local preview=new("Frame",{Position=UDim2.fromOffset(0,0),Size=UDim2.new(1,-6,0,44),BackgroundColor3=self.Value},body)
-        round(preview,9)
-        local hex=field(body,"#FFFFFF"); hex.Position=UDim2.fromOffset(0,56); hex.Size=UDim2.new(1,-6,0,44)
-        local bars={}
-        for i,name in ipairs({"R","G","B"}) do
-            local y=112+(i-1)*50
-            label(body,name,11,C.Muted,{Position=UDim2.fromOffset(0,y),Size=UDim2.fromOffset(22,44),Font=Enum.Font.Code})
-            local area=button(body,"",{Name=name,BackgroundTransparency=1,Position=UDim2.fromOffset(28,y),Size=UDim2.new(1,-76,0,44)})
-            local track=new("Frame",{Position=UDim2.new(0,0,.5,-2),Size=UDim2.new(1,0,0,4),BackgroundColor3=C.Border},area); round(track,2)
-            local fill=new("Frame",{Size=UDim2.fromScale(0,1),BackgroundColor3=C.Text},track); round(fill,2)
-            local value=label(body,"",11,C.Muted,{Position=UDim2.new(1,-40,0,y),Size=UDim2.fromOffset(34,44),TextXAlignment=Enum.TextXAlignment.Right})
-            bars[i]={Fill=fill,Label=value}
-            local function update(position)
-                if area.AbsoluteSize.X<=0 then return end
-                local rgb={self.Value.R,self.Value.G,self.Value.B}
-                rgb[i]=math.clamp((position.X-area.AbsolutePosition.X)/area.AbsoluteSize.X,0,1)
-                self:Set(Color3.new(rgb[1],rgb[2],rgb[3]))
-            end
-            connect(window,area.InputBegan,function(input)
-                if input.UserInputType==Enum.UserInputType.MouseButton1 or input.UserInputType==Enum.UserInputType.Touch then
-                    window:_beginDrag(input,update,body,self); update(input.Position)
-                end
-            end,window._popupConnections)
+        local panel=window:_popup(self.Title,370,410,self)
+        local body=new("Frame",{Name="ColorPaletteBody",Position=UDim2.fromOffset(16,54),
+            Size=UDim2.new(1,-32,1,-70),BackgroundTransparency=1},panel)
+
+        local h,s,v=self.Value:ToHSV()
+        local state={H=h,S=s,V=v,Internal=false}
+        if state.S < .001 then state.H=0 end
+
+        local current=new("Frame",{Name="Current",Position=UDim2.fromOffset(0,0),Size=UDim2.fromOffset(44,34),
+            BackgroundColor3=self.Value},body)
+        round(current,9); stroke(current,Color3.fromRGB(70,70,74),1)
+
+        local hex=field(body,"#FFFFFF")
+        hex.Position=UDim2.fromOffset(54,0); hex.Size=UDim2.new(1,-54,0,34)
+        hex.TextSize=11; hex.Font=MEDIUM
+
+        local hint=label(body,"Paleta RGB · arrastra para elegir tono e intensidad",9,C.Muted,{
+            Position=UDim2.fromOffset(0,39),Size=UDim2.new(1,0,0,16)})
+
+        local palette=button(body,"",{Name="RGBPalette",Position=UDim2.fromOffset(0,58),
+            Size=UDim2.new(1,0,0,220),BackgroundColor3=Color3.fromHSV(state.H,1,1),ClipsDescendants=true})
+        round(palette,11); local paletteStroke=stroke(palette,Color3.fromRGB(58,58,62),1); paletteStroke.Transparency=.08
+
+        -- Izquierda = blanco, derecha = color puro.
+        local whiteLayer=new("Frame",{Name="WhiteBlend",Size=UDim2.fromScale(1,1),BackgroundColor3=Color3.new(1,1,1),
+            BorderSizePixel=0,ZIndex=2},palette)
+        new("UIGradient",{Transparency=NumberSequence.new({
+            NumberSequenceKeypoint.new(0,0),NumberSequenceKeypoint.new(1,1)
+        })},whiteLayer)
+
+        -- Arriba = luminoso, abajo = negro.
+        local blackLayer=new("Frame",{Name="BlackBlend",Size=UDim2.fromScale(1,1),BackgroundColor3=Color3.new(0,0,0),
+            BorderSizePixel=0,ZIndex=3},palette)
+        new("UIGradient",{Rotation=90,Transparency=NumberSequence.new({
+            NumberSequenceKeypoint.new(0,1),NumberSequenceKeypoint.new(1,0)
+        })},blackLayer)
+
+        local cursor=new("Frame",{Name="PaletteCursor",AnchorPoint=Vector2.new(.5,.5),Size=UDim2.fromOffset(18,18),
+            BackgroundTransparency=1,ZIndex=6},palette)
+        round(cursor,9); local cursorStroke=stroke(cursor,Color3.new(1,1,1),2); cursorStroke.Transparency=0
+        local cursorShadow=new("UIStroke",{Color=Color3.new(0,0,0),Thickness=1,Transparency=.18,
+            ApplyStrokeMode=Enum.ApplyStrokeMode.Border},cursor)
+
+        local hueBar=button(body,"",{Name="Hue",Position=UDim2.fromOffset(0,290),Size=UDim2.new(1,0,0,18),
+            BackgroundColor3=Color3.new(1,1,1),ClipsDescendants=false})
+        round(hueBar,9); local hueStroke=stroke(hueBar,Color3.fromRGB(58,58,62),1); hueStroke.Transparency=.1
+        new("UIGradient",{Color=ColorSequence.new({
+            ColorSequenceKeypoint.new(0.00,Color3.fromRGB(255,0,0)),
+            ColorSequenceKeypoint.new(0.17,Color3.fromRGB(255,255,0)),
+            ColorSequenceKeypoint.new(0.33,Color3.fromRGB(0,255,0)),
+            ColorSequenceKeypoint.new(0.50,Color3.fromRGB(0,255,255)),
+            ColorSequenceKeypoint.new(0.67,Color3.fromRGB(0,0,255)),
+            ColorSequenceKeypoint.new(0.83,Color3.fromRGB(255,0,255)),
+            ColorSequenceKeypoint.new(1.00,Color3.fromRGB(255,0,0))
+        })},hueBar)
+
+        local hueCursor=new("Frame",{Name="HueCursor",AnchorPoint=Vector2.new(.5,.5),Position=UDim2.fromScale(state.H,.5),
+            Size=UDim2.fromOffset(5,26),BackgroundColor3=Color3.fromRGB(250,250,250),ZIndex=6},hueBar)
+        round(hueCursor,3); local hueCursorStroke=stroke(hueCursor,Color3.fromRGB(20,20,20),1); hueCursorStroke.Transparency=.1
+
+        local presets=Instance.new("Frame")
+        presets.Name="Presets"; presets.BackgroundTransparency=1
+        presets.Position=UDim2.fromOffset(0,320); presets.Size=UDim2.new(1,0,0,30); presets.Parent=body
+        local presetLayout=Instance.new("UIListLayout")
+        presetLayout.FillDirection=Enum.FillDirection.Horizontal; presetLayout.HorizontalAlignment=Enum.HorizontalAlignment.Center
+        presetLayout.Padding=UDim.new(0,7); presetLayout.Parent=presets
+        local presetColors={
+            Color3.fromRGB(255,255,255),Color3.fromRGB(180,180,180),Color3.fromRGB(30,30,30),
+            Color3.fromRGB(255,72,72),Color3.fromRGB(255,170,45),Color3.fromRGB(255,225,55),
+            Color3.fromRGB(70,220,110),Color3.fromRGB(65,195,255),Color3.fromRGB(120,100,255),Color3.fromRGB(235,85,220)
+        }
+
+        local function applyHSV()
+            state.Internal=true
+            self:Set(Color3.fromHSV(state.H,state.S,state.V))
+            state.Internal=false
         end
-        self._updateColor=function()
-            preview.BackgroundColor3=self.Value
+
+        local function syncFromValue()
+            if not state.Internal then
+                local nh,ns,nv=self.Value:ToHSV()
+                if ns>.001 then state.H=nh end
+                state.S=ns; state.V=nv
+            end
+            current.BackgroundColor3=self.Value
             hex.Text="#"..self.Value:ToHex():upper()
-            for i,v in ipairs({self.Value.R,self.Value.G,self.Value.B}) do
-                bars[i].Fill.Size=UDim2.fromScale(v,1); bars[i].Label.Text=tostring(math.floor(v*255+.5))
-            end
+            palette.BackgroundColor3=Color3.fromHSV(state.H,1,1)
+            cursor.Position=UDim2.new(state.S,0,1-state.V,0)
+            hueCursor.Position=UDim2.new(state.H,0,.5,0)
         end
-        window._popupCleanup=function() self._updateColor=nil end
+        self._updateColor=syncFromValue
+
+        local function updatePalette(position)
+            local size=palette.AbsoluteSize
+            if size.X<=1 or size.Y<=1 then return end
+            state.S=math.clamp((position.X-palette.AbsolutePosition.X)/size.X,0,1)
+            state.V=1-math.clamp((position.Y-palette.AbsolutePosition.Y)/size.Y,0,1)
+            applyHSV()
+        end
+        local function updateHue(position)
+            local width=hueBar.AbsoluteSize.X
+            if width<=1 then return end
+            state.H=math.clamp((position.X-hueBar.AbsolutePosition.X)/width,0,1)
+            applyHSV()
+        end
+
+        connect(window,palette.InputBegan,function(input)
+            if input.UserInputType==Enum.UserInputType.MouseButton1 or input.UserInputType==Enum.UserInputType.Touch then
+                window:_beginDrag(input,updatePalette,nil,self); updatePalette(input.Position)
+            end
+        end,window._popupConnections)
+        connect(window,hueBar.InputBegan,function(input)
+            if input.UserInputType==Enum.UserInputType.MouseButton1 or input.UserInputType==Enum.UserInputType.Touch then
+                window:_beginDrag(input,updateHue,nil,self); updateHue(input.Position)
+            end
+        end,window._popupConnections)
+
+        for index,color in ipairs(presetColors) do
+            local swatch=button(presets,"",{Name="Preset"..index,Size=UDim2.fromOffset(24,24),BackgroundColor3=color,LayoutOrder=index})
+            round(swatch,7); local ss=stroke(swatch,Color3.fromRGB(78,78,82),1); ss.Transparency=.1
+            connect(window,swatch.Activated,function() self:Set(color) end,window._popupConnections)
+        end
+
         connect(window,hex.FocusLost,function()
             local value=hex.Text:gsub("#","")
-            if #value==6 and value:match("^%x+$") then self:Set(Color3.fromHex(value)) else self._updateColor() end
+            if #value==6 and value:match("^%x+$") then self:Set(Color3.fromHex(value)) else syncFromValue() end
         end,window._popupConnections)
-        self._updateColor()
+
+        window._popupCleanup=function() self._updateColor=nil end
+        syncFromValue()
     end
+
     connect(c.Window,hit.Activated,function() c:Open() end)
     c:Set(o.Default or o.Value or C.White,true)
     return c
@@ -816,6 +950,17 @@ function Nox:CreateWindow(options)
     addResizeVisual("ResizeGuideRight", UDim2.fromScale(1, .5), Vector2.new(1, .5), UDim2.fromOffset(2, 44))
     addResizeVisual("ResizeGuideTop", UDim2.fromScale(.5, 0), Vector2.new(.5, 0), UDim2.fromOffset(44, 2))
     addResizeVisual("ResizeGuideBottom", UDim2.fromScale(.5, 1), Vector2.new(.5, 1), UDim2.fromOffset(44, 2))
+
+    -- Guías en las cuatro esquinas: pequeñas "L" blancas para dejar claro
+    -- que también puedes cambiar ancho + alto desde cualquier esquina.
+    addResizeVisual("ResizeGuideTL_H", UDim2.new(0, 10, 0, 8), Vector2.new(0, 0), UDim2.fromOffset(18, 2))
+    addResizeVisual("ResizeGuideTL_V", UDim2.new(0, 8, 0, 10), Vector2.new(0, 0), UDim2.fromOffset(2, 18))
+    addResizeVisual("ResizeGuideTR_H", UDim2.new(1, -10, 0, 8), Vector2.new(1, 0), UDim2.fromOffset(18, 2))
+    addResizeVisual("ResizeGuideTR_V", UDim2.new(1, -8, 0, 10), Vector2.new(1, 0), UDim2.fromOffset(2, 18))
+    addResizeVisual("ResizeGuideBL_H", UDim2.new(0, 10, 1, -8), Vector2.new(0, 1), UDim2.fromOffset(18, 2))
+    addResizeVisual("ResizeGuideBL_V", UDim2.new(0, 8, 1, -10), Vector2.new(0, 1), UDim2.fromOffset(2, 18))
+    addResizeVisual("ResizeGuideBR_H", UDim2.new(1, -10, 1, -8), Vector2.new(1, 1), UDim2.fromOffset(18, 2))
+    addResizeVisual("ResizeGuideBR_V", UDim2.new(1, -8, 1, -10), Vector2.new(1, 1), UDim2.fromOffset(2, 18))
 
     local function addResizeHandle(name,position,anchor,size,xFactor,yFactor,showGrip)
         local hit=button(root,"",{Name=name,AnchorPoint=anchor,Position=position,

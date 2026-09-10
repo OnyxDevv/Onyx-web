@@ -3397,8 +3397,10 @@ end
 
 function runtime.AvatarCloneBuildMotorSync(char, overlay)
     local state = runtime.Appearance.AvatarClone
-    runtime.AvatarCloneDisconnectAnimation()
 
+    -- HANDOFF SIN CORTE: mientras construimos el rig de referencia dejamos vivo
+    -- el sync anterior (la máscara de respawn). Algunas llamadas de avatar pueden
+    -- ceder varios frames; desconectarlo aquí arriba era el microcorte al aterrizar.
     local baseHumanoid = char:FindFirstChildOfClass("Humanoid")
     local baseRoot = char:FindFirstChild("HumanoidRootPart")
     local overlayRoot = overlay:FindFirstChild("HumanoidRootPart")
@@ -3439,6 +3441,10 @@ function runtime.AvatarCloneBuildMotorSync(char, overlay)
         return false, "No se pudo construir el rig de referencia: " .. tostring(driverError or "desconocido")
     end
 
+    -- A partir de aquí no hay yields: hacemos el cambio de máscara -> clon definitivo
+    -- de forma atómica dentro del mismo frame.
+    runtime.AvatarCloneDisconnectAnimation()
+    state.Overlay = overlay
     state.DriverRig = driverRig
 
     -- --------------------------------------------------------------
@@ -3765,12 +3771,12 @@ function runtime.ApplyAvatarCloneTemplate(char, template)
     if state.Applying then return false, "Ya se está aplicando otro avatar" end
     state.Applying = true
 
-    local ok, result = pcall(function()
-        -- El swap del overlay debe ser transaccional: en un respawn el juego puede
-        -- seguir reconstruyendo el Character durante varios frames. No ocultamos
-        -- el avatar nuevo hasta que el clon ya exista y su sincronización esté lista.
-        runtime.AvatarCloneDestroyOverlay(false)
+    -- Conservamos la máscara/overlay anterior hasta que el nuevo clon ya tenga
+    -- MotorPairs y pose inicial listos. Así nunca existe un frame entre ambos.
+    local previousOverlay = state.Overlay
+    local handoffVisualCache = nil
 
+    local ok, result = pcall(function()
         local overlay = template:Clone()
         overlay.Name = "iLunX_AvatarCloneOverlay"
         overlay:SetAttribute("iLunXAvatarClone", true)
@@ -3827,26 +3833,63 @@ function runtime.ApplyAvatarCloneTemplate(char, template)
             end
         end
 
+        -- Si venimos de la máscara de respawn, el clon nuevo se prepara totalmente
+        -- invisible. La máscara vieja sigue animándose mientras Roblox resuelve
+        -- clothing/wraps y mientras construimos el rig de referencia.
+        if previousOverlay and previousOverlay.Parent then
+            handoffVisualCache = setmetatable({}, {__mode = "k"})
+            for _, object in ipairs(overlay:GetDescendants()) do
+                if object:IsA("BasePart") then
+                    handoffVisualCache[object] = {
+                        LocalTransparencyModifier = object.LocalTransparencyModifier,
+                    }
+                    object.LocalTransparencyModifier = 1
+                elseif object:IsA("Decal") or object:IsA("Texture") then
+                    handoffVisualCache[object] = {Transparency = object.Transparency}
+                    object.Transparency = 1
+                elseif object:IsA("ParticleEmitter") or object:IsA("Trail") or object:IsA("Beam")
+                    or object:IsA("Smoke") or object:IsA("Fire") or object:IsA("Sparkles") then
+                    handoffVisualCache[object] = {Enabled = object.Enabled}
+                    object.Enabled = false
+                end
+            end
+        end
+
         -- Nunca vive dentro de player.Character: queda totalmente aislado de
         -- los assemblies y de cualquier script que inspeccione el Character.
         overlay.Parent = runtime.GetAvatarCloneVisualContainer()
         overlay:PivotTo(ownRoot.CFrame)
 
-        state.Overlay = overlay
-
         -- Un frame para que Roblox resuelva clothing/wraps del modelo ya parentado.
+        -- La máscara anterior continúa visible y animada durante esta espera.
         RunService.Heartbeat:Wait()
         if not overlay.Parent then
             error("El avatar visual desapareció durante la carga")
         end
 
-        runtime.AvatarCloneCaptureOverlayVisuals(overlay)
+        -- En un handoff el cache original ya se tomó ANTES de esconder el clon
+        -- nuevo. En una aplicación normal usamos el capturador habitual.
+        if not handoffVisualCache then
+            runtime.AvatarCloneCaptureOverlayVisuals(overlay)
+        end
 
         local synced, syncError = runtime.AvatarCloneBuildMotorSync(char, overlay)
         if not synced then
             overlay:Destroy()
-            state.Overlay = nil
+            if state.Overlay == overlay then state.Overlay = nil end
             error(syncError or "No se pudo sincronizar la pose del avatar")
+        end
+
+        -- BuildMotorSync ya ejecutó syncPose() y no cedió después de desconectar
+        -- la máscara. Revelamos el clon definitivo y retiramos el viejo en este
+        -- mismo frame: sin pose default, sin flash y sin microcorte al tocar piso.
+        if handoffVisualCache then
+            state.OverlayVisualCache = handoffVisualCache
+            runtime.AvatarCloneRestoreOverlayVisuals()
+        end
+
+        if previousOverlay and previousOverlay ~= overlay and previousOverlay.Parent then
+            pcall(function() previousOverlay:Destroy() end)
         end
 
         runtime.ReapplyAppearanceLayers(char)
@@ -3858,6 +3901,9 @@ function runtime.ApplyAvatarCloneTemplate(char, template)
 
     if not ok then
         runtime.AvatarCloneDestroyOverlay(false)
+        if previousOverlay and previousOverlay.Parent then
+            pcall(function() previousOverlay:Destroy() end)
+        end
 
         -- Nunca dejamos el Character real oculto si una reaplicación falla.
         -- Antes, durante una reaplicación, el cache podía seguir forzando

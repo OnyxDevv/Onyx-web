@@ -889,29 +889,31 @@ Tabs.Inicio:Paragraph({
 
 
 
-local XERO_CREDITS_PROFILE = "rbxassetid://0" -- Reemplaza 0 por la ID del asset de tu foto.
+local XERO_CREDITS_PROFILE = "rbxassetid://74846094133538" -- Foto del creador para Créditos.
 
 Tabs.Creditos:Paragraph({
     Title = "Kev",
     Desc = "Creador de XeroHub\nTikTok: @kevzzx_",
     Image = XERO_CREDITS_PROFILE,
-    ImageSize = 62,
+    ImageSize = 74,
     CircleImage = true,
     ImageAlign = "left",
-    ImageStrokeColor = Color3.fromRGB(244, 244, 244),
-    ImageStrokeThickness = 1,
+    ImageStrokeColor = Color3.fromRGB(248, 248, 248),
+    ImageStrokeThickness = 1.35,
     Gothic = true,
-    DecorText = "KEV",
-    Color = Color3.fromRGB(11, 11, 14),
-    StrokeColor = Color3.fromRGB(44, 44, 50),
+    GothicProfile = true,
+    BadgeText = "CREATOR",
+    DecorText = "XERO",
+    Color = Color3.fromRGB(8, 8, 11),
+    StrokeColor = Color3.fromRGB(62, 62, 70),
 })
 Tabs.Creditos:Paragraph({
     Title = "Agradecimientos",
-    Desc = "Gracias a quienes usan y apoyan XeroHub. Su apoyo hace posible seguir mejorándolo.",
+    Desc = "Gracias por usar y apoyar XeroHub. Cada persona que confía en el proyecto forma parte de su evolución.",
     Gothic = true,
-    DecorText = "THANKS",
-    Color = Color3.fromRGB(11, 11, 14),
-    StrokeColor = Color3.fromRGB(44, 44, 50),
+    DecorText = "GRATITUDE",
+    Color = Color3.fromRGB(9, 9, 12),
+    StrokeColor = Color3.fromRGB(46, 46, 54),
 })
 
 Tabs.Inicio:Section({ Title = "Juegos Soportados" })
@@ -958,71 +960,139 @@ Tabs.Inicio:Button({
 Tabs.Inicio:Section({Title = "Optimización"})
 
 local Stats = game:GetService("Stats")
+
+-- HUD compacto de rendimiento: cápsula minimalista acorde al estilo Xero.
+-- Sólo actualiza valores cuando el usuario activa el toggle.
 local statsContainer = Instance.new("Frame")
-statsContainer.Size = UDim2.new(0, 150, 0, 50)
-statsContainer.Position = UDim2.new(1, -170, 0, 10) -- Esquina superior derecha, sin estorbar
-statsContainer.BackgroundTransparency = 1
-statsContainer.Visible = false 
+statsContainer.Name = "XeroPerformanceHUD"
+statsContainer.AnchorPoint = Vector2.new(1, 0)
+statsContainer.Size = UDim2.fromOffset(206, 44)
+statsContainer.Position = UDim2.new(1, -18, 0, 14)
+statsContainer.BackgroundColor3 = Color3.fromRGB(10, 10, 11)
+statsContainer.BackgroundTransparency = 0.08
+statsContainer.BorderSizePixel = 0
+statsContainer.Visible = false
 statsContainer.ZIndex = 100
 statsContainer.Parent = screenGui
+Instance.new("UICorner", statsContainer).CornerRadius = UDim.new(0, 14)
 
-local fpsLabel = Instance.new("TextLabel", statsContainer)
-fpsLabel.Size = UDim2.new(1, 0, 0, 25)
-fpsLabel.Position = UDim2.new(0, 0, 0, 0)
-fpsLabel.BackgroundTransparency = 1
-fpsLabel.Text = "FPS: --"
-fpsLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
-fpsLabel.Font = Enum.Font.GothamBlack -- Fuente más gruesa y moderna
-fpsLabel.TextSize = 16 
-fpsLabel.TextXAlignment = Enum.TextXAlignment.Right
-fpsLabel.TextStrokeTransparency = 0 -- Borde negro al 100% para que resalte
-fpsLabel.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
+local statsStroke = Instance.new("UIStroke")
+statsStroke.Color = Color3.fromRGB(72, 72, 78)
+statsStroke.Transparency = 0.34
+statsStroke.Thickness = 1
+statsStroke.Parent = statsContainer
 
-local pingLabel = Instance.new("TextLabel", statsContainer)
-pingLabel.Size = UDim2.new(1, 0, 0, 25)
-pingLabel.Position = UDim2.new(0, 0, 0, 25) 
-pingLabel.BackgroundTransparency = 1
-pingLabel.Text = "Ping: -- ms"
-pingLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
-pingLabel.Font = Enum.Font.GothamBlack
-pingLabel.TextSize = 16
-pingLabel.TextXAlignment = Enum.TextXAlignment.Right
-pingLabel.TextStrokeTransparency = 0
-pingLabel.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
+local statsGradient = Instance.new("UIGradient")
+statsGradient.Rotation = 90
+statsGradient.Color = ColorSequence.new({
+    ColorSequenceKeypoint.new(0, Color3.fromRGB(22, 22, 24)),
+    ColorSequenceKeypoint.new(1, Color3.fromRGB(10, 10, 11)),
+})
+statsGradient.Parent = statsContainer
+
+local function createMetricCell(name, x, width)
+    local cell = Instance.new("Frame")
+    cell.Name = name
+    cell.Position = UDim2.fromOffset(x, 0)
+    cell.Size = UDim2.fromOffset(width, 44)
+    cell.BackgroundTransparency = 1
+    cell.ZIndex = 101
+    cell.Parent = statsContainer
+
+    local dot = Instance.new("Frame")
+    dot.Name = "Status"
+    dot.AnchorPoint = Vector2.new(0, 0.5)
+    dot.Position = UDim2.fromOffset(11, 22)
+    dot.Size = UDim2.fromOffset(6, 6)
+    dot.BackgroundColor3 = Color3.fromRGB(225, 225, 225)
+    dot.BorderSizePixel = 0
+    dot.ZIndex = 103
+    dot.Parent = cell
+    Instance.new("UICorner", dot).CornerRadius = UDim.new(1, 0)
+
+    local metric = Instance.new("TextLabel")
+    metric.Name = "Metric"
+    metric.Position = UDim2.fromOffset(24, 6)
+    metric.Size = UDim2.new(1, -30, 0, 13)
+    metric.BackgroundTransparency = 1
+    metric.Text = name
+    metric.TextColor3 = Color3.fromRGB(137, 137, 143)
+    metric.Font = Enum.Font.GothamBold
+    metric.TextSize = 8
+    metric.TextXAlignment = Enum.TextXAlignment.Left
+    metric.ZIndex = 102
+    metric.Parent = cell
+
+    local value = Instance.new("TextLabel")
+    value.Name = "Value"
+    value.Position = UDim2.fromOffset(24, 18)
+    value.Size = UDim2.new(1, -30, 0, 19)
+    value.BackgroundTransparency = 1
+    value.Text = "--"
+    value.TextColor3 = Color3.fromRGB(244, 244, 246)
+    value.Font = Enum.Font.GothamBold
+    value.TextSize = 15
+    value.TextXAlignment = Enum.TextXAlignment.Left
+    value.ZIndex = 102
+    value.Parent = cell
+
+    return value, dot
+end
+
+local fpsLabel, fpsDot = createMetricCell("FPS", 0, 101)
+local pingLabel, pingDot = createMetricCell("PING", 105, 101)
+
+local divider = Instance.new("Frame")
+divider.Name = "Divider"
+divider.AnchorPoint = Vector2.new(0.5, 0.5)
+divider.Position = UDim2.fromOffset(103, 22)
+divider.Size = UDim2.fromOffset(1, 24)
+divider.BackgroundColor3 = Color3.fromRGB(58, 58, 62)
+divider.BackgroundTransparency = 0.28
+divider.BorderSizePixel = 0
+divider.ZIndex = 102
+divider.Parent = statsContainer
 
 local showStatsEnabled = false
 Tabs.Inicio:Toggle({
     Title = "Mostrar FPS y Ping",
+    Desc = "HUD compacto de rendimiento en tiempo real.",
     Callback = function(Value)
         showStatsEnabled = Value
         statsContainer.Visible = Value
+        if not Value then
+            fpsLabel.Text = "--"
+            pingLabel.Text = "-- ms"
+            fpsDot.BackgroundColor3 = Color3.fromRGB(225, 225, 225)
+            pingDot.BackgroundColor3 = Color3.fromRGB(225, 225, 225)
+        end
     end,
 })
+
+local GOOD = Color3.fromRGB(105, 214, 139)
+local MID = Color3.fromRGB(236, 190, 82)
+local BAD = Color3.fromRGB(232, 102, 102)
 
 local fpsFrames = 0
 local statsElapsed = 0
 runtime.Track(RunService.RenderStepped:Connect(function(deltaTime)
-    if not showStatsEnabled then return end 
-    
-    fpsFrames = fpsFrames + 1
-    statsElapsed = statsElapsed + deltaTime
+    if not showStatsEnabled then return end
+
+    fpsFrames += 1
+    statsElapsed += deltaTime
     if statsElapsed >= 1 then
-        fpsLabel.Text = "FPS: " .. fpsFrames
-        
-        -- Colores más agradables a la vista (Verde esmeralda, amarillo brillante y rojo suave)
-        if fpsFrames >= 50 then fpsLabel.TextColor3 = Color3.fromRGB(46, 204, 113) 
-        elseif fpsFrames >= 30 then fpsLabel.TextColor3 = Color3.fromRGB(241, 196, 15) 
-        else fpsLabel.TextColor3 = Color3.fromRGB(231, 76, 60) end
-        
+        local elapsed = math.max(statsElapsed, 0.001)
+        local fpsValue = math.floor((fpsFrames / elapsed) + 0.5)
+        fpsLabel.Text = tostring(fpsValue)
+        fpsDot.BackgroundColor3 = fpsValue >= 50 and GOOD or (fpsValue >= 30 and MID or BAD)
+
         local pingValue = 0
-        pcall(function() pingValue = math.floor(Stats.Network.ServerStatsItem["Data Ping"]:GetValue()) end)
-        
-        pingLabel.Text = "Ping: " .. tostring(pingValue) .. " ms"
-        
-        if pingValue < 90 then pingLabel.TextColor3 = Color3.fromRGB(46, 204, 113) 
-        elseif pingValue < 150 then pingLabel.TextColor3 = Color3.fromRGB(241, 196, 15) 
-        else pingLabel.TextColor3 = Color3.fromRGB(231, 76, 60) end
-        
+        pcall(function()
+            pingValue = math.floor(Stats.Network.ServerStatsItem["Data Ping"]:GetValue() + 0.5)
+        end)
+        pingLabel.Text = tostring(pingValue) .. " ms"
+        pingDot.BackgroundColor3 = pingValue < 90 and GOOD or (pingValue < 150 and MID or BAD)
+
         fpsFrames = 0
         statsElapsed = 0
     end

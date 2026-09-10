@@ -7226,6 +7226,15 @@ do
         local entry = spoofState.Targets[target]
         if not entry then return end
         spoofState.Targets[target] = nil
+
+        -- Restauramos la imagen oficial que ocultamos al montar el reemplazo.
+        -- Así cerrar el menú/destruir XeroHub no deja thumbnails transparentes.
+        if target and target.Parent and entry.OriginalImageTransparency ~= nil then
+            pcall(function()
+                target.ImageTransparency = entry.OriginalImageTransparency
+            end)
+        end
+
         if entry.Viewport and entry.Viewport.Parent then
             pcall(function() entry.Viewport:Destroy() end)
         end
@@ -7420,7 +7429,9 @@ do
         local halfFov = math_rad(cameraPreview.FieldOfView * 0.5)
         local distance = math.max(1.5, (fitHalf / math.max(0.12, math.tan(halfFov))) * 1.13)
 
-        cameraPreview.CFrame = CFrame.new(focus + Vector3.new(0, 0, distance), focus)
+        -- Los rigs Roblox miran hacia -Z. La cámara debe colocarse delante
+        -- (también en -Z), no detrás en +Z; de lo contrario el thumbnail sale de espaldas.
+        cameraPreview.CFrame = CFrame.new(focus + Vector3.new(0, 0, -distance), focus)
     end
 
     local function refreshAllTargets()
@@ -7491,12 +7502,22 @@ do
         local current = spoofState.Targets[target]
         local mode = classifyThumbnail(target, forcedMode)
         if current and current.Viewport and current.Viewport.Parent then
+            -- CoreGui puede volver a escribir la miniatura al navegar entre paneles.
+            -- El reemplazo debe seguir siendo exclusivo: nunca dejamos la imagen
+            -- oficial debajo del ViewportFrame, que era lo que generaba dos avatares.
+            pcall(function() target.ImageTransparency = 1 end)
             if current.Mode ~= mode then
                 current.Mode = mode
                 if not spoofState.Dirty then renderSnapshot(current.Viewport, mode) end
             end
             return true
         end
+
+        local originalImageTransparency = nil
+        pcall(function()
+            originalImageTransparency = target.ImageTransparency
+            target.ImageTransparency = 1
+        end)
 
         local viewport = Instance.new("ViewportFrame")
         viewport.Name = "Xero_AvatarThumbnailSpoof"
@@ -7523,11 +7544,18 @@ do
 
         local parented = pcall(function() viewport.Parent = target end)
         if not parented or viewport.Parent ~= target then
+            if originalImageTransparency ~= nil then
+                pcall(function() target.ImageTransparency = originalImageTransparency end)
+            end
             pcall(function() viewport:Destroy() end)
             return false
         end
 
-        spoofState.Targets[target] = {Viewport = viewport, Mode = mode}
+        spoofState.Targets[target] = {
+            Viewport = viewport,
+            Mode = mode,
+            OriginalImageTransparency = originalImageTransparency,
+        }
         runtime.Track(target.AncestryChanged:Connect(function(_, parent)
             if not parent then destroyTargetSpoof(target) end
         end))

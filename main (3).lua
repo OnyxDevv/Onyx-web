@@ -1,6 +1,6 @@
 --[[
     XeroHub UI / Obsidian 2.9 — polish + compact sliders + open-button ghost
-    Creator: Kev
+    Creator: AlexDev
     Native Roblox interface. No WindUI runtime, icon downloads or render loops.
     Compatible with the control API used by the supplied DUELS hub.
     Usage: local UI = require(module); local Window = UI:CreateWindow({...})
@@ -12,7 +12,7 @@ local Input = game:GetService("UserInputService")
 local Workspace = game:GetService("Workspace")
 local RunService = game:GetService("RunService")
 local TextService = game:GetService("TextService")
-local Nox = { Version = "2.9.0", Brand = "XeroHub", Creator = "Kev", UIScale = 1 }
+local Nox = { Version = "2.9.0", Brand = "XeroHub", Creator = "AlexDev", UIScale = 1 }
 local C = {
     Window = Color3.fromRGB(9,9,9), Panel = Color3.fromRGB(14,14,14),
     Row = Color3.fromRGB(20,20,20), Field = Color3.fromRGB(11,11,11),
@@ -809,7 +809,7 @@ function Nox:CreateWindow(options)
     if env.__NOX_UI and env.__NOX_UI.Destroy then pcall(function() env.__NOX_UI:Destroy() end) end
     local w={_connections={},_popupConnections={},_onDestroy={},_onOpen={},_onClose={},Tabs={},
         Groups={},Opened=true,Destroyed=false,Compact=false,ToggleKey=o.ToggleKey or Enum.KeyCode.RightShift,
-        Title=plain(o.Title or "XeroHub"),Author=o.Author or "by Kev",UIScale=1,_navOrder=0}
+        Title=plain(o.Title or "XeroHub"),Author=o.Author or "by AlexDev",UIScale=1,_navOrder=0}
     self.Window=w; env.__NOX_UI=w
     local gui=new("ScreenGui",{Name="XeroHubUI",ResetOnSpawn=false,IgnoreGuiInset=true,
         DisplayOrder=2147483000,ZIndexBehavior=Enum.ZIndexBehavior.Sibling},parent)
@@ -910,10 +910,11 @@ function Nox:CreateWindow(options)
     local pages=new("Frame",{Name="Pages",BackgroundTransparency=1,Position=UDim2.fromOffset(0,34),Size=UDim2.new(1,0,1,-34)},content)
     local footer=label(root,"XEROHUB",8,C.Faint,{Position=UDim2.new(0,18,1,-24),Size=UDim2.new(.6,0,0,14),Font=Enum.Font.Code})
     local shortcut=label(root,"RSHIFT  /  MOSTRAR U OCULTAR",8,C.Faint,{Position=UDim2.new(.4,0,1,-24),Size=UDim2.new(.6,-18,0,14),TextXAlignment=Enum.TextXAlignment.Right,Font=Enum.Font.Code})
-    local openButton=button(launcherSurface,"",{Name="OpenXeroHub",Position=UDim2.new(.5,-77,0,16),Size=UDim2.fromOffset(154,40),BackgroundColor3=C.Window,ZIndex=20})
+    local openButton=button(launcherSurface,"",{Name="OpenXeroHub",Position=UDim2.new(.5,-73,0,16),Size=UDim2.fromOffset(146,44),BackgroundColor3=C.Window,ZIndex=20})
     round(openButton,12); local openStroke=stroke(openButton,Color3.fromRGB(66,66,66))
-    local openIcon=mark(openButton,24); openIcon.Position=UDim2.fromOffset(8,8)
-    local openLabel=label(openButton,"Abrir XeroHub",12,C.Text,{Position=UDim2.fromOffset(40,0),Size=UDim2.new(1,-47,1,0),Font=MEDIUM})
+    local openIcon=mark(openButton,22); openIcon.Position=UDim2.fromOffset(12,11)
+    local openLabel=label(openButton,"XEROHUB",11,C.Text,{Position=UDim2.fromOffset(45,5),Size=UDim2.new(1,-55,0,20),Font=MEDIUM})
+    local openHint=label(openButton,"ABRIR PANEL",8,C.Muted,{Position=UDim2.fromOffset(45,25),Size=UDim2.new(1,-55,0,12),Font=MEDIUM})
     w.OpenButton=openButton; w._launcherMoved=false; w.UIElements={Main=root,Title=brand,ActiveStatus=statusLabel,SideBar=sidebar,MainBar=content,Pages=pages,Search=searchBox,Topbar=top}
     local desired=o.Size or UDim2.fromOffset(680,430)
     w._desiredWidth=desired.X.Offset>0 and desired.X.Offset or 680
@@ -1043,6 +1044,7 @@ function Nox:CreateWindow(options)
         openButton.AutoButtonColor=shouldShow and (not ghosted)
         openButton.BackgroundTransparency=ghosted and 1 or 0
         openLabel.TextTransparency=ghosted and 1 or 0
+        openHint.TextTransparency=ghosted and 1 or 0
         if openStroke then openStroke.Transparency=ghosted and 1 or 0 end
         if openIcon then
             for _,d in ipairs(openIcon:GetDescendants()) do
@@ -1241,13 +1243,13 @@ function Nox:CreateWindow(options)
 
         -- Botón flotante también se adapta a pantallas angostas.
         if bounds.X<380 then
-            openButton.Size=UDim2.fromOffset(math.min(138,math.max(112,bounds.X-20)),38)
-            openLabel.Text="Abrir Xero"
+            openButton.Size=UDim2.fromOffset(math.min(138,math.max(112,bounds.X-20)),44)
+            openLabel.Text="XEROHUB"
             openLabel.TextSize=11
         else
-            openButton.Size=UDim2.fromOffset(154,40)
-            openLabel.Text="Abrir XeroHub"
-            openLabel.TextSize=12
+            openButton.Size=UDim2.fromOffset(146,44)
+            openLabel.Text="XEROHUB"
+            openLabel.TextSize=11
         end
         if not w._launcherMoved then
             local launcherWidth=openButton.Size.X.Offset
@@ -1517,15 +1519,24 @@ function Nox:Notify(options)
     local w=self.Window; local o=options or {}
     if w.Destroyed then return end
     if w._notice then w._notice:Destroy() end
-    local holder=new("Frame",{Name="XeroNotice",BackgroundColor3=C.Row,AnchorPoint=Vector2.new(.5,0),
-        Position=UDim2.new(.5,0,0,12),Size=UDim2.new(1,-24,0,0),AutomaticSize=Enum.AutomaticSize.Y,ZIndex=100},w.ScreenGui)
+    local holder=new("Frame",{Name="XeroNotice",BackgroundColor3=C.Window,AnchorPoint=Vector2.new(1,0),
+        Position=UDim2.new(1,384,0,64),Size=UDim2.new(1,-24,0,0),AutomaticSize=Enum.AutomaticSize.Y,ZIndex=100},w.ScreenGui)
     new("UISizeConstraint",{MaxSize=Vector2.new(360,math.huge)},holder)
     round(holder,12); stroke(holder); padding(holder,14,12); vertical(holder,6)
     label(holder,plain(o.Title or "XeroHub"),13,C.Text,{Font=BOLD,LayoutOrder=1})
     label(holder,plain(o.Content or o.Desc),12,C.Muted,{Size=UDim2.new(1,0,0,0),AutomaticSize=Enum.AutomaticSize.Y,TextWrapped=true,LayoutOrder=2})
+    local tweenService=game:GetService("TweenService")
+    tweenService:Create(holder,TweenInfo.new(.18,Enum.EasingStyle.Quint,Enum.EasingDirection.Out),
+        {Position=UDim2.new(1,-12,0,64)}):Play()
     w._notice=holder
     task.delay(math.clamp(tonumber(o.Duration) or 2,1,8),function()
-        if holder.Parent then holder:Destroy() end
+        if holder.Parent then
+            local exitTween=tweenService:Create(holder,TweenInfo.new(.14,Enum.EasingStyle.Quint,Enum.EasingDirection.In),
+                {Position=UDim2.new(1,384,0,64)})
+            exitTween:Play()
+            exitTween.Completed:Wait()
+            if holder.Parent then holder:Destroy() end
+        end
         if w._notice==holder then w._notice=nil end
     end)
     return {Close=function() if holder.Parent then holder:Destroy() end end}

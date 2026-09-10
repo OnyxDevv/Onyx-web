@@ -4782,9 +4782,10 @@ function runtime.EnsureAppearanceStudio()
     controlsScroll.ZIndex = 603
     controlsScroll.Parent = side
     local controlsPadding = Instance.new("UIPadding")
-    controlsPadding.PaddingTop = UDim.new(0, 2)
-    controlsPadding.PaddingBottom = UDim.new(0, 10)
-    controlsPadding.PaddingRight = UDim.new(0, 4)
+    controlsPadding.PaddingTop = UDim.new(0, 3)
+    controlsPadding.PaddingBottom = UDim.new(0, 12)
+    controlsPadding.PaddingLeft = UDim.new(0, 8)
+    controlsPadding.PaddingRight = UDim.new(0, 8)
     controlsPadding.Parent = controlsScroll
     local controlsLayout = Instance.new("UIListLayout")
     controlsLayout.Padding = UDim.new(0, 10)
@@ -5508,7 +5509,7 @@ function runtime.EnsureAppearanceStudio()
     local function makeStudioSlider(titleText, component, minValue, maxValue, stepValue, defaultValue)
         local row = Instance.new("Frame")
         row.Name = component .. "Slider"
-        row.Size = UDim2.new(1, -10, 0, 78)
+        row.Size = UDim2.new(1, -2, 0, 78)
         row.BackgroundColor3 = Color3.fromRGB(18, 18, 18)
         row.BorderSizePixel = 0
         row.ClipsDescendants = true
@@ -5519,6 +5520,8 @@ function runtime.EnsureAppearanceStudio()
         local rowStroke = Instance.new("UIStroke")
         rowStroke.Color = Color3.fromRGB(42, 42, 46)
         rowStroke.Transparency = 0.18
+        rowStroke.Thickness = 1
+        rowStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
         rowStroke.Parent = row
 
         local titleLabel = Instance.new("TextLabel")

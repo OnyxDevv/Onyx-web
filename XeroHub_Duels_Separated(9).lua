@@ -6222,6 +6222,7 @@ function runtime.EnsureAppearanceStudio()
         PreviewCamera = nil,
         PreviewModel = nil,
         BaseAvatarTemplate = nil,
+        BaseAvatarTemplateSource = nil,
         CameraState = {
             Yaw = 0,
             Pitch = -0.06,
@@ -7116,25 +7117,46 @@ function runtime.GetAppearanceStudioBaseModel()
     local studio = runtime.AppearanceStudio
     if not studio then return nil end
 
+    -- Si hay una skin clonada activa, el editor usa exactamente ese template
+    -- como avatar base. Sin clon, conserva el comportamiento original.
+    local cloneState = runtime.Appearance and runtime.Appearance.AvatarClone
+    local cloneTemplate = cloneState
+        and cloneState.Active
+        and cloneState.Template
+        or nil
+
     local cached = studio.BaseAvatarTemplate
-    if cached and cached.Parent == nil then
+    local cachedSource = studio.BaseAvatarTemplateSource
+    if cached and cached.Parent == nil and cachedSource == cloneTemplate then
         local ok, cloned = pcall(function() return cached:Clone() end)
         if ok then return cloned end
+    elseif cached then
+        pcall(function() cached:Destroy() end)
+        studio.BaseAvatarTemplate = nil
     end
 
     local rigType = Enum.HumanoidRigType.R15
     local currentHumanoid = player.Character and player.Character:FindFirstChildOfClass("Humanoid")
     if currentHumanoid then rigType = currentHumanoid.RigType end
 
-    -- Construye un avatar NUEVO desde el UserId/description. No clona el Character
-    -- que está caminando dentro del juego.
-    local model = runtime.CreateAvatarCloneTemplateFromUserId(player.UserId, rigType)
+    local model
+    if cloneTemplate then
+        -- El template ya trae ropa, accesorios y proporciones de la skin clonada.
+        local ok, cloned = pcall(function() return cloneTemplate:Clone() end)
+        if ok then model = cloned end
+    else
+        -- Sin clon, muestra tu avatar normal como antes.
+        model = runtime.CreateAvatarCloneTemplateFromUserId(player.UserId, rigType)
+    end
+
     if not model then return nil end
 
     model = prepareAppearanceStudioBaseModel(model)
     if not model then return nil end
 
     studio.BaseAvatarTemplate = model
+    studio.BaseAvatarTemplateSource = cloneTemplate
+
     local cloneOk, cloned = pcall(function() return model:Clone() end)
     if cloneOk then return cloned end
     return nil

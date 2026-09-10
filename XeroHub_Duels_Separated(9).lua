@@ -7255,6 +7255,112 @@ do
         return userId
     end
 
+    -- Para las tarjetas grandes de Personas, reutilizamos la MISMA ImageLabel que
+    -- CoreGui ya está mostrando para el jugador clonado. Esto conserva exactamente
+    -- el pose, zoom, encuadre, ImageRect y ScaleType que Roblox eligió para esa tarjeta.
+    -- Sólo se escanea cuando el menú está abierto / se refresca por eventos.
+    local function findLiveCloneCardImage()
+        if not spoofState.MenuOpen then return nil end
+
+        local targetUserId = getCloneTargetUserId()
+        if not targetUserId then return nil end
+
+        local targetPlayer
+        for _, candidate in ipairs(Players:GetPlayers()) do
+            if candidate.UserId == targetUserId then
+                targetPlayer = candidate
+                break
+            end
+        end
+        if not targetPlayer then return nil end
+
+        local targetIdText = tostring(targetUserId)
+        local targetName = string_lower(tostring(targetPlayer.Name or ""))
+        local targetDisplayName = string_lower(tostring(targetPlayer.DisplayName or ""))
+
+        local function scoreSourceImage(obj, preferDirectId)
+            if not obj or (not obj:IsA("ImageLabel") and not obj:IsA("ImageButton")) then
+                return nil
+            end
+            if isOurSpoofObject(obj) then return nil end
+
+            local size = obj.AbsoluteSize
+            if size.X < 40 or size.Y < 40 or size.X > 320 or size.Y > 320 then return nil end
+            local ratio = size.X / math.max(1, size.Y)
+            if ratio < 0.62 or ratio > 1.62 then return nil end
+
+            local imageText = ""
+            pcall(function() imageText = string_lower(obj.Image or "") end)
+
+            -- Nunca tomamos nuestra propia miniatura como fuente.
+            if localUserIdText ~= targetIdText
+                and string_find(imageText, localUserIdText, 1, true) then
+                return nil
+            end
+
+            local score = size.X * size.Y
+            local directId = imageText ~= "" and string_find(imageText, targetIdText, 1, true) ~= nil
+            if directId then score += 1000000 end
+
+            local lowerName = string_lower(tostring(obj.Name or ""))
+            if string_find(lowerName, "avatar", 1, true)
+                or string_find(lowerName, "thumbnail", 1, true)
+                or string_find(lowerName, "portrait", 1, true) then
+                score += 12000
+            end
+
+            if preferDirectId and not directId then return nil end
+            return score
+        end
+
+        -- Camino rápido: algunas versiones de CoreGui conservan el UserId en Image.
+        local bestDirect, bestDirectScore
+        for _, obj in ipairs(CoreGui:GetDescendants()) do
+            local score = scoreSourceImage(obj, true)
+            if score and (not bestDirectScore or score > bestDirectScore) then
+                bestDirect, bestDirectScore = obj, score
+            end
+        end
+        if bestDirect then return bestDirect end
+
+        -- Camino robusto: busca el label del username/display name y, dentro de su
+        -- tarjeta, toma la imagen cuadrada más grande. Funciona aunque Image ya sea
+        -- una URL CDN sin el UserId visible.
+        local wanted = {
+            [targetName] = true,
+            [targetDisplayName] = true,
+            ["@" .. targetName] = true,
+        }
+
+        for _, obj in ipairs(CoreGui:GetDescendants()) do
+            if (obj:IsA("TextLabel") or obj:IsA("TextButton"))
+                and wanted[normalizeGuiText(obj.Text)] then
+
+                local ancestor = obj
+                for _ = 1, 7 do
+                    ancestor = ancestor and ancestor.Parent
+                    if not ancestor or ancestor == CoreGui then break end
+
+                    if ancestor:IsA("GuiObject") then
+                        local abs = ancestor.AbsoluteSize
+                        if abs.X > 0 and abs.Y > 0 and abs.Y <= 430 then
+                            local best, bestScore
+                            for _, imageObj in ipairs(ancestor:GetDescendants()) do
+                                local score = scoreSourceImage(imageObj, false)
+                                if score and (not bestScore or score > bestScore) then
+                                    best, bestScore = imageObj, score
+                                end
+                            end
+                            if best then return best end
+                        end
+                    end
+                end
+            end
+        end
+
+        return nil
+    end
+
     -- El thumbnail oficial de otro usuario sí conserva SU pose de perfil. Sin embargo,
     -- las capas locales de XeroHub no existen en los servidores de thumbnails de Roblox.
     -- Por eso usamos la imagen oficial sólo cuando el clon no tiene overrides locales;
@@ -7489,9 +7595,34 @@ do
             end
         end
 
-        -- Para un clon limpio usamos directamente SU thumbnail oficial. Éste ya viene
-        -- horneado por Roblox con el emote/pose y cámara de perfil del usuario objetivo,
-        -- así que el resultado coincide con la tarjeta que ves en Personas.
+        -- En Personas no regeneramos la imagen si el jugador clonado está visible:
+        -- clonamos la ImageLabel REAL de su tarjeta para heredar el mismo pose,
+        -- encuadre, ScaleType, ImageRectOffset/ImageRectSize y cualquier crop nativo.
+        if mode == "full" then
+            local liveCardImage = findLiveCloneCardImage()
+            if liveCardImage then
+                local okImage, image = pcall(function() return liveCardImage:Clone() end)
+                if okImage and image then
+                    image.Name = "XeroCloneProfileImage"
+                    image.Size = UDim2.fromScale(1, 1)
+                    image.Position = UDim2.fromScale(0, 0)
+                    image.AnchorPoint = Vector2.new(0, 0)
+                    image.BackgroundTransparency = 1
+                    image.BorderSizePixel = 0
+                    image.Rotation = 0
+                    image.ZIndex = viewport.ZIndex
+                    image.Active = false
+                    image.Selectable = false
+                    pcall(function() image.Interactable = false end)
+                    pcall(function() image.ImageTransparency = 0 end)
+                    image.Parent = viewport
+                    return
+                end
+            end
+        end
+
+        -- Fallback cuando el usuario clonado no está en la lista visible del servidor:
+        -- pedimos el thumbnail oficial de Roblox.
         local clonedProfileImage = getClonedProfileThumbnail(mode)
         if clonedProfileImage then
             local image = Instance.new("ImageLabel")
@@ -7669,6 +7800,7 @@ do
         viewport.AnchorPoint = Vector2.new(0, 0)
         viewport.BackgroundTransparency = 1
         viewport.BorderSizePixel = 0
+        viewport.ClipsDescendants = true
         viewport.ZIndex = (target.ZIndex or 1) + 8
         viewport.Active = false
         viewport.Selectable = false

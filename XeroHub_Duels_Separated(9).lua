@@ -7203,6 +7203,7 @@ do
         MenuOpen = false,
         MenuDescendantConnection = nil,
         ScanQueued = false,
+        ProfileThumbnailCache = {},
     }
 
     local spoofState = runtime.AvatarThumbnailSpoof
@@ -7246,6 +7247,110 @@ do
         if old then pcall(function() old:Destroy() end) end
     end
 
+    local function getCloneTargetUserId()
+        local cloneState = runtime.Appearance and runtime.Appearance.AvatarClone
+        if not cloneState or not cloneState.Active then return nil end
+        local userId = tonumber(cloneState.TargetUserId)
+        if not userId or userId <= 0 then return nil end
+        return userId
+    end
+
+    -- El thumbnail oficial de otro usuario sí conserva SU pose de perfil. Sin embargo,
+    -- las capas locales de XeroHub no existen en los servidores de thumbnails de Roblox.
+    -- Por eso usamos la imagen oficial sólo cuando el clon no tiene overrides locales;
+    -- si hay Headless/Korblox/limiteds, conservamos el renderer 3D para que sí aparezcan.
+    local function hasLocalThumbnailOverrides()
+        local appearance = runtime.Appearance
+        local enabled = appearance and appearance.Enabled
+        if not enabled then return false end
+        for _, state in pairs(enabled) do
+            if state == true then return true end
+        end
+        return false
+    end
+
+    local function canUseExactCloneProfileThumbnail()
+        return getCloneTargetUserId() ~= nil and not hasLocalThumbnailOverrides()
+    end
+
+    local function getClonedProfileThumbnail(mode)
+        if not canUseExactCloneProfileThumbnail() then return nil end
+        local targetUserId = getCloneTargetUserId()
+        local cacheKey = tostring(targetUserId) .. ":" .. tostring(mode or "full")
+        local cached = spoofState.ProfileThumbnailCache[cacheKey]
+        if cached then return cached end
+
+        local thumbnailType = Enum.ThumbnailType.AvatarThumbnail
+        if mode == "head" then
+            thumbnailType = Enum.ThumbnailType.HeadShot
+        elseif mode == "bust" then
+            thumbnailType = Enum.ThumbnailType.AvatarBust
+        end
+
+        local ok, content = pcall(function()
+            local image = Players:GetUserThumbnailAsync(
+                targetUserId,
+                thumbnailType,
+                Enum.ThumbnailSize.Size420x420
+            )
+            return image
+        end)
+
+        if ok and content and content ~= "" then
+            spoofState.ProfileThumbnailCache[cacheKey] = content
+            return content
+        end
+
+        -- Fallback nativo: sigue siendo un thumbnail generado por Roblox y no un rig tieso.
+        local typeName = mode == "head" and "AvatarHeadShot"
+            or (mode == "bust" and "AvatarBust" or "Avatar")
+        content = "rbxthumb://type=" .. typeName
+            .. "&id=" .. tostring(targetUserId) .. "&w=420&h=420"
+        spoofState.ProfileThumbnailCache[cacheKey] = content
+        return content
+    end
+
+    -- Si hay limiteds/Headless/Korblox locales no podemos usar la imagen 2D oficial porque
+    -- no los contiene. Como fallback 3D, copiamos UNA VEZ la pose animada actual del
+    -- jugador clonado (Motor6D.Transform). No crea ninguna conexión por frame.
+    local function applyLiveClonePose(model)
+        local targetUserId = getCloneTargetUserId()
+        if not targetUserId or not model then return false end
+
+        local targetPlayer = nil
+        for _, candidate in ipairs(Players:GetPlayers()) do
+            if candidate.UserId == targetUserId then
+                targetPlayer = candidate
+                break
+            end
+        end
+        local sourceChar = targetPlayer and targetPlayer.Character
+        if not sourceChar then return false end
+
+        local destinationMotors = {}
+        for _, obj in ipairs(model:GetDescendants()) do
+            if obj:IsA("Motor6D") then
+                local p0 = obj.Part0 and obj.Part0.Name or ""
+                local p1 = obj.Part1 and obj.Part1.Name or ""
+                destinationMotors[obj.Name .. "|" .. p0 .. "|" .. p1] = obj
+            end
+        end
+
+        local copied = 0
+        for _, sourceMotor in ipairs(sourceChar:GetDescendants()) do
+            if sourceMotor:IsA("Motor6D") then
+                local p0 = sourceMotor.Part0 and sourceMotor.Part0.Name or ""
+                local p1 = sourceMotor.Part1 and sourceMotor.Part1.Name or ""
+                local destination = destinationMotors[sourceMotor.Name .. "|" .. p0 .. "|" .. p1]
+                if destination then
+                    pcall(function() destination.Transform = sourceMotor.Transform end)
+                    copied += 1
+                end
+            end
+        end
+        return copied > 0
+    end
+
     local function buildSnapshotModel()
         local char = player.Character
         local humanoid = char and char:FindFirstChildOfClass("Humanoid")
@@ -7283,6 +7388,10 @@ do
         applyAppearanceStudioBodyLayers(model)
         for _, key in ipairs(runtime.GetEnabledAppearanceEditorKeys()) do
             addAppearanceStudioAccessory(model, key)
+        end
+
+        if cloneState and cloneState.Active then
+            applyLiveClonePose(model)
         end
 
         local root = model:FindFirstChild("HumanoidRootPart")
@@ -7366,14 +7475,34 @@ do
 
     local function renderSnapshot(viewport, mode)
         if not viewport or not viewport.Parent then return end
-        local template = spoofState.SnapshotTemplate
-        if not template then return end
 
         for _, child in ipairs(viewport:GetChildren()) do
-            if child.Name == "XeroThumbWorld" or child.Name == "XeroThumbCamera" then
+            if child.Name == "XeroThumbWorld" or child.Name == "XeroThumbCamera"
+                or child.Name == "XeroCloneProfileImage" then
                 pcall(function() child:Destroy() end)
             end
         end
+
+        -- Para un clon limpio usamos directamente SU thumbnail oficial. Éste ya viene
+        -- horneado por Roblox con el emote/pose y cámara de perfil del usuario objetivo,
+        -- así que el resultado coincide con la tarjeta que ves en Personas.
+        local clonedProfileImage = getClonedProfileThumbnail(mode)
+        if clonedProfileImage then
+            local image = Instance.new("ImageLabel")
+            image.Name = "XeroCloneProfileImage"
+            image.Size = UDim2.fromScale(1, 1)
+            image.Position = UDim2.fromScale(0, 0)
+            image.BackgroundTransparency = 1
+            image.BorderSizePixel = 0
+            image.Image = clonedProfileImage
+            image.ScaleType = Enum.ScaleType.Fit
+            image.ZIndex = viewport.ZIndex
+            image.Parent = viewport
+            return
+        end
+
+        local template = spoofState.SnapshotTemplate
+        if not template then return end
 
         local okClone, model = pcall(function() return template:Clone() end)
         if not okClone or not model then return end
@@ -7435,7 +7564,8 @@ do
     end
 
     local function refreshAllTargets()
-        if spoofState.Dirty or not spoofState.SnapshotTemplate then return end
+        if not canUseExactCloneProfileThumbnail()
+            and (spoofState.Dirty or not spoofState.SnapshotTemplate) then return end
         for target, entry in pairs(spoofState.Targets) do
             if not target or not target.Parent or not entry.Viewport or not entry.Viewport.Parent then
                 destroyTargetSpoof(target)
@@ -7473,11 +7603,18 @@ do
         if not runtime.Alive then return end
         spoofState.Dirty = true
         clearSnapshotTemplate()
+        table.clear(spoofState.ProfileThumbnailCache)
 
         if spoofState.MenuOpen or next(spoofState.Targets) ~= nil then
-            -- Sliders esperan a que haya una pausa corta; toggles/clonado refrescan
-            -- casi inmediatamente. En ambos casos sigue siendo 100% por eventos.
-            queueSnapshotBuild(fromContinuousSlider and 0.18 or 0.025)
+            if canUseExactCloneProfileThumbnail() then
+                -- No hace falta construir ningún rig: el thumbnail del objetivo ya
+                -- contiene su pose de perfil y se refresca de inmediato.
+                refreshAllTargets()
+            else
+                -- Sliders esperan a que haya una pausa corta; toggles/clonado refrescan
+                -- casi inmediatamente. En ambos casos sigue siendo 100% por eventos.
+                queueSnapshotBuild(fromContinuousSlider and 0.18 or 0.025)
+            end
         else
             -- También invalida cualquier build pendiente aunque no haya thumbnails.
             spoofState.BuildSerial += 1
@@ -7560,7 +7697,9 @@ do
             if not parent then destroyTargetSpoof(target) end
         end))
 
-        if spoofState.Dirty or not spoofState.SnapshotTemplate then
+        if canUseExactCloneProfileThumbnail() then
+            renderSnapshot(viewport, mode)
+        elseif spoofState.Dirty or not spoofState.SnapshotTemplate then
             queueSnapshotBuild(0.01)
         else
             renderSnapshot(viewport, mode)
@@ -7607,7 +7746,7 @@ do
                         end
                     end
                     if best then
-                        attachSpoofToTarget(best, "head")
+                        attachSpoofToTarget(best)
                         return true
                     end
                 end
@@ -7680,7 +7819,8 @@ do
     runtime.Track(GuiService.MenuOpened:Connect(function()
         spoofState.MenuOpen = true
         bindMenuDescendantWatcher()
-        if spoofState.Dirty or not spoofState.SnapshotTemplate then
+        if not canUseExactCloneProfileThumbnail()
+            and (spoofState.Dirty or not spoofState.SnapshotTemplate) then
             queueSnapshotBuild(0.01)
         end
         task.defer(function() if spoofState.MenuOpen then scanRoot(CoreGui, true) end end)

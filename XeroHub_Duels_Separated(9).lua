@@ -2174,6 +2174,10 @@ runtime.Appearance = {
         TargetName = nil,
         Template = nil,
         Overlay = nil,
+        -- Korblox del clon se renderiza como una pieza visual separada.
+        -- No mutamos el MeshId del body part original porque ese MeshPart conserva
+        -- los WrapTarget/cages que Roblox usa para layered clothing.
+        KorbloxCloneVisual = nil,
         DriverRig = nil,
         BaseCharacter = nil,
         BaseVisualCache = setmetatable({}, {__mode = "k"}),
@@ -2361,37 +2365,81 @@ function runtime.RestoreKorbloxCharacterSnapshot(char)
     return true
 end
 
+function runtime.DestroyKorbloxCloneVisual()
+    local state = runtime.Appearance.AvatarClone
+    local visual = state.KorbloxCloneVisual
+    if visual then
+        pcall(function() visual:Destroy() end)
+    end
+    state.KorbloxCloneVisual = nil
+end
+
+function runtime.SyncKorbloxCloneVisual(overlay)
+    local state = runtime.Appearance.AvatarClone
+    local visual = state.KorbloxCloneVisual
+    if not visual or visual.Parent ~= overlay then return false end
+
+    local upper = overlay and overlay:FindFirstChild("RightUpperLeg")
+    if not upper or not upper:IsA("BasePart") then return false end
+
+    -- El visual Korblox sigue la pieza ORIGINAL del clon. Esa pieza conserva su
+    -- MeshId, WrapTarget y RigAttachments, así que layered clothing no pierde su cage.
+    if visual.Size ~= upper.Size then
+        appearanceSafeSet(visual, "Size", upper.Size)
+    end
+    visual.CFrame = upper.CFrame
+    visual.AssemblyLinearVelocity = Vector3.zero
+    visual.AssemblyAngularVelocity = Vector3.zero
+    return true
+end
+
 function runtime.ApplyKorbloxToAvatarCloneOverlay(overlay)
     if not overlay or not overlay.Parent or not runtime.Appearance.Enabled.Korblox then
+        runtime.DestroyKorbloxCloneVisual()
         return false
     end
 
     local humanoid = overlay:FindFirstChildOfClass("Humanoid")
     if humanoid and humanoid.RigType ~= Enum.HumanoidRigType.R15 then
+        runtime.DestroyKorbloxCloneVisual()
         return false
     end
 
     local upper = overlay:FindFirstChild("RightUpperLeg")
     local lower = overlay:FindFirstChild("RightLowerLeg")
     local foot = overlay:FindFirstChild("RightFoot")
-    if not upper or not upper:IsA("MeshPart") then return false end
+    if not upper or not upper:IsA("MeshPart") then
+        runtime.DestroyKorbloxCloneVisual()
+        return false
+    end
 
-    -- OverlayVisualCache guarda la geometría ORIGINAL del avatar clonado.
-    -- Esa Size es la clave: el mesh Korblox se ajusta al mismo volumen corporal
-    -- que tenía la pierna del clon (alto/ancho/proporciones).
-    local cloneState = runtime.Appearance.AvatarClone
-    local original = cloneState.OverlayVisualCache and cloneState.OverlayVisualCache[upper]
-    local targetSize = original and original.Size or upper.Size
-    local baseLTM = original and original.LocalTransparencyModifier or 0
+    local state = runtime.Appearance.AvatarClone
+    local visual = state.KorbloxCloneVisual
 
-    appearanceSafeSet(upper, "MeshId", KORBLOX_UPPER_MESH)
-    appearanceSafeSet(upper, "TextureID", KORBLOX_TEXTURE)
-    appearanceSafeSet(upper, "Size", targetSize)
-    appearanceSafeSet(upper, "Transparency", 0)
-    appearanceSafeSet(upper, "LocalTransparencyModifier", math.clamp(tonumber(baseLTM) or 0, 0, 1))
+    if not visual or visual.Parent ~= overlay then
+        if visual then pcall(function() visual:Destroy() end) end
 
-    -- Conservamos Lower/Foot en el rig para que pose/animación no pierdan su cadena,
-    -- pero visualmente sólo queda el upper Korblox ya adaptado al clon.
+        visual = Instance.new("MeshPart")
+        visual.Name = "iLunX_KorbloxCloneVisual"
+        visual.MeshId = KORBLOX_UPPER_MESH
+        visual.TextureID = KORBLOX_TEXTURE
+        visual.Size = upper.Size
+        visual.CFrame = upper.CFrame
+        visual.Anchored = true
+        visual.CanCollide = false
+        visual.CanTouch = false
+        visual.CanQuery = false
+        visual.Massless = true
+        visual.CastShadow = upper.CastShadow
+        visual.Transparency = 0
+        visual.LocalTransparencyModifier = 0
+        visual.Parent = overlay
+        state.KorbloxCloneVisual = visual
+    end
+
+    -- IMPORTANTE: no cambiamos MeshId/TextureID/Size del RightUpperLeg original.
+    -- Ese body part queda invisible pero sigue presente como cage del avatar clonado.
+    appearanceSafeSet(upper, "LocalTransparencyModifier", 1)
     if lower and lower:IsA("BasePart") then
         appearanceSafeSet(lower, "LocalTransparencyModifier", 1)
     end
@@ -2399,6 +2447,7 @@ function runtime.ApplyKorbloxToAvatarCloneOverlay(overlay)
         appearanceSafeSet(foot, "LocalTransparencyModifier", 1)
     end
 
+    runtime.SyncKorbloxCloneVisual(overlay)
     return true
 end
 
@@ -3199,6 +3248,8 @@ function runtime.UpdateAvatarCloneLayers()
 
     if runtime.Appearance.Enabled.Korblox then
         runtime.ApplyKorbloxToAvatarCloneOverlay(overlay)
+    else
+        runtime.DestroyKorbloxCloneVisual()
     end
 
     if runtime.Appearance.Enabled.HideHair then
@@ -3333,7 +3384,7 @@ function runtime.AvatarCloneNativeLayerHidden(pair)
     end
 
     if runtime.Appearance.Enabled.Korblox and part.Parent == runtime.Appearance.AvatarClone.Overlay
-        and (part.Name == "RightLowerLeg" or part.Name == "RightFoot") then
+        and (part.Name == "RightUpperLeg" or part.Name == "RightLowerLeg" or part.Name == "RightFoot") then
         return true
     end
 
@@ -3378,6 +3429,13 @@ function runtime.AvatarCloneSyncNativeTransparency(char, overlay, dt)
     end
 
     state.NativeCameraTransparencyLast = transparency
+
+    local korbloxVisual = state.KorbloxCloneVisual
+    if korbloxVisual and korbloxVisual.Parent == overlay then
+        if korbloxVisual.LocalTransparencyModifier ~= transparency then
+            korbloxVisual.LocalTransparencyModifier = transparency
+        end
+    end
 
     for i = 1, #state.NativeTransparencyPairs do
         local pair = state.NativeTransparencyPairs[i]
@@ -3831,6 +3889,7 @@ function runtime.AvatarCloneDestroyOverlay(restoreBase)
         pcall(function() state.Overlay:Destroy() end)
         state.Overlay = nil
     end
+    state.KorbloxCloneVisual = nil
     state.OverlayVisualCache = setmetatable({}, {__mode = "k"})
 
     if restoreBase then
@@ -4190,6 +4249,10 @@ function runtime.AvatarCloneBuildMotorSync(char, overlay)
                 end)
             end
         end
+
+        -- La pieza Korblox separada sigue al RightUpperLeg ya posicionado del clon.
+        -- Sólo son CFrame/Size; no toca joints ni cages.
+        runtime.SyncKorbloxCloneVisual(overlay)
 
         -- En condiciones normales la invisibilidad base se reafirma en el bind
         -- Camera+1 de transparencia. Sólo usamos este fallback si ese bind falló.
@@ -4995,6 +5058,8 @@ function runtime.BeginAvatarCloneRespawnMask(char, generation)
                 end)
             end
 
+            runtime.SyncKorbloxCloneVisual(overlay)
+
             if not state.NativeTransparencyBindName then
                 runtime.AvatarCloneEnforceBaseHidden(char)
             end
@@ -5030,6 +5095,7 @@ function runtime.AvatarCloneResetForRespawn(char, generation)
             pcall(function() state.Overlay:Destroy() end)
             state.Overlay = nil
         end
+        state.KorbloxCloneVisual = nil
         state.OverlayVisualCache = setmetatable({}, {__mode = "k"})
 
         -- Incluso si el overlay anterior ya no existía, podemos crear una máscara

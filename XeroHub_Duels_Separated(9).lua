@@ -2177,6 +2177,14 @@ runtime.Appearance = {
         DriverRig = nil,
         BaseCharacter = nil,
         BaseVisualCache = setmetatable({}, {__mode = "k"}),
+        -- Hot-path del clon: listas directas evitan recorrer el hash completo y hacer
+        -- búsquedas de ancestros cada RenderStepped. Se actualizan sólo cuando cambia
+        -- la topología visual del Character.
+        BaseHiddenParts = {},
+        BaseHiddenTextures = {},
+        BaseHiddenEffects = {},
+        BaseHiddenIndex = setmetatable({}, {__mode = "k"}),
+        ToolVisualConnections = setmetatable({}, {__mode = "k"}),
         OverlayVisualCache = setmetatable({}, {__mode = "k"}),
         MotorPairs = {},
         -- Transparencia nativa: copiamos al overlay el LTM que CameraModule ya
@@ -3339,6 +3347,10 @@ function runtime.AvatarCloneBindNativeTransparency(char, overlay)
                     return
                 end
                 runtime.AvatarCloneSyncNativeTransparency(char, overlay, dt)
+                -- CameraModule ya terminó de escribir LTM. Reafirmamos el avatar base
+                -- aquí, reutilizando ESTE render callback en vez de duplicar el trabajo
+                -- dentro del sincronizador de pose.
+                runtime.AvatarCloneEnforceBaseHidden(char)
             end
         )
     end)
@@ -3398,11 +3410,76 @@ function runtime.AvatarCloneIsToolVisual(object, char)
     return tool ~= nil and (not char or tool:IsDescendantOf(char))
 end
 
+function runtime.AvatarCloneResetBaseVisualTracking()
+    local state = runtime.Appearance.AvatarClone
+    table.clear(state.BaseHiddenParts)
+    table.clear(state.BaseHiddenTextures)
+    table.clear(state.BaseHiddenEffects)
+    state.BaseHiddenIndex = setmetatable({}, {__mode = "k"})
+end
+
+function runtime.AvatarCloneTrackHiddenObject(object)
+    if not object then return end
+    local state = runtime.Appearance.AvatarClone
+    if state.BaseHiddenIndex[object] then return end
+
+    local list
+    if object:IsA("BasePart") then
+        list = state.BaseHiddenParts
+    elseif object:IsA("Decal") or object:IsA("Texture") then
+        list = state.BaseHiddenTextures
+    elseif object:IsA("ParticleEmitter") or object:IsA("Trail") or object:IsA("Beam")
+        or object:IsA("Smoke") or object:IsA("Fire") or object:IsA("Sparkles") then
+        list = state.BaseHiddenEffects
+    end
+    if not list then return end
+
+    list[#list + 1] = object
+    state.BaseHiddenIndex[object] = {List = list, Index = #list}
+end
+
+function runtime.AvatarCloneUntrackHiddenObject(object)
+    if not object then return end
+    local state = runtime.Appearance.AvatarClone
+    local slot = state.BaseHiddenIndex[object]
+    if not slot then return end
+
+    local list = slot.List
+    local index = slot.Index
+    local lastIndex = #list
+    local lastObject = list[lastIndex]
+
+    list[index] = lastObject
+    list[lastIndex] = nil
+    state.BaseHiddenIndex[object] = nil
+
+    if lastObject and lastObject ~= object then
+        local lastSlot = state.BaseHiddenIndex[lastObject]
+        if lastSlot then lastSlot.Index = index end
+    end
+end
+
+function runtime.AvatarCloneClearToolVisualGuards()
+    local state = runtime.Appearance.AvatarClone
+    for tool, bundle in pairs(state.ToolVisualConnections) do
+        if bundle then
+            if bundle.DescendantAdded then
+                pcall(function() bundle.DescendantAdded:Disconnect() end)
+            end
+            if bundle.AncestryChanged then
+                pcall(function() bundle.AncestryChanged:Disconnect() end)
+            end
+        end
+        state.ToolVisualConnections[tool] = nil
+    end
+end
+
 function runtime.AvatarCloneRestoreCachedVisual(object, cache)
     cache = cache or runtime.Appearance.AvatarClone.BaseVisualCache
     local original = cache and cache[object]
     if not original or not object or not object.Parent then
         if cache and object then cache[object] = nil end
+        runtime.AvatarCloneUntrackHiddenObject(object)
         return
     end
 
@@ -3419,24 +3496,76 @@ function runtime.AvatarCloneRestoreCachedVisual(object, cache)
     end)
 
     cache[object] = nil
+    runtime.AvatarCloneUntrackHiddenObject(object)
 end
 
+-- Liberación dirigida: ya no recorremos BaseVisualCache entero por frame. Si se
+-- equipa/reparenta un Tool, sólo inspeccionamos ese Tool y restauramos los objetos
+-- que realmente estaban cacheados como parte del avatar base.
 function runtime.AvatarCloneReleaseToolVisuals(char, specificTool)
     local state = runtime.Appearance.AvatarClone
     local cache = state.BaseVisualCache
     if not cache then return end
 
-    for object in pairs(cache) do
-        if object and object.Parent then
-            local tool = object:IsA("Tool") and object or object:FindFirstAncestorWhichIsA("Tool")
-            if tool and (not specificTool or tool == specificTool)
-                and (not char or tool:IsDescendantOf(char)) then
-                runtime.AvatarCloneRestoreCachedVisual(object, cache)
-            end
-        else
-            cache[object] = nil
+    local function releaseObject(object)
+        if object and cache[object] then
+            runtime.AvatarCloneRestoreCachedVisual(object, cache)
         end
     end
+
+    local function releaseTool(tool)
+        if not tool or not tool:IsA("Tool") then return end
+        if char and not tool:IsDescendantOf(char) then return end
+        releaseObject(tool)
+        for _, object in ipairs(tool:GetDescendants()) do
+            releaseObject(object)
+        end
+    end
+
+    if specificTool then
+        releaseTool(specificTool)
+        return
+    end
+
+    char = char or player.Character
+    if not char then return end
+    for _, child in ipairs(char:GetChildren()) do
+        if child:IsA("Tool") then releaseTool(child) end
+    end
+end
+
+-- Guard 100% event-driven para armas. También cubre el caso raro en el que Duels
+-- reparenta una pieza ya cacheada DENTRO de un Tool existente: Tool.DescendantAdded
+-- la libera en ese instante, sin un escaneo de todo el cache en RenderStepped.
+function runtime.AvatarCloneBindToolVisualGuard(char, tool)
+    local state = runtime.Appearance.AvatarClone
+    if not char or not tool or not tool:IsA("Tool") or not tool:IsDescendantOf(char) then return end
+    if state.ToolVisualConnections[tool] then return end
+
+    local bundle = {}
+    state.ToolVisualConnections[tool] = bundle
+
+    runtime.AvatarCloneReleaseToolVisuals(char, tool)
+
+    bundle.DescendantAdded = tool.DescendantAdded:Connect(function(object)
+        if state.BaseCharacter ~= char or not state.Active then return end
+        if state.BaseVisualCache[object] then
+            runtime.AvatarCloneRestoreCachedVisual(object, state.BaseVisualCache)
+        end
+    end)
+
+    bundle.AncestryChanged = tool.AncestryChanged:Connect(function()
+        if tool:IsDescendantOf(char) then return end
+        local current = state.ToolVisualConnections[tool]
+        if current ~= bundle then return end
+        state.ToolVisualConnections[tool] = nil
+        if bundle.DescendantAdded then
+            pcall(function() bundle.DescendantAdded:Disconnect() end)
+        end
+        if bundle.AncestryChanged then
+            pcall(function() bundle.AncestryChanged:Disconnect() end)
+        end
+    end)
 end
 
 function runtime.AvatarCloneCacheAndHideObject(object, cache)
@@ -3472,6 +3601,7 @@ function runtime.AvatarCloneCacheAndHideObject(object, cache)
             originalLTM = hairOriginal.LocalTransparencyModifier
         end
         cache[object] = {LocalTransparencyModifier = originalLTM}
+        runtime.AvatarCloneTrackHiddenObject(object)
 
         if not (runtime.Appearance.Enabled.Korblox and object.Name == "RightUpperLeg"
             and object.Parent == player.Character) then
@@ -3479,6 +3609,7 @@ function runtime.AvatarCloneCacheAndHideObject(object, cache)
         end
     elseif object:IsA("Decal") or object:IsA("Texture") then
         cache[object] = {Transparency = object.Transparency}
+        runtime.AvatarCloneTrackHiddenObject(object)
         object.Transparency = 1
     elseif object:IsA("ParticleEmitter") or object:IsA("Trail") or object:IsA("Beam")
         or object:IsA("Smoke") or object:IsA("Fire") or object:IsA("Sparkles") then
@@ -3488,6 +3619,7 @@ function runtime.AvatarCloneCacheAndHideObject(object, cache)
             originalEnabled = hairOriginal.Enabled
         end
         cache[object] = {Enabled = originalEnabled}
+        runtime.AvatarCloneTrackHiddenObject(object)
         object.Enabled = false
     end
 end
@@ -3498,8 +3630,10 @@ function runtime.AvatarCloneHideBase(char)
 
     local state = runtime.Appearance.AvatarClone
     if state.BaseCharacter ~= char then
+        runtime.AvatarCloneClearToolVisualGuards()
         state.BaseCharacter = char
         state.BaseVisualCache = setmetatable({}, {__mode = "k"})
+        runtime.AvatarCloneResetBaseVisualTracking()
     end
 
     local cache = state.BaseVisualCache
@@ -3513,7 +3647,7 @@ function runtime.AvatarCloneHideBase(char)
     for _, child in ipairs(char:GetChildren()) do
         if child:IsA("Tool") then
             -- El arma equipada forma parte del Character, pero NO del avatar base.
-            runtime.AvatarCloneReleaseToolVisuals(char, child)
+            runtime.AvatarCloneBindToolVisualGuard(char, child)
         elseif child:IsA("BasePart") and child.Name ~= "HumanoidRootPart" then
             runtime.AvatarCloneCacheAndHideObject(child, cache)
             for _, visual in ipairs(child:GetDescendants()) do
@@ -3539,8 +3673,10 @@ function runtime.AvatarCloneRestoreBase(char)
     local state = runtime.Appearance.AvatarClone
     char = char or state.BaseCharacter or player.Character
     if not char then
+        runtime.AvatarCloneClearToolVisualGuards()
         state.BaseCharacter = nil
         state.BaseVisualCache = setmetatable({}, {__mode = "k"})
+        runtime.AvatarCloneResetBaseVisualTracking()
         return
     end
 
@@ -3562,13 +3698,16 @@ function runtime.AvatarCloneRestoreBase(char)
         end
     end
 
+    runtime.AvatarCloneClearToolVisualGuards()
     state.BaseCharacter = nil
     state.BaseVisualCache = setmetatable({}, {__mode = "k"})
+    runtime.AvatarCloneResetBaseVisualTracking()
     runtime.AvatarCloneResumeLocalLayers(char, wasHeadless, wasKorblox, wasHideHair)
 end
 
 function runtime.AvatarCloneDisconnectAnimation()
     local state = runtime.Appearance.AvatarClone
+    runtime.AvatarCloneClearToolVisualGuards()
     if state.NativeTransparencyBindName then
         pcall(function() RunService:UnbindFromRenderStep(state.NativeTransparencyBindName) end)
         state.NativeTransparencyBindName = nil
@@ -3629,38 +3768,47 @@ function runtime.AvatarCloneEnforceBaseHidden(char)
     char = char or state.BaseCharacter or player.Character
     if not char or state.BaseCharacter ~= char then return end
 
-    -- Si una pieza que antes pertenecía al avatar ahora está dentro de un Tool,
-    -- la soltamos del caché antes de reafirmar invisibilidad. Esto cubre juegos que
-    -- reciclan/reparentan Handles y skins al equipar el arma.
-    runtime.AvatarCloneReleaseToolVisuals(char)
+    local cache = state.BaseVisualCache
+    local korblox = runtime.Appearance.Enabled.Korblox == true
 
-    -- CameraModule y algunos juegos reescriben LocalTransparencyModifier.
-    -- Lo reafirmamos sin volver a escanear el Character completo.
-    for object in pairs(state.BaseVisualCache) do
-        if object and object.Parent then
-            pcall(function()
-                if runtime.AvatarCloneIsToolVisual(object, char) then
-                    runtime.AvatarCloneRestoreCachedVisual(object, state.BaseVisualCache)
-                    return
-                end
+    -- Hot path: no pairs(BaseVisualCache), no FindFirstAncestorWhichIsA y no pcall
+    -- por objeto. Las armas se liberan por eventos en AvatarCloneBindToolVisualGuard.
+    local parts = state.BaseHiddenParts
+    local i = 1
+    while i <= #parts do
+        local object = parts[i]
+        if not object or not object.Parent or not cache[object] then
+            runtime.AvatarCloneUntrackHiddenObject(object)
+        else
+            if not (korblox and object.Name == "RightUpperLeg" and object.Parent == char)
+                and object.LocalTransparencyModifier ~= 1 then
+                object.LocalTransparencyModifier = 1
+            end
+            i += 1
+        end
+    end
 
-                if object:IsA("BasePart") then
-                    -- El Korblox de iLunX se deja visible como capa superior.
-                    if runtime.Appearance.Enabled.Korblox
-                        and object.Name == "RightUpperLeg"
-                        and object.Parent == char then
-                        return
-                    end
-                    object.LocalTransparencyModifier = 1
+    local textures = state.BaseHiddenTextures
+    i = 1
+    while i <= #textures do
+        local object = textures[i]
+        if not object or not object.Parent or not cache[object] then
+            runtime.AvatarCloneUntrackHiddenObject(object)
+        else
+            if object.Transparency ~= 1 then object.Transparency = 1 end
+            i += 1
+        end
+    end
 
-                elseif object:IsA("Decal") or object:IsA("Texture") then
-                    object.Transparency = 1
-
-                elseif object:IsA("ParticleEmitter") or object:IsA("Trail") or object:IsA("Beam")
-                    or object:IsA("Smoke") or object:IsA("Fire") or object:IsA("Sparkles") then
-                    object.Enabled = false
-                end
-            end)
+    local effects = state.BaseHiddenEffects
+    i = 1
+    while i <= #effects do
+        local object = effects[i]
+        if not object or not object.Parent or not cache[object] then
+            runtime.AvatarCloneUntrackHiddenObject(object)
+        else
+            if object.Enabled then object.Enabled = false end
+            i += 1
         end
     end
 end
@@ -3970,7 +4118,11 @@ function runtime.AvatarCloneBuildMotorSync(char, overlay)
             end
         end
 
-        runtime.AvatarCloneEnforceBaseHidden(char)
+        -- En condiciones normales la invisibilidad base se reafirma en el bind
+        -- Camera+1 de transparencia. Sólo usamos este fallback si ese bind falló.
+        if not state.NativeTransparencyBindName then
+            runtime.AvatarCloneEnforceBaseHidden(char)
+        end
     end
 
     -- El juego puede terminar su pose tarde en móvil; RenderStepped toma la
@@ -3985,7 +4137,10 @@ function runtime.AvatarCloneBuildMotorSync(char, overlay)
         -- Tool y por TODOS sus descendientes. Nunca los pasamos al hide del avatar.
         local tool = object:IsA("Tool") and object or object:FindFirstAncestorWhichIsA("Tool")
         if tool then
-            runtime.AvatarCloneReleaseToolVisuals(char, tool)
+            runtime.AvatarCloneBindToolVisualGuard(char, tool)
+            if state.BaseVisualCache[object] then
+                runtime.AvatarCloneRestoreCachedVisual(object, state.BaseVisualCache)
+            end
             return
         end
 
@@ -4660,7 +4815,10 @@ function runtime.BeginAvatarCloneRespawnMask(char, generation)
 
             local tool = object:IsA("Tool") and object or object:FindFirstAncestorWhichIsA("Tool")
             if tool then
-                runtime.AvatarCloneReleaseToolVisuals(char, tool)
+                runtime.AvatarCloneBindToolVisualGuard(char, tool)
+                if state.BaseVisualCache[object] then
+                    runtime.AvatarCloneRestoreCachedVisual(object, state.BaseVisualCache)
+                end
                 return
             end
 
@@ -4757,7 +4915,9 @@ function runtime.BeginAvatarCloneRespawnMask(char, generation)
                 end)
             end
 
-            runtime.AvatarCloneEnforceBaseHidden(char)
+            if not state.NativeTransparencyBindName then
+                runtime.AvatarCloneEnforceBaseHidden(char)
+            end
         end)
 
         state.RespawnMaskPending = false
@@ -4781,6 +4941,7 @@ function runtime.AvatarCloneResetForRespawn(char, generation)
     runtime.AvatarCloneDisconnectAnimation()
     state.BaseCharacter = nil
     state.BaseVisualCache = setmetatable({}, {__mode = "k"})
+    runtime.AvatarCloneResetBaseVisualTracking()
 
     if keepMask then
         runtime.BeginAvatarCloneRespawnMask(char, generation)
@@ -7279,194 +7440,9 @@ do
         return "rbxthumb://type=Avatar&id=" .. tostring(targetUserId) .. "&w=150&h=150"
     end
 
-    -- Para las tarjetas grandes de Personas, reutilizamos la MISMA ImageLabel que
-    -- CoreGui ya está mostrando para el jugador clonado. Esto conserva exactamente
-    -- el pose, zoom, encuadre, ImageRect y ScaleType que Roblox eligió para esa tarjeta.
-    -- Sólo se escanea cuando el menú está abierto / se refresca por eventos.
-    local function findLiveCloneCardImage(destinationTarget)
-        if not spoofState.MenuOpen then return nil end
-
-        local targetUserId = getCloneTargetUserId()
-        if not targetUserId then return nil end
-
-        local targetPlayer
-        for _, candidate in ipairs(Players:GetPlayers()) do
-            if candidate.UserId == targetUserId then
-                targetPlayer = candidate
-                break
-            end
-        end
-        if not targetPlayer then return nil end
-
-        local targetIdText = tostring(targetUserId)
-        local targetName = string_lower(tostring(targetPlayer.Name or ""))
-        local targetDisplayName = string_lower(tostring(targetPlayer.DisplayName or ""))
-        local destinationSize = destinationTarget and destinationTarget.AbsoluteSize or Vector2.new(0, 0)
-        local wantsLargeCard = math.max(destinationSize.X, destinationSize.Y) >= 130
-
-        -- EXACT PEOPLE CARD SOURCE: el diagnóstico confirmó que la miniatura real
-        -- vive exactamente en CardThumbnail > AvatarThumbnailContainer > AvatarThumbnail
-        -- y que su Image usa rbxthumb://type=Avatar&id=<UserId>&w=150&h=150.
-        -- Probamos esta ruta estructural ANTES de cualquier heurística.
-        for _, obj in ipairs(CoreGui:GetDescendants()) do
-            if obj:IsA("ImageLabel")
-                and obj.Name == "AvatarThumbnail"
-                and obj.Parent
-                and obj.Parent.Name == "AvatarThumbnailContainer" then
-
-                local cardThumbnail = obj.Parent.Parent
-                local imageText = ""
-                pcall(function() imageText = string_lower(obj.Image or "") end)
-
-                if cardThumbnail
-                    and cardThumbnail.Name == "CardThumbnail"
-                    and string_find(imageText, "type=avatar", 1, true)
-                    and string_find(imageText, "id=" .. targetIdText, 1, true) then
-                    return obj
-                end
-            end
-        end
-
-        local function textMatchesTarget(value)
-            local text = normalizeGuiText(value)
-            if text == "" then return false end
-            if text == targetName or text == targetDisplayName or text == ("@" .. targetName) then
-                return true
-            end
-
-            -- CoreGui recorta usernames/display names con "...". Aceptamos el prefijo
-            -- visible sólo cuando ya tiene longitud suficiente para no confundir tarjetas.
-            local compact = text:gsub("%.%.%.$", "")
-            if #compact >= 5 then
-                if string.sub(compact, 1, 1) == "@" then
-                    compact = string.sub(compact, 2)
-                    return string.sub(targetName, 1, #compact) == compact
-                end
-                return string.sub(targetName, 1, #compact) == compact
-                    or string.sub(targetDisplayName, 1, #compact) == compact
-            end
-            return false
-        end
-
-        local function scoreSourceImage(obj, nameLabel, requireDirectId)
-            if not obj or (not obj:IsA("ImageLabel") and not obj:IsA("ImageButton")) then
-                return nil
-            end
-            if isOurSpoofObject(obj) then return nil end
-
-            local visible = true
-            pcall(function() visible = obj.Visible end)
-            if not visible then return nil end
-
-            local imageTransparency = 0
-            pcall(function() imageTransparency = obj.ImageTransparency end)
-            if imageTransparency >= 0.98 then return nil end
-
-            local size = obj.AbsoluteSize
-            if size.X < 40 or size.Y < 40 or size.X > 340 or size.Y > 340 then return nil end
-            local ratio = size.X / math.max(1, size.Y)
-            if ratio < 0.58 or ratio > 1.72 then return nil end
-
-            local imageText = ""
-            pcall(function() imageText = string_lower(obj.Image or "") end)
-            if imageText == "" then return nil end
-
-            -- Nunca tomamos nuestra propia miniatura como fuente.
-            if localUserIdText ~= targetIdText
-                and string_find(imageText, localUserIdText, 1, true) then
-                return nil
-            end
-
-            local directId = string_find(imageText, targetIdText, 1, true) ~= nil
-            if requireDirectId and not directId then return nil end
-
-            local score = size.X * size.Y
-
-            -- La miniatura correcta de otra tarjeta de Personas tiene prácticamente
-            -- las mismas dimensiones que la nuestra. Esto evita capturar un HeadShot
-            -- auxiliar/oculto del mismo UserId que CoreGui mantiene en otros paneles.
-            if destinationSize.X > 0 and destinationSize.Y > 0 then
-                local delta = math.abs(size.X - destinationSize.X) + math.abs(size.Y - destinationSize.Y)
-                score += math.max(0, 260000 - delta * 1800)
-            end
-
-            if directId then score += 45000 end
-
-            local lowerName = string_lower(tostring(obj.Name or ""))
-            if string_find(lowerName, "avatar", 1, true)
-                or string_find(lowerName, "thumbnail", 1, true)
-                or string_find(lowerName, "portrait", 1, true) then
-                score += 18000
-            end
-
-            if wantsLargeCard then
-                if string_find(imageText, "headshot", 1, true) then
-                    score -= 300000
-                elseif string_find(imageText, "avatar", 1, true) then
-                    score += 50000
-                end
-            end
-
-            -- En la tarjeta real, la imagen del avatar está arriba del nombre y
-            -- centrada sobre él. Los iconos/HeadShots de otros paneles no cumplen esto.
-            if nameLabel and nameLabel:IsA("GuiObject") then
-                local ip = obj.AbsolutePosition
-                local lp = nameLabel.AbsolutePosition
-                local isz = obj.AbsoluteSize
-                local lsz = nameLabel.AbsoluteSize
-                local imageCenterX = ip.X + isz.X * 0.5
-                local labelCenterX = lp.X + lsz.X * 0.5
-                local xDistance = math.abs(imageCenterX - labelCenterX)
-
-                if ip.Y < lp.Y then score += 180000 end
-                if xDistance <= math.max(isz.X * 0.55, lsz.X * 0.75) then
-                    score += 130000
-                else
-                    score -= math.min(130000, xDistance * 900)
-                end
-            end
-
-            return score
-        end
-
-        -- PRIMERO buscamos la tarjeta que contiene el nombre del jugador clonado.
-        -- La versión anterior hacía primero un barrido global por UserId y podía coger
-        -- un HeadShot auxiliar del mismo usuario, que es exactamente el bug de la cara gigante.
-        local bestCardImage, bestCardScore
-        for _, obj in ipairs(CoreGui:GetDescendants()) do
-            if (obj:IsA("TextLabel") or obj:IsA("TextButton")) and textMatchesTarget(obj.Text) then
-                local ancestor = obj
-                for _ = 1, 8 do
-                    ancestor = ancestor and ancestor.Parent
-                    if not ancestor or ancestor == CoreGui then break end
-
-                    if ancestor:IsA("GuiObject") then
-                        local abs = ancestor.AbsoluteSize
-                        if abs.X > 0 and abs.Y > 0 and abs.Y <= 460 then
-                            for _, imageObj in ipairs(ancestor:GetDescendants()) do
-                                local score = scoreSourceImage(imageObj, obj, false)
-                                if score and (not bestCardScore or score > bestCardScore) then
-                                    bestCardImage, bestCardScore = imageObj, score
-                                end
-                            end
-                        end
-                    end
-                end
-            end
-        end
-        if bestCardImage then return bestCardImage end
-
-        -- Fallback únicamente si la tarjeta todavía no montó sus labels. Incluso aquí
-        -- exigimos dimensiones similares a la tarjeta destino y penalizamos HeadShot.
-        local bestDirect, bestDirectScore
-        for _, obj in ipairs(CoreGui:GetDescendants()) do
-            local score = scoreSourceImage(obj, nil, true)
-            if score and (not bestDirectScore or score > bestDirectScore) then
-                bestDirect, bestDirectScore = obj, score
-            end
-        end
-        return bestDirect
-    end
+    -- El antiguo buscador heurístico de tarjetas fue retirado: Personas usa la URL
+    -- rbxthumb directa por UserId, así que no hace falta escanear CoreGui buscando
+    -- la tarjeta del jugador clonado.
 
     -- El thumbnail oficial de otro usuario sí conserva SU pose de perfil. Sin embargo,
     -- las capas locales de XeroHub no existen en los servidores de thumbnails de Roblox.
@@ -8023,17 +7999,12 @@ do
         local ok, descendants = pcall(function() return root:GetDescendants() end)
         if not ok or not descendants then return end
 
+        -- Una sola pasada: antes recorríamos TODO CoreGui dos veces por escaneo.
         for _, obj in ipairs(descendants) do
             if imageReferencesLocalUser(obj) then
                 attachSpoofToTarget(obj)
-            end
-        end
-
-        if includeNameFallback then
-            for _, obj in ipairs(descendants) do
-                if guiLooksLikeLocalName(obj) then
-                    patchNearestAvatarForNameLabel(obj)
-                end
+            elseif includeNameFallback and guiLooksLikeLocalName(obj) then
+                patchNearestAvatarForNameLabel(obj)
             end
         end
     end
@@ -8087,10 +8058,9 @@ do
             queueSnapshotBuild(0.01)
         end
         task.defer(function() if spoofState.MenuOpen then scanRoot(CoreGui, true) end end)
-        queueMenuScan(0.055)
-        task.delay(0.16, function()
-            if runtime.Alive and spoofState.MenuOpen then scanRoot(CoreGui, true) end
-        end)
+        -- Un segundo pase coalescido cubre el montaje tardío del menú. DescendantAdded
+        -- se encarga de lo que aparezca después, sin un tercer barrido completo fijo.
+        queueMenuScan(0.08)
     end))
 
     runtime.Track(GuiService.MenuClosed:Connect(function()
@@ -8844,12 +8814,12 @@ runtime.Track(RunService.Heartbeat:Connect(function(deltaTime)
     end
 
     -- ==========================================
-    -- 4. SILENT AIM (0.02s)
+    -- 4. SILENT AIM (0.03s · ~33 Hz)
     -- ==========================================
     if silentAimPistolaEnabled or silentAimCuchilloEnabled then
         mState.saAct = true
         mState.tSA = mState.tSA + deltaTime
-        if mState.tSA >= 0.02 then
+        if mState.tSA >= 0.03 then
             mState.tSA = 0
             if not enLobby then
                 local char = player.Character

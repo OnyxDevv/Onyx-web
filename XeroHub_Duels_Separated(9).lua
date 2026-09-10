@@ -2171,6 +2171,11 @@ runtime.Appearance = {
         AnimationConnection = nil,
         RenderAnimationConnection = nil,
         BaseDescendantConnection = nil,
+        -- Máscara visual instantánea durante el freeze de inicio de ronda.
+        RespawnMaskConnection = nil,
+        RespawnMaskDescendantConnection = nil,
+        RespawnMaskGeneration = nil,
+        RespawnMaskPending = false,
         VisualContainer = nil,
         SelectedServerPlayer = nil,
         UsernameInput = "",
@@ -3317,6 +3322,16 @@ function runtime.AvatarCloneDisconnectAnimation()
         pcall(function() state.BaseDescendantConnection:Disconnect() end)
         state.BaseDescendantConnection = nil
     end
+    if state.RespawnMaskConnection then
+        pcall(function() state.RespawnMaskConnection:Disconnect() end)
+        state.RespawnMaskConnection = nil
+    end
+    if state.RespawnMaskDescendantConnection then
+        pcall(function() state.RespawnMaskDescendantConnection:Disconnect() end)
+        state.RespawnMaskDescendantConnection = nil
+    end
+    state.RespawnMaskPending = false
+    state.RespawnMaskGeneration = nil
     if state.DriverRig then
         pcall(function() state.DriverRig:Destroy() end)
         state.DriverRig = nil
@@ -3982,16 +3997,190 @@ function runtime.RestoreAvatarClone(silent)
     return true
 end
 
-function runtime.AvatarCloneResetForRespawn()
+-- Mantiene el clon visible desde el primer frame del Character nuevo sin
+-- engancharlo todavía a la física/pose del rig. Todas sus piezas quedan ancladas
+-- y el modelo completo sólo sigue el CFrame del HumanoidRootPart nuevo.
+function runtime.BeginAvatarCloneRespawnMask(char, generation)
     local state = runtime.Appearance.AvatarClone
-    runtime.AvatarCloneDisconnectAnimation()
-    if state.Overlay then
-        pcall(function() state.Overlay:Destroy() end)
-        state.Overlay = nil
+    if not state or not state.Active or not state.KeepOnRespawn or not state.Template then
+        return false
     end
+    if not char or not char.Parent then return false end
+
+    if state.RespawnMaskGeneration == generation
+        and (state.RespawnMaskPending or state.RespawnMaskConnection) then
+        return true
+    end
+
+    if state.RespawnMaskConnection then
+        pcall(function() state.RespawnMaskConnection:Disconnect() end)
+        state.RespawnMaskConnection = nil
+    end
+    if state.RespawnMaskDescendantConnection then
+        pcall(function() state.RespawnMaskDescendantConnection:Disconnect() end)
+        state.RespawnMaskDescendantConnection = nil
+    end
+
+    state.RespawnMaskGeneration = generation
+    state.RespawnMaskPending = true
+
+    task.spawn(function()
+        local function valid()
+            return runtime.Alive
+                and char
+                and char.Parent
+                and player.Character == char
+                and state.Active
+                and state.KeepOnRespawn
+                and state.Template
+                and state.RespawnMaskGeneration == generation
+                and (not generation or generation == runtime.Appearance.RespawnGeneration)
+        end
+
+        if not valid() then
+            if state.RespawnMaskGeneration == generation then
+                state.RespawnMaskPending = false
+            end
+            return
+        end
+
+        local root = char:FindFirstChild("HumanoidRootPart")
+            or char:WaitForChild("HumanoidRootPart", 1.5)
+        if not valid() or not root or not root:IsA("BasePart") then
+            if state.RespawnMaskGeneration == generation then
+                state.RespawnMaskPending = false
+            end
+            return
+        end
+
+        local overlay = state.Overlay
+        if not overlay or not overlay.Parent then
+            overlay = state.Template:Clone()
+            overlay.Name = "iLunX_AvatarCloneOverlay"
+            overlay:SetAttribute("iLunXAvatarClone", true)
+            runtime.PrepareAvatarCloneTemplate(overlay)
+
+            -- Se ancla ANTES de entrar a Workspace; esta máscara nunca toca física.
+            for _, object in ipairs(overlay:GetDescendants()) do
+                if object:IsA("BasePart") then
+                    object.Anchored = true
+                    object.CanCollide = false
+                    object.CanTouch = false
+                    object.CanQuery = false
+                    object.Massless = true
+                    object.AssemblyLinearVelocity = Vector3.zero
+                    object.AssemblyAngularVelocity = Vector3.zero
+                elseif object:IsA("Motor6D") then
+                    pcall(function() object.Enabled = false end)
+                end
+            end
+
+            overlay.Parent = runtime.GetAvatarCloneVisualContainer()
+            state.Overlay = overlay
+            runtime.AvatarCloneCaptureOverlayVisuals(overlay)
+        else
+            -- El overlay de la ronda anterior se convierte en máscara temporal.
+            for _, object in ipairs(overlay:GetDescendants()) do
+                if object:IsA("BasePart") then
+                    object.Anchored = true
+                    object.CanCollide = false
+                    object.CanTouch = false
+                    object.CanQuery = false
+                    object.Massless = true
+                    object.AssemblyLinearVelocity = Vector3.zero
+                    object.AssemblyAngularVelocity = Vector3.zero
+                end
+            end
+        end
+
+        if not valid() or state.Overlay ~= overlay or not overlay.Parent then
+            return
+        end
+
+        -- Primer posicionamiento antes de ocultar el Character nuevo.
+        pcall(function() overlay:PivotTo(root.CFrame) end)
+        runtime.AvatarCloneHideBase(char)
+        runtime.UpdateAvatarCloneLayers()
+
+        local function hideNewVisual(object)
+            if not valid() or state.Overlay ~= overlay then return end
+            if object:IsDescendantOf(overlay) then return end
+
+            local tool = object:IsA("Tool") and object or object:FindFirstAncestorWhichIsA("Tool")
+            if tool then
+                runtime.AvatarCloneReleaseToolVisuals(char, tool)
+                return
+            end
+
+            local acc = object:FindFirstAncestorWhichIsA("Accoutrement")
+            if acc and acc:GetAttribute("iLunXAppearanceKey") ~= nil then
+                return
+            end
+
+            if object:IsA("BasePart") then
+                if object.Name ~= "HumanoidRootPart" then
+                    runtime.AvatarCloneCacheAndHideObject(object, state.BaseVisualCache)
+                end
+            elseif object:IsA("Decal") or object:IsA("Texture")
+                or object:IsA("ParticleEmitter") or object:IsA("Trail") or object:IsA("Beam")
+                or object:IsA("Smoke") or object:IsA("Fire") or object:IsA("Sparkles") then
+                runtime.AvatarCloneCacheAndHideObject(object, state.BaseVisualCache)
+            end
+        end
+
+        state.RespawnMaskDescendantConnection = char.DescendantAdded:Connect(hideNewVisual)
+        state.RespawnMaskConnection = RunService.RenderStepped:Connect(function()
+            if not valid() or state.Overlay ~= overlay or not overlay.Parent then
+                return
+            end
+
+            local currentRoot = char:FindFirstChild("HumanoidRootPart")
+            if currentRoot and currentRoot:IsA("BasePart") then
+                root = currentRoot
+                -- Sólo mueve el modelo visual anclado; nunca modifica al jugador real.
+                pcall(function() overlay:PivotTo(root.CFrame) end)
+            end
+
+            runtime.AvatarCloneEnforceBaseHidden(char)
+        end)
+
+        state.RespawnMaskPending = false
+    end)
+
+    return true
+end
+
+function runtime.AvatarCloneResetForRespawn(char, generation)
+    local state = runtime.Appearance.AvatarClone
+
+    -- Desconectamos la pose vieja, pero conservamos el overlay si el clon debe
+    -- sobrevivir al respawn. Ese mismo overlay cubre el Character nuevo mientras
+    -- Duels termina su freeze/teleport interno.
+    local keepMask = state.Active
+        and state.KeepOnRespawn
+        and state.Template
+        and state.Overlay
+        and state.Overlay.Parent
+
+    runtime.AvatarCloneDisconnectAnimation()
     state.BaseCharacter = nil
     state.BaseVisualCache = setmetatable({}, {__mode = "k"})
-    state.OverlayVisualCache = setmetatable({}, {__mode = "k"})
+
+    if keepMask then
+        runtime.BeginAvatarCloneRespawnMask(char, generation)
+    else
+        if state.Overlay then
+            pcall(function() state.Overlay:Destroy() end)
+            state.Overlay = nil
+        end
+        state.OverlayVisualCache = setmetatable({}, {__mode = "k"})
+
+        -- Incluso si el overlay anterior ya no existía, podemos crear una máscara
+        -- fresca desde el template sin esperar a que termine el countdown.
+        if state.Active and state.KeepOnRespawn and state.Template then
+            runtime.BeginAvatarCloneRespawnMask(char, generation)
+        end
+    end
 end
 
 function runtime.ClearAppearanceAccessoryGuard()
@@ -4127,8 +4316,8 @@ function runtime.WaitForAvatarCloneSpawnStable(char, humanoid, generation, maxWa
 
         -- Duels deja al jugador suspendido unos segundos antes de soltar la ronda.
         -- Mientras siga anclado, en un estado físico bloqueado o todavía flotando
-        -- dentro de esa ventana inicial, NO recreamos el clon. El avatar real queda
-        -- visible hasta que la ronda esté lista.
+        -- dentro de esa ventana inicial, NO hacemos el bind definitivo. La máscara
+        -- anclada sigue visible sin participar en la física.
         local elapsed = os.clock() - startedAt
         local airborneSpawnWindow =
             humanoid.FloorMaterial == Enum.Material.Air
@@ -4237,9 +4426,7 @@ function runtime.GuardAvatarCloneAfterRespawn(char, generation)
             if runtime.WaitForAvatarCloneRigReady(char, humanoid, generation, 0.8)
                 and runtime.WaitForAvatarCloneSpawnStable(char, humanoid, generation, 1.2) then
 
-                runtime.AvatarCloneRestoreBase(char)
-                runtime.ReapplyAppearanceLayers(char)
-
+                -- Conservamos la máscara hasta que el nuevo overlay esté listo.
                 local ok = runtime.ApplyAvatarCloneTemplate(char, state.Template)
                 if not ok then
                     runtime.AvatarCloneRestoreBase(char)
@@ -4281,11 +4468,10 @@ function runtime.FastRestoreAppearanceOnRespawn(char, generation)
         and cloneState.KeepOnRespawn
         and cloneState.Template then
 
-        -- Durante el freeze de inicio dejamos visible el Character real. No hacemos
-        -- ApplyAvatarCloneTemplate hasta que el rig esté completo Y el spawn haya
-        -- terminado de teletransportar/liberar físicamente al jugador.
-        runtime.AvatarCloneRestoreBase(char)
-        runtime.ReapplyAppearanceLayers(char)
+        -- Durante el freeze de inicio NO mostramos el Character real. Una máscara
+        -- visual 100% anclada sigue al root desde el primer frame, mientras el apply
+        -- definitivo espera a que el rig/teleport de Duels estén estables.
+        runtime.BeginAvatarCloneRespawnMask(char, generation)
 
         if not runtime.WaitForAvatarCloneRigReady(char, humanoid, generation, 1.8) then
             return
@@ -4493,7 +4679,7 @@ runtime.Track(player.CharacterAdded:Connect(function(char)
     table.clear(runtime.Appearance.ActiveAccessories)
 
     local cloneState = runtime.Appearance.AvatarClone
-    runtime.AvatarCloneResetForRespawn()
+    runtime.AvatarCloneResetForRespawn(char, generation)
     if cloneState.Active and not cloneState.KeepOnRespawn then
         cloneState.Active = false
         cloneState.TargetUserId = nil
@@ -4542,9 +4728,9 @@ pcall(function()
                         runtime.UpdateAvatarCloneLayers()
                     else
                         -- CharacterAppearanceLoaded puede disparar DURANTE el countdown.
-                        -- No hacemos apply aquí; el guard espera el estado físico estable.
-                        runtime.AvatarCloneRestoreBase(char)
-                        runtime.ReapplyAppearanceLayers(char)
+                        -- Conservamos/recreamos la máscara visual; el guard espera el
+                        -- estado físico estable para hacer el bind definitivo.
+                        runtime.BeginAvatarCloneRespawnMask(char, generation)
                         task.spawn(function()
                             runtime.GuardAvatarCloneAfterRespawn(char, generation)
                         end)

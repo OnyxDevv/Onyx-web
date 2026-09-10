@@ -7259,7 +7259,7 @@ do
     -- CoreGui ya está mostrando para el jugador clonado. Esto conserva exactamente
     -- el pose, zoom, encuadre, ImageRect y ScaleType que Roblox eligió para esa tarjeta.
     -- Sólo se escanea cuando el menú está abierto / se refresca por eventos.
-    local function findLiveCloneCardImage()
+    local function findLiveCloneCardImage(destinationTarget)
         if not spoofState.MenuOpen then return nil end
 
         local targetUserId = getCloneTargetUserId()
@@ -7277,20 +7277,52 @@ do
         local targetIdText = tostring(targetUserId)
         local targetName = string_lower(tostring(targetPlayer.Name or ""))
         local targetDisplayName = string_lower(tostring(targetPlayer.DisplayName or ""))
+        local destinationSize = destinationTarget and destinationTarget.AbsoluteSize or Vector2.new(0, 0)
+        local wantsLargeCard = math.max(destinationSize.X, destinationSize.Y) >= 130
 
-        local function scoreSourceImage(obj, preferDirectId)
+        local function textMatchesTarget(value)
+            local text = normalizeGuiText(value)
+            if text == "" then return false end
+            if text == targetName or text == targetDisplayName or text == ("@" .. targetName) then
+                return true
+            end
+
+            -- CoreGui recorta usernames/display names con "...". Aceptamos el prefijo
+            -- visible sólo cuando ya tiene longitud suficiente para no confundir tarjetas.
+            local compact = text:gsub("%.%.%.$", "")
+            if #compact >= 5 then
+                if string.sub(compact, 1, 1) == "@" then
+                    compact = string.sub(compact, 2)
+                    return string.sub(targetName, 1, #compact) == compact
+                end
+                return string.sub(targetName, 1, #compact) == compact
+                    or string.sub(targetDisplayName, 1, #compact) == compact
+            end
+            return false
+        end
+
+        local function scoreSourceImage(obj, nameLabel, requireDirectId)
             if not obj or (not obj:IsA("ImageLabel") and not obj:IsA("ImageButton")) then
                 return nil
             end
             if isOurSpoofObject(obj) then return nil end
 
+            local visible = true
+            pcall(function() visible = obj.Visible end)
+            if not visible then return nil end
+
+            local imageTransparency = 0
+            pcall(function() imageTransparency = obj.ImageTransparency end)
+            if imageTransparency >= 0.98 then return nil end
+
             local size = obj.AbsoluteSize
-            if size.X < 40 or size.Y < 40 or size.X > 320 or size.Y > 320 then return nil end
+            if size.X < 40 or size.Y < 40 or size.X > 340 or size.Y > 340 then return nil end
             local ratio = size.X / math.max(1, size.Y)
-            if ratio < 0.62 or ratio > 1.62 then return nil end
+            if ratio < 0.58 or ratio > 1.72 then return nil end
 
             local imageText = ""
             pcall(function() imageText = string_lower(obj.Image or "") end)
+            if imageText == "" then return nil end
 
             -- Nunca tomamos nuestra propia miniatura como fuente.
             if localUserIdText ~= targetIdText
@@ -7298,67 +7330,95 @@ do
                 return nil
             end
 
+            local directId = string_find(imageText, targetIdText, 1, true) ~= nil
+            if requireDirectId and not directId then return nil end
+
             local score = size.X * size.Y
-            local directId = imageText ~= "" and string_find(imageText, targetIdText, 1, true) ~= nil
-            if directId then score += 1000000 end
+
+            -- La miniatura correcta de otra tarjeta de Personas tiene prácticamente
+            -- las mismas dimensiones que la nuestra. Esto evita capturar un HeadShot
+            -- auxiliar/oculto del mismo UserId que CoreGui mantiene en otros paneles.
+            if destinationSize.X > 0 and destinationSize.Y > 0 then
+                local delta = math.abs(size.X - destinationSize.X) + math.abs(size.Y - destinationSize.Y)
+                score += math.max(0, 260000 - delta * 1800)
+            end
+
+            if directId then score += 45000 end
 
             local lowerName = string_lower(tostring(obj.Name or ""))
             if string_find(lowerName, "avatar", 1, true)
                 or string_find(lowerName, "thumbnail", 1, true)
                 or string_find(lowerName, "portrait", 1, true) then
-                score += 12000
+                score += 18000
             end
 
-            if preferDirectId and not directId then return nil end
+            if wantsLargeCard then
+                if string_find(imageText, "headshot", 1, true) then
+                    score -= 300000
+                elseif string_find(imageText, "avatar", 1, true) then
+                    score += 50000
+                end
+            end
+
+            -- En la tarjeta real, la imagen del avatar está arriba del nombre y
+            -- centrada sobre él. Los iconos/HeadShots de otros paneles no cumplen esto.
+            if nameLabel and nameLabel:IsA("GuiObject") then
+                local ip = obj.AbsolutePosition
+                local lp = nameLabel.AbsolutePosition
+                local isz = obj.AbsoluteSize
+                local lsz = nameLabel.AbsoluteSize
+                local imageCenterX = ip.X + isz.X * 0.5
+                local labelCenterX = lp.X + lsz.X * 0.5
+                local xDistance = math.abs(imageCenterX - labelCenterX)
+
+                if ip.Y < lp.Y then score += 180000 end
+                if xDistance <= math.max(isz.X * 0.55, lsz.X * 0.75) then
+                    score += 130000
+                else
+                    score -= math.min(130000, xDistance * 900)
+                end
+            end
+
             return score
         end
 
-        -- Camino rápido: algunas versiones de CoreGui conservan el UserId en Image.
-        local bestDirect, bestDirectScore
+        -- PRIMERO buscamos la tarjeta que contiene el nombre del jugador clonado.
+        -- La versión anterior hacía primero un barrido global por UserId y podía coger
+        -- un HeadShot auxiliar del mismo usuario, que es exactamente el bug de la cara gigante.
+        local bestCardImage, bestCardScore
         for _, obj in ipairs(CoreGui:GetDescendants()) do
-            local score = scoreSourceImage(obj, true)
-            if score and (not bestDirectScore or score > bestDirectScore) then
-                bestDirect, bestDirectScore = obj, score
-            end
-        end
-        if bestDirect then return bestDirect end
-
-        -- Camino robusto: busca el label del username/display name y, dentro de su
-        -- tarjeta, toma la imagen cuadrada más grande. Funciona aunque Image ya sea
-        -- una URL CDN sin el UserId visible.
-        local wanted = {
-            [targetName] = true,
-            [targetDisplayName] = true,
-            ["@" .. targetName] = true,
-        }
-
-        for _, obj in ipairs(CoreGui:GetDescendants()) do
-            if (obj:IsA("TextLabel") or obj:IsA("TextButton"))
-                and wanted[normalizeGuiText(obj.Text)] then
-
+            if (obj:IsA("TextLabel") or obj:IsA("TextButton")) and textMatchesTarget(obj.Text) then
                 local ancestor = obj
-                for _ = 1, 7 do
+                for _ = 1, 8 do
                     ancestor = ancestor and ancestor.Parent
                     if not ancestor or ancestor == CoreGui then break end
 
                     if ancestor:IsA("GuiObject") then
                         local abs = ancestor.AbsoluteSize
-                        if abs.X > 0 and abs.Y > 0 and abs.Y <= 430 then
-                            local best, bestScore
+                        if abs.X > 0 and abs.Y > 0 and abs.Y <= 460 then
                             for _, imageObj in ipairs(ancestor:GetDescendants()) do
-                                local score = scoreSourceImage(imageObj, false)
-                                if score and (not bestScore or score > bestScore) then
-                                    best, bestScore = imageObj, score
+                                local score = scoreSourceImage(imageObj, obj, false)
+                                if score and (not bestCardScore or score > bestCardScore) then
+                                    bestCardImage, bestCardScore = imageObj, score
                                 end
                             end
-                            if best then return best end
                         end
                     end
                 end
             end
         end
+        if bestCardImage then return bestCardImage end
 
-        return nil
+        -- Fallback únicamente si la tarjeta todavía no montó sus labels. Incluso aquí
+        -- exigimos dimensiones similares a la tarjeta destino y penalizamos HeadShot.
+        local bestDirect, bestDirectScore
+        for _, obj in ipairs(CoreGui:GetDescendants()) do
+            local score = scoreSourceImage(obj, nil, true)
+            if score and (not bestDirectScore or score > bestDirectScore) then
+                bestDirect, bestDirectScore = obj, score
+            end
+        end
+        return bestDirect
     end
 
     -- El thumbnail oficial de otro usuario sí conserva SU pose de perfil. Sin embargo,
@@ -7599,7 +7659,7 @@ do
         -- clonamos la ImageLabel REAL de su tarjeta para heredar el mismo pose,
         -- encuadre, ScaleType, ImageRectOffset/ImageRectSize y cualquier crop nativo.
         if mode == "full" then
-            local liveCardImage = findLiveCloneCardImage()
+            local liveCardImage = findLiveCloneCardImage(viewport.Parent)
             if liveCardImage then
                 local okImage, image = pcall(function() return liveCardImage:Clone() end)
                 if okImage and image then

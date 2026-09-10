@@ -927,40 +927,33 @@ function Nox:CreateWindow(options)
     local resizeHandles={}
     local resizeVisuals={}
 
-    -- Guías visuales de resize: los hitboxes siguen siendo amplios e invisibles,
-    -- pero estas líneas blancas sutiles enseñan exactamente de dónde arrastrar.
-    local function addResizeVisual(name, position, anchor, size)
+    -- Affordance visual de resize: sólo en las dos esquinas inferiores.
+    -- Los hitboxes de los cuatro bordes/esquinas siguen existiendo, pero ya no
+    -- llenamos el marco con líneas. Cada marca es una cápsula diagonal suave.
+    local function addResizeVisual(name, position, anchor, size, rotation)
         local grip = new("Frame", {
             Name = name,
             AnchorPoint = anchor,
             Position = position,
             Size = size,
+            Rotation = rotation or 0,
             BackgroundColor3 = C.Text,
-            BackgroundTransparency = 0.42,
+            BackgroundTransparency = 0.32,
             BorderSizePixel = 0,
             ZIndex = 39,
             Visible = w.Resizable,
         }, root)
-        round(grip, 2)
+        round(grip, 99)
         table.insert(resizeVisuals, grip)
         return grip
     end
 
-    addResizeVisual("ResizeGuideLeft", UDim2.fromScale(0, .5), Vector2.new(0, .5), UDim2.fromOffset(2, 44))
-    addResizeVisual("ResizeGuideRight", UDim2.fromScale(1, .5), Vector2.new(1, .5), UDim2.fromOffset(2, 44))
-    addResizeVisual("ResizeGuideTop", UDim2.fromScale(.5, 0), Vector2.new(.5, 0), UDim2.fromOffset(44, 2))
-    addResizeVisual("ResizeGuideBottom", UDim2.fromScale(.5, 1), Vector2.new(.5, 1), UDim2.fromOffset(44, 2))
-
-    -- Guías en las cuatro esquinas: pequeñas "L" blancas para dejar claro
-    -- que también puedes cambiar ancho + alto desde cualquier esquina.
-    addResizeVisual("ResizeGuideTL_H", UDim2.new(0, 10, 0, 8), Vector2.new(0, 0), UDim2.fromOffset(18, 2))
-    addResizeVisual("ResizeGuideTL_V", UDim2.new(0, 8, 0, 10), Vector2.new(0, 0), UDim2.fromOffset(2, 18))
-    addResizeVisual("ResizeGuideTR_H", UDim2.new(1, -10, 0, 8), Vector2.new(1, 0), UDim2.fromOffset(18, 2))
-    addResizeVisual("ResizeGuideTR_V", UDim2.new(1, -8, 0, 10), Vector2.new(1, 0), UDim2.fromOffset(2, 18))
-    addResizeVisual("ResizeGuideBL_H", UDim2.new(0, 10, 1, -8), Vector2.new(0, 1), UDim2.fromOffset(18, 2))
-    addResizeVisual("ResizeGuideBL_V", UDim2.new(0, 8, 1, -10), Vector2.new(0, 1), UDim2.fromOffset(2, 18))
-    addResizeVisual("ResizeGuideBR_H", UDim2.new(1, -10, 1, -8), Vector2.new(1, 1), UDim2.fromOffset(18, 2))
-    addResizeVisual("ResizeGuideBR_V", UDim2.new(1, -8, 1, -10), Vector2.new(1, 1), UDim2.fromOffset(2, 18))
+    -- Dos pequeñas líneas redondeadas por esquina, separadas del borde para
+    -- que ClipsDescendants/UICorner nunca les corte las puntas.
+    addResizeVisual("ResizeGuideBL_Outer", UDim2.new(0, 13, 1, -10), Vector2.new(.5, .5), UDim2.fromOffset(16, 3), -45)
+    addResizeVisual("ResizeGuideBL_Inner", UDim2.new(0, 20, 1, -10), Vector2.new(.5, .5), UDim2.fromOffset(10, 3), -45)
+    addResizeVisual("ResizeGuideBR_Outer", UDim2.new(1, -13, 1, -10), Vector2.new(.5, .5), UDim2.fromOffset(16, 3), 45)
+    addResizeVisual("ResizeGuideBR_Inner", UDim2.new(1, -20, 1, -10), Vector2.new(.5, .5), UDim2.fromOffset(10, 3), 45)
 
     local function addResizeHandle(name,position,anchor,size,xFactor,yFactor,showGrip)
         local hit=button(root,"",{Name=name,AnchorPoint=anchor,Position=position,

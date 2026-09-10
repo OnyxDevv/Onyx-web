@@ -895,24 +895,23 @@ Tabs.Creditos:Paragraph({
     Title = "Kev",
     Desc = "Creador de XeroHub\nTikTok: @kevzzx_",
     Image = XERO_CREDITS_PROFILE,
-    ImageSize = 74,
+    ImageSize = 62,
     CircleImage = true,
     ImageAlign = "left",
-    ImageStrokeColor = Color3.fromRGB(248, 248, 248),
+    ImageStrokeColor = Color3.fromRGB(244, 244, 244),
     ImageStrokeThickness = 1,
     Gothic = true,
-    BadgeText = "CREATOR",
-    DecorText = "XERO",
-    Color = Color3.fromRGB(8, 8, 11),
-    StrokeColor = Color3.fromRGB(62, 62, 70),
+    DecorText = "KEV",
+    Color = Color3.fromRGB(11, 11, 14),
+    StrokeColor = Color3.fromRGB(44, 44, 50),
 })
 Tabs.Creditos:Paragraph({
     Title = "Agradecimientos",
-    Desc = "Gracias por usar y apoyar XeroHub. Cada persona que confía en el proyecto forma parte de su evolución.",
+    Desc = "Gracias a quienes usan y apoyan XeroHub. Su apoyo hace posible seguir mejorándolo.",
     Gothic = true,
-    DecorText = "GRATITUDE",
-    Color = Color3.fromRGB(9, 9, 12),
-    StrokeColor = Color3.fromRGB(46, 46, 54),
+    DecorText = "THANKS",
+    Color = Color3.fromRGB(11, 11, 14),
+    StrokeColor = Color3.fromRGB(44, 44, 50),
 })
 
 Tabs.Inicio:Section({ Title = "Juegos Soportados" })

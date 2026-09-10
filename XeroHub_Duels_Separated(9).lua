@@ -3118,8 +3118,35 @@ function runtime.AvatarCloneResumeLocalLayers(char, headless, korblox, hideHair)
     runtime.ApplyHairRemoval(char)
 end
 
+-- Las herramientas equipadas pertenecen al Character, pero no son parte
+-- del cuerpo que sustituye el clon. Conservamos sus valores originales.
+function runtime.AvatarCloneIsToolVisual(object)
+    return object and (object:IsA("Tool") or object:FindFirstAncestorWhichIsA("Tool") ~= nil)
+end
+
+function runtime.AvatarCloneRestoreCachedVisual(object, cache)
+    local original = cache[object]
+    if not original then return end
+    if object and object.Parent then
+        if original.LocalTransparencyModifier ~= nil and object:IsA("BasePart") then
+            object.LocalTransparencyModifier = original.LocalTransparencyModifier
+        end
+        if original.Transparency ~= nil and (object:IsA("Decal") or object:IsA("Texture")) then
+            object.Transparency = original.Transparency
+        end
+        if original.Enabled ~= nil then
+            object.Enabled = original.Enabled
+        end
+    end
+    cache[object] = nil
+end
+
 function runtime.AvatarCloneCacheAndHideObject(object, cache)
     if not object or not object.Parent then return end
+    if runtime.AvatarCloneIsToolVisual(object) then
+        runtime.AvatarCloneRestoreCachedVisual(object, cache)
+        return
+    end
     if cache[object] then
         if object:IsA("BasePart") then
             if runtime.Appearance.Enabled.Korblox and object.Name == "RightUpperLeg"
@@ -3281,6 +3308,10 @@ function runtime.AvatarCloneEnforceBaseHidden(char)
     for object in pairs(state.BaseVisualCache) do
         if object and object.Parent then
             pcall(function()
+                if runtime.AvatarCloneIsToolVisual(object) then
+                    runtime.AvatarCloneRestoreCachedVisual(object, state.BaseVisualCache)
+                    return
+                end
                 if object:IsA("BasePart") then
                     -- El Korblox de iLunX se deja visible como capa superior.
                     if runtime.Appearance.Enabled.Korblox
@@ -3608,6 +3639,10 @@ function runtime.AvatarCloneBuildMotorSync(char, overlay)
     state.BaseDescendantConnection = char.DescendantAdded:Connect(function(object)
         if state.Overlay ~= overlay or not state.Active then return end
         if object:IsDescendantOf(overlay) then return end
+        if runtime.AvatarCloneIsToolVisual(object) then
+            runtime.AvatarCloneRestoreCachedVisual(object, state.BaseVisualCache)
+            return
+        end
 
         local acc = object:FindFirstAncestorWhichIsA("Accoutrement")
         if acc and acc:GetAttribute("iLunXAppearanceKey") ~= nil then

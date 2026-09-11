@@ -2428,6 +2428,19 @@ function runtime.DestroyFaceClassicVisual(model)
     end
 end
 
+local function getClassicFaceUniformScale(head)
+    -- Conserva la forma clásica 2:1:1. Sólo copiamos el tamaño GENERAL del head
+    -- original, usando la mediana de sus tres escalas para ignorar ejes deformados
+    -- de Dynamic Heads/custom heads.
+    if not head or not head:IsA("BasePart") then return 1 end
+    local size = head.Size
+    local sx = math.max(0.01, size.X / 2)
+    local sy = math.max(0.01, size.Y)
+    local sz = math.max(0.01, size.Z)
+    local uniform = sx + sy + sz - math.min(sx, sy, sz) - math.max(sx, sy, sz)
+    return math.clamp(uniform, 0.65, 1.8)
+end
+
 function runtime.SyncFaceClassicVisual(model)
     local entry = model and runtime.Appearance.FaceClassicVisuals[model]
     if not entry then return false end
@@ -2462,14 +2475,13 @@ function runtime.SyncFaceClassicVisual(model)
         appearanceSafeSet(part, "Color", head.Color)
         appearanceSafeSet(part, "CastShadow", head.CastShadow)
 
+        local uniformScale = getClassicFaceUniformScale(head)
+        part.Size = Vector3.new(2, 1, 1) * uniformScale
+
         local mesh = entry.Mesh
         if mesh then
-            local size = head.Size
-            mesh.Scale = Vector3.new(
-                math.clamp((size.X / 2) * 1.25, 0.65, 2.5),
-                math.clamp(size.Y * 1.25, 0.65, 2.5),
-                math.clamp(size.Z * 1.25, 0.65, 2.5)
-            )
+            -- El decal clásico depende de estas proporciones. No deformar por eje.
+            mesh.Scale = Vector3.new(1.25, 1.25, 1.25)
         end
 
         -- El visual está fuera del Character/overlay, por lo que CameraModule no lo
@@ -2524,9 +2536,11 @@ function runtime.CreateFaceClassicVisual(model, texture)
     local isLive = model == player.Character
         or (cloneState and cloneState.Overlay == model)
 
+    local uniformScale = getClassicFaceUniformScale(head)
+
     local part = Instance.new("Part")
     part.Name = "Xero_FaceClassicVisual"
-    part.Size = head.Size
+    part.Size = Vector3.new(2, 1, 1) * uniformScale
     part.CFrame = head.CFrame
     part.Color = head.Color
     part.Material = Enum.Material.SmoothPlastic
@@ -2543,11 +2557,7 @@ function runtime.CreateFaceClassicVisual(model, texture)
     local mesh = Instance.new("SpecialMesh")
     mesh.Name = "Xero_ClassicHeadMesh"
     mesh.MeshType = Enum.MeshType.Head
-    mesh.Scale = Vector3.new(
-        math.clamp((head.Size.X / 2) * 1.25, 0.65, 2.5),
-        math.clamp(head.Size.Y * 1.25, 0.65, 2.5),
-        math.clamp(head.Size.Z * 1.25, 0.65, 2.5)
-    )
+    mesh.Scale = Vector3.new(1.25, 1.25, 1.25)
     mesh.Parent = part
 
     local decal = Instance.new("Decal")

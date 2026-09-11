@@ -2172,6 +2172,9 @@ runtime.Appearance = {
     OriginalHead = setmetatable({}, {__mode = "k"}),
     OriginalKorblox = setmetatable({}, {__mode = "k"}),
     OriginalFace = setmetatable({}, {__mode = "k"}),
+    -- Estado real de Head previo a cualquier capa Face/Headless. Ambas capas leen
+    -- de aquí para no guardarse mutuamente como "estado original".
+    HeadBaseVisuals = setmetatable({}, {__mode = "k"}),
     FaceTextureCache = {},
     FaceToggleSyncing = false,
     -- Caras clásicas sobre cabezas dinámicas/custom: usamos un head visual compatible
@@ -2270,17 +2273,61 @@ function runtime.ClearAppearanceBodyGuards()
     end
 end
 
-function runtime.GetHeadAppearanceSnapshot(char)
-    local snap = runtime.Appearance.OriginalHead[char]
-    local head = char and char:FindFirstChild("Head")
+function runtime.GetHeadBaseVisualState(model)
+    local head = model and model:FindFirstChild("Head")
     if not head or not head:IsA("BasePart") then return nil end
 
+    local base = runtime.Appearance.HeadBaseVisuals[model]
+    if base and base.Head == head then
+        return base
+    end
+
+    local visuals = setmetatable({}, {__mode = "k"})
+    for _, d in ipairs(head:GetDescendants()) do
+        if d:IsA("Decal") or d:IsA("Texture") then
+            visuals[d] = {
+                Transparency = d.Transparency,
+                Texture = d:IsA("Decal") and d.Texture or nil,
+            }
+        end
+    end
+
+    base = {
+        Head = head,
+        Transparency = head.Transparency,
+        LocalTransparencyModifier = head.LocalTransparencyModifier,
+        Visuals = visuals,
+    }
+    runtime.Appearance.HeadBaseVisuals[model] = base
+    return base
+end
+
+function runtime.ReleaseHeadBaseVisualState(model)
+    if not model then return end
+    if runtime.Appearance.Enabled.Headless then return end
+    if runtime.GetActiveFaceKey and runtime.GetActiveFaceKey() then return end
+    runtime.Appearance.HeadBaseVisuals[model] = nil
+end
+
+function runtime.GetHeadAppearanceSnapshot(char)
+    local snap = runtime.Appearance.OriginalHead[char]
+    local base = runtime.GetHeadBaseVisualState(char)
+    local head = base and base.Head
+    if not head then return nil end
+
     if not snap or snap.Head ~= head then
+        local visuals = setmetatable({}, {__mode = "k"})
+        for d, original in pairs(base.Visuals or {}) do
+            if d and d.Parent and original then
+                visuals[d] = original.Transparency
+            end
+        end
+
         snap = {
             Head = head,
-            Transparency = head.Transparency,
-            LocalTransparencyModifier = head.LocalTransparencyModifier,
-            Visuals = setmetatable({}, {__mode = "k"}),
+            Transparency = base.Transparency,
+            LocalTransparencyModifier = base.LocalTransparencyModifier,
+            Visuals = visuals,
         }
         runtime.Appearance.OriginalHead[char] = snap
     end
@@ -2311,6 +2358,7 @@ function runtime.ApplyHeadlessLayer(char)
             if d and d.Parent then appearanceSafeSet(d, "Transparency", old) end
         end
         runtime.Appearance.OriginalHead[char] = nil
+        runtime.ReleaseHeadBaseVisualState(char)
     end
     return true
 end
@@ -2363,8 +2411,9 @@ function runtime.GetFaceTexture(key)
 end
 
 function runtime.GetFaceAppearanceSnapshot(model)
-    local head = model and model:FindFirstChild("Head")
-    if not head or not head:IsA("BasePart") then return nil end
+    local base = runtime.GetHeadBaseVisualState(model)
+    local head = base and base.Head
+    if not head then return nil end
 
     local snap = runtime.Appearance.OriginalFace[model]
     if snap and snap.Head == head then
@@ -2379,14 +2428,15 @@ function runtime.GetFaceAppearanceSnapshot(model)
         end
     end
 
+    local baseVisual = faceDecal and base.Visuals and base.Visuals[faceDecal]
     snap = {
         Head = head,
         Decal = faceDecal,
-        Texture = faceDecal and faceDecal.Texture or nil,
-        DecalTransparency = faceDecal and faceDecal.Transparency or nil,
+        Texture = baseVisual and baseVisual.Texture or (faceDecal and faceDecal.Texture or nil),
+        DecalTransparency = baseVisual and baseVisual.Transparency or (faceDecal and faceDecal.Transparency or nil),
         Created = false,
-        HeadTransparency = head.Transparency,
-        HeadLTM = head.LocalTransparencyModifier,
+        HeadTransparency = base.Transparency,
+        HeadLTM = base.LocalTransparencyModifier,
     }
     runtime.Appearance.OriginalFace[model] = snap
     return snap
@@ -2641,6 +2691,7 @@ function runtime.RestoreFaceLayerForModel(model)
     end
 
     runtime.Appearance.OriginalFace[model] = nil
+    runtime.ReleaseHeadBaseVisualState(model)
     return true
 end
 
@@ -2656,7 +2707,11 @@ function runtime.ApplyFaceLayer(model)
     -- Cuando hay clon activo el Character real está oculto debajo del overlay. No
     -- creamos un segundo head visual fuera de él; la cara se aplica al overlay visible.
     local cloneState = runtime.Appearance.AvatarClone
-    if cloneState and cloneState.Active and model == player.Character then
+    local cloneOwnsVisibleHead = cloneState and model == player.Character and (
+        cloneState.Active
+        or (cloneState.Applying and cloneState.Overlay and cloneState.Overlay.Parent)
+    )
+    if cloneOwnsVisibleHead then
         runtime.RestoreFaceLayerForModel(model)
         return true
     end
@@ -4216,6 +4271,10 @@ function runtime.AvatarCloneDestroyOverlay(restoreBase)
     runtime.AvatarCloneDisconnectAnimation()
 
     if state.Overlay then
+        runtime.DestroyFaceClassicVisual(state.Overlay)
+        runtime.Appearance.OriginalFace[state.Overlay] = nil
+        runtime.Appearance.OriginalHead[state.Overlay] = nil
+        runtime.Appearance.HeadBaseVisuals[state.Overlay] = nil
         pcall(function() state.Overlay:Destroy() end)
         state.Overlay = nil
     end
@@ -4780,6 +4839,10 @@ function runtime.ApplyAvatarCloneTemplate(char, template)
         end
 
         if previousOverlay and previousOverlay ~= overlay and previousOverlay.Parent then
+            runtime.DestroyFaceClassicVisual(previousOverlay)
+            runtime.Appearance.OriginalFace[previousOverlay] = nil
+            runtime.Appearance.OriginalHead[previousOverlay] = nil
+            runtime.Appearance.HeadBaseVisuals[previousOverlay] = nil
             pcall(function() previousOverlay:Destroy() end)
         end
 
@@ -4794,6 +4857,10 @@ function runtime.ApplyAvatarCloneTemplate(char, template)
     if not ok then
         runtime.AvatarCloneDestroyOverlay(false)
         if previousOverlay and previousOverlay.Parent then
+            runtime.DestroyFaceClassicVisual(previousOverlay)
+            runtime.Appearance.OriginalFace[previousOverlay] = nil
+            runtime.Appearance.OriginalHead[previousOverlay] = nil
+            runtime.Appearance.HeadBaseVisuals[previousOverlay] = nil
             pcall(function() previousOverlay:Destroy() end)
         end
 
@@ -5410,6 +5477,10 @@ function runtime.AvatarCloneResetForRespawn(char, generation)
         runtime.BeginAvatarCloneRespawnMask(char, generation)
     else
         if state.Overlay then
+            runtime.DestroyFaceClassicVisual(state.Overlay)
+            runtime.Appearance.OriginalFace[state.Overlay] = nil
+            runtime.Appearance.OriginalHead[state.Overlay] = nil
+            runtime.Appearance.HeadBaseVisuals[state.Overlay] = nil
             pcall(function() state.Overlay:Destroy() end)
             state.Overlay = nil
         end
@@ -5854,6 +5925,9 @@ function runtime.RestoreAppearance()
         pcall(function() runtime.Appearance.FaceVisualContainer:Destroy() end)
     end
     runtime.Appearance.FaceVisualContainer = nil
+    runtime.Appearance.HeadBaseVisuals = setmetatable({}, {__mode = "k"})
+    runtime.Appearance.OriginalHead = setmetatable({}, {__mode = "k"})
+    runtime.Appearance.OriginalFace = setmetatable({}, {__mode = "k"})
     table.clear(runtime.Appearance.AccessoryOffsets)
     table.clear(runtime.Appearance.ActiveAccessories)
     runtime.Appearance.EditorSelectedKey = nil

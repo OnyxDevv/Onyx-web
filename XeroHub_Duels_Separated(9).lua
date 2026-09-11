@@ -2428,17 +2428,20 @@ function runtime.DestroyFaceClassicVisual(model)
     end
 end
 
+local CLASSIC_FACE_SIZE_MULTIPLIER = 0.97
+
 local function getClassicFaceUniformScale(head)
     -- Conserva la forma clásica 2:1:1. Sólo copiamos el tamaño GENERAL del head
     -- original, usando la mediana de sus tres escalas para ignorar ejes deformados
-    -- de Dynamic Heads/custom heads.
-    if not head or not head:IsA("BasePart") then return 1 end
+    -- de Dynamic Heads/custom heads. El multiplicador permite un ajuste uniforme
+    -- mínimo sin volver a deformar la cara por eje.
+    if not head or not head:IsA("BasePart") then return CLASSIC_FACE_SIZE_MULTIPLIER end
     local size = head.Size
     local sx = math.max(0.01, size.X / 2)
     local sy = math.max(0.01, size.Y)
     local sz = math.max(0.01, size.Z)
     local uniform = sx + sy + sz - math.min(sx, sy, sz) - math.max(sx, sy, sz)
-    return math.clamp(uniform, 0.65, 1.8)
+    return math.clamp(uniform * CLASSIC_FACE_SIZE_MULTIPLIER, 0.65, 1.8)
 end
 
 function runtime.SyncFaceClassicVisual(model)

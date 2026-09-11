@@ -2481,7 +2481,7 @@ function runtime.SyncFaceClassicVisual(model)
         local mesh = entry.Mesh
         if mesh then
             -- El decal clásico depende de estas proporciones. No deformar por eje.
-            mesh.Scale = Vector3.new(1.25, 1.25, 1.25)
+            mesh.Scale = Vector3.new(1, 1, 1)
         end
 
         -- El visual está fuera del Character/overlay, por lo que CameraModule no lo
@@ -2557,7 +2557,7 @@ function runtime.CreateFaceClassicVisual(model, texture)
     local mesh = Instance.new("SpecialMesh")
     mesh.Name = "Xero_ClassicHeadMesh"
     mesh.MeshType = Enum.MeshType.Head
-    mesh.Scale = Vector3.new(1.25, 1.25, 1.25)
+    mesh.Scale = Vector3.new(1, 1, 1)
     mesh.Parent = part
 
     local decal = Instance.new("Decal")

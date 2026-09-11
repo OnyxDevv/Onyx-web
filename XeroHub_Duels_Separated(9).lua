@@ -2573,6 +2573,14 @@ function runtime.SyncFaceClassicVisual(model)
     return true
 end
 
+function runtime.FaceClassicUsesAvatarCloneSync(model)
+    local state = runtime.Appearance and runtime.Appearance.AvatarClone
+    return model ~= nil
+        and state ~= nil
+        and state.Overlay == model
+        and model.Parent ~= nil
+end
+
 function runtime.EnsureFaceClassicSync()
     local current = runtime.Appearance.FaceClassicSyncConnection
     if current and current.Connected then return end
@@ -2580,7 +2588,9 @@ function runtime.EnsureFaceClassicSync()
     runtime.Appearance.FaceClassicSyncConnection = runtime.Track(RunService.RenderStepped:Connect(function()
         local anyLive = false
         for model, entry in pairs(runtime.Appearance.FaceClassicVisuals) do
-            if entry and not entry.Static then
+            -- El overlay clonado ya se actualiza al final de su propio syncPose.
+            -- No lo repetimos en este RenderStepped para evitar un callback duplicado.
+            if entry and not entry.Static and not runtime.FaceClassicUsesAvatarCloneSync(model) then
                 if runtime.SyncFaceClassicVisual(model) then anyLive = true end
             end
         end
@@ -2653,7 +2663,12 @@ function runtime.CreateFaceClassicVisual(model, texture)
     if isLive then
         part.Anchored = true
         part.Parent = runtime.GetFaceVisualContainer()
-        runtime.EnsureFaceClassicSync()
+
+        -- El clon ya posee un RenderStepped para copiar toda la pose. Su Face clásica
+        -- se alinea dentro de ese mismo callback, así que no iniciamos otro loop.
+        if not runtime.FaceClassicUsesAvatarCloneSync(model) then
+            runtime.EnsureFaceClassicSync()
+        end
     else
         -- Editor/thumbnail: puede vivir dentro del modelo porque no participa en la
         -- física del jugador. Un WeldConstraint conserva la pose al rotar/PivotTo.
@@ -4640,6 +4655,12 @@ function runtime.AvatarCloneBuildMotorSync(char, overlay)
             end
         end
 
+        -- La cabeza clásica de Face vive fuera del overlay para no contaminar el rig.
+        -- Re-alinearla AQUÍ, después de actualizar todos los CFrame del clon, evita
+        -- que quede un frame atrás al caminar/correr si su RenderStepped separado
+        -- se ejecutó antes que esta marioneta visual.
+        runtime.SyncFaceClassicVisual(overlay)
+
         -- En condiciones normales la invisibilidad base se reafirma en el bind
         -- Camera+1 de transparencia. Sólo usamos este fallback si ese bind falló.
         if not state.NativeTransparencyBindName then
@@ -5444,6 +5465,10 @@ function runtime.BeginAvatarCloneRespawnMask(char, generation)
                     cloneChild.AssemblyAngularVelocity = Vector3.zero
                 end)
             end
+
+            -- La máscara de respawn usa otro loop de pose. La Face clásica también
+            -- debe tomar el Head ya actualizado de ESTE frame para no quedarse atrás.
+            runtime.SyncFaceClassicVisual(overlay)
 
             if not state.NativeTransparencyBindName then
                 runtime.AvatarCloneEnforceBaseHidden(char)

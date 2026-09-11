@@ -2174,6 +2174,11 @@ runtime.Appearance = {
     OriginalFace = setmetatable({}, {__mode = "k"}),
     FaceTextureCache = {},
     FaceToggleSyncing = false,
+    -- Caras clásicas sobre cabezas dinámicas/custom: usamos un head visual compatible
+    -- en vez de proyectar el Decal sobre UVs incompatibles.
+    FaceClassicVisuals = setmetatable({}, {__mode = "k"}),
+    FaceClassicSyncConnection = nil,
+    FaceVisualContainer = nil,
     HairVisualCache = setmetatable({}, {__mode = "k"}),
 
     -- Clonador de avatar: overlay visual local, sin ApplyDescription.
@@ -2362,7 +2367,7 @@ function runtime.GetFaceAppearanceSnapshot(model)
     if not head or not head:IsA("BasePart") then return nil end
 
     local snap = runtime.Appearance.OriginalFace[model]
-    if snap and snap.Head == head and snap.Decal and snap.Decal.Parent == head then
+    if snap and snap.Head == head then
         return snap
     end
 
@@ -2374,25 +2379,235 @@ function runtime.GetFaceAppearanceSnapshot(model)
         end
     end
 
-    local created = false
-    if not faceDecal then
-        faceDecal = Instance.new("Decal")
-        faceDecal.Name = "face"
-        faceDecal.Face = Enum.NormalId.Front
-        faceDecal.Transparency = 0
-        faceDecal.Parent = head
-        created = true
-    end
-
     snap = {
         Head = head,
         Decal = faceDecal,
-        Texture = faceDecal.Texture,
-        Transparency = faceDecal.Transparency,
-        Created = created,
+        Texture = faceDecal and faceDecal.Texture or nil,
+        DecalTransparency = faceDecal and faceDecal.Transparency or nil,
+        Created = false,
+        HeadTransparency = head.Transparency,
+        HeadLTM = head.LocalTransparencyModifier,
     }
     runtime.Appearance.OriginalFace[model] = snap
     return snap
+end
+
+function runtime.FaceNeedsClassicVisual(model)
+    local snap = runtime.GetFaceAppearanceSnapshot(model)
+    if not snap or not snap.Head then return false end
+    local head = snap.Head
+
+    -- Dynamic Heads traen FaceControls. Una cabeza MeshPart/custom sin Decal frontal
+    -- tampoco garantiza UVs compatibles con las caras clásicas.
+    if head:FindFirstChildOfClass("FaceControls") or head:FindFirstChild("FaceControls") then
+        return true
+    end
+    if snap.Decal and snap.Decal.Parent == head then
+        return false
+    end
+    return head:IsA("MeshPart")
+end
+
+function runtime.GetFaceVisualContainer()
+    local folder = runtime.Appearance.FaceVisualContainer
+    if folder and folder.Parent then return folder end
+
+    folder = Instance.new("Folder")
+    folder.Name = "Xero_FaceVisuals"
+    folder.Parent = workspace
+    runtime.Appearance.FaceVisualContainer = folder
+    return folder
+end
+
+function runtime.DestroyFaceClassicVisual(model)
+    local entry = model and runtime.Appearance.FaceClassicVisuals[model]
+    if not entry then return end
+    runtime.Appearance.FaceClassicVisuals[model] = nil
+    if entry.Part and entry.Part.Parent then
+        pcall(function() entry.Part:Destroy() end)
+    end
+end
+
+function runtime.SyncFaceClassicVisual(model)
+    local entry = model and runtime.Appearance.FaceClassicVisuals[model]
+    if not entry then return false end
+    local head = entry.Head
+    local part = entry.Part
+    if not head or not head.Parent or not part or not part.Parent then
+        runtime.DestroyFaceClassicVisual(model)
+        return false
+    end
+
+    local key = runtime.GetActiveFaceKey()
+    if not key then
+        runtime.DestroyFaceClassicVisual(model)
+        return false
+    end
+
+    -- La cabeza original permanece presente para attachments/animaciones, pero no se dibuja.
+    appearanceSafeSet(head, "Transparency", 1)
+    appearanceSafeSet(head, "LocalTransparencyModifier", 1)
+
+    local texture = runtime.GetFaceTexture(key)
+    if texture and entry.Decal then
+        appearanceSafeSet(entry.Decal, "Texture", texture)
+    end
+
+    local hidden = runtime.Appearance.Enabled.Headless == true
+    appearanceSafeSet(part, "Transparency", hidden and 1 or 0)
+    if entry.Decal then appearanceSafeSet(entry.Decal, "Transparency", hidden and 1 or 0) end
+
+    if not entry.Static then
+        appearanceSafeSet(part, "CFrame", head.CFrame)
+        appearanceSafeSet(part, "Color", head.Color)
+        appearanceSafeSet(part, "CastShadow", head.CastShadow)
+
+        local mesh = entry.Mesh
+        if mesh then
+            local size = head.Size
+            mesh.Scale = Vector3.new(
+                math.clamp((size.X / 2) * 1.25, 0.65, 2.5),
+                math.clamp(size.Y * 1.25, 0.65, 2.5),
+                math.clamp(size.Z * 1.25, 0.65, 2.5)
+            )
+        end
+
+        -- El visual está fuera del Character/overlay, por lo que CameraModule no lo
+        -- desvanece automáticamente en primera persona. Replicamos sólo ese fade.
+        local cameraTransparency = 0
+        local currentCamera = workspace.CurrentCamera
+        if currentCamera then
+            local distance = (currentCamera.Focus.Position - currentCamera.CFrame.Position).Magnitude
+            cameraTransparency = (distance < 2) and (1 - (distance - 0.5) / 1.5) or 0
+            if cameraTransparency < 0.5 then cameraTransparency = 0 end
+            cameraTransparency = math.clamp(cameraTransparency, 0, 1)
+        end
+        appearanceSafeSet(part, "LocalTransparencyModifier", hidden and 1 or cameraTransparency)
+    end
+
+    return true
+end
+
+function runtime.EnsureFaceClassicSync()
+    local current = runtime.Appearance.FaceClassicSyncConnection
+    if current and current.Connected then return end
+
+    runtime.Appearance.FaceClassicSyncConnection = runtime.Track(RunService.RenderStepped:Connect(function()
+        local anyLive = false
+        for model, entry in pairs(runtime.Appearance.FaceClassicVisuals) do
+            if entry and not entry.Static then
+                if runtime.SyncFaceClassicVisual(model) then anyLive = true end
+            end
+        end
+        if not anyLive then
+            local conn = runtime.Appearance.FaceClassicSyncConnection
+            runtime.Appearance.FaceClassicSyncConnection = nil
+            if conn then pcall(function() conn:Disconnect() end) end
+        end
+    end))
+end
+
+function runtime.CreateFaceClassicVisual(model, texture)
+    local snap = runtime.GetFaceAppearanceSnapshot(model)
+    if not snap or not snap.Head then return nil end
+    local head = snap.Head
+
+    local old = runtime.Appearance.FaceClassicVisuals[model]
+    if old and old.Part and old.Part.Parent and old.Head == head then
+        if texture and old.Decal then appearanceSafeSet(old.Decal, "Texture", texture) end
+        runtime.SyncFaceClassicVisual(model)
+        return old
+    end
+    runtime.DestroyFaceClassicVisual(model)
+
+    local cloneState = runtime.Appearance.AvatarClone
+    local isLive = model == player.Character
+        or (cloneState and cloneState.Overlay == model)
+
+    local part = Instance.new("Part")
+    part.Name = "Xero_FaceClassicVisual"
+    part.Size = head.Size
+    part.CFrame = head.CFrame
+    part.Color = head.Color
+    part.Material = Enum.Material.SmoothPlastic
+    part.Transparency = 0
+    part.LocalTransparencyModifier = 0
+    part.CanCollide = false
+    part.CanTouch = false
+    part.CanQuery = false
+    part.Massless = true
+    part.CastShadow = head.CastShadow
+    part.TopSurface = Enum.SurfaceType.Smooth
+    part.BottomSurface = Enum.SurfaceType.Smooth
+
+    local mesh = Instance.new("SpecialMesh")
+    mesh.Name = "Xero_ClassicHeadMesh"
+    mesh.MeshType = Enum.MeshType.Head
+    mesh.Scale = Vector3.new(
+        math.clamp((head.Size.X / 2) * 1.25, 0.65, 2.5),
+        math.clamp(head.Size.Y * 1.25, 0.65, 2.5),
+        math.clamp(head.Size.Z * 1.25, 0.65, 2.5)
+    )
+    mesh.Parent = part
+
+    local decal = Instance.new("Decal")
+    decal.Name = "face"
+    decal.Face = Enum.NormalId.Front
+    decal.Texture = texture or ""
+    decal.Transparency = runtime.Appearance.Enabled.Headless and 1 or 0
+    decal.Parent = part
+
+    local entry = {
+        Head = head,
+        Part = part,
+        Mesh = mesh,
+        Decal = decal,
+        Static = not isLive,
+    }
+    runtime.Appearance.FaceClassicVisuals[model] = entry
+
+    if isLive then
+        part.Anchored = true
+        part.Parent = runtime.GetFaceVisualContainer()
+        runtime.EnsureFaceClassicSync()
+    else
+        -- Editor/thumbnail: puede vivir dentro del modelo porque no participa en la
+        -- física del jugador. Un WeldConstraint conserva la pose al rotar/PivotTo.
+        part.Anchored = false
+        part.Parent = model
+        local weld = Instance.new("WeldConstraint")
+        weld.Name = "Xero_FaceClassicWeld"
+        weld.Part0 = head
+        weld.Part1 = part
+        weld.Parent = part
+    end
+
+    runtime.SyncFaceClassicVisual(model)
+    return entry
+end
+
+function runtime.RestoreFaceLayerForModel(model)
+    local snap = model and runtime.Appearance.OriginalFace[model]
+    runtime.DestroyFaceClassicVisual(model)
+    if not snap then return true end
+
+    if snap.Head and snap.Head.Parent then
+        appearanceSafeSet(snap.Head, "Transparency", snap.HeadTransparency)
+        appearanceSafeSet(snap.Head, "LocalTransparencyModifier", snap.HeadLTM)
+    end
+
+    local decal = snap.Decal
+    if decal and decal.Parent then
+        if snap.Created then
+            pcall(function() decal:Destroy() end)
+        else
+            appearanceSafeSet(decal, "Texture", snap.Texture or "")
+            appearanceSafeSet(decal, "Transparency", snap.DecalTransparency or 0)
+        end
+    end
+
+    runtime.Appearance.OriginalFace[model] = nil
+    return true
 end
 
 function runtime.ApplyFaceLayer(model)
@@ -2401,18 +2616,14 @@ function runtime.ApplyFaceLayer(model)
 
     local key = runtime.GetActiveFaceKey()
     if not key then
-        local snap = runtime.Appearance.OriginalFace[model]
-        if not snap then return true end
+        return runtime.RestoreFaceLayerForModel(model)
+    end
 
-        if snap.Decal and snap.Decal.Parent then
-            if snap.Created then
-                pcall(function() snap.Decal:Destroy() end)
-            else
-                appearanceSafeSet(snap.Decal, "Texture", snap.Texture)
-                appearanceSafeSet(snap.Decal, "Transparency", snap.Transparency)
-            end
-        end
-        runtime.Appearance.OriginalFace[model] = nil
+    -- Cuando hay clon activo el Character real está oculto debajo del overlay. No
+    -- creamos un segundo head visual fuera de él; la cara se aplica al overlay visible.
+    local cloneState = runtime.Appearance.AvatarClone
+    if cloneState and cloneState.Active and model == player.Character then
+        runtime.RestoreFaceLayerForModel(model)
         return true
     end
 
@@ -2420,13 +2631,44 @@ function runtime.ApplyFaceLayer(model)
     if not texture then return false end
 
     local snap = runtime.GetFaceAppearanceSnapshot(model)
-    if not snap or not snap.Decal then return false end
+    if not snap or not snap.Head then return false end
 
-    appearanceSafeSet(snap.Decal, "Texture", texture)
+    if runtime.FaceNeedsClassicVisual(model) then
+        -- Si había un Decal clásico modificado por una llamada previa, se restaura antes
+        -- de ocultar la cabeza original.
+        if snap.Decal and snap.Decal.Parent then
+            appearanceSafeSet(snap.Decal, "Texture", snap.Texture or "")
+            appearanceSafeSet(snap.Decal, "Transparency", snap.DecalTransparency or 0)
+        end
+        appearanceSafeSet(snap.Head, "Transparency", 1)
+        appearanceSafeSet(snap.Head, "LocalTransparencyModifier", 1)
+        return runtime.CreateFaceClassicVisual(model, texture) ~= nil
+    end
+
+    runtime.DestroyFaceClassicVisual(model)
+    appearanceSafeSet(snap.Head, "Transparency", snap.HeadTransparency)
+    appearanceSafeSet(snap.Head, "LocalTransparencyModifier", snap.HeadLTM)
+
+    local decal = snap.Decal
+    if not decal or not decal.Parent then
+        -- Sólo las Parts clásicas llegan aquí sin decal; en MeshPart/custom usamos el fallback.
+        if not snap.Head:IsA("Part") then return false end
+        decal = Instance.new("Decal")
+        decal.Name = "face"
+        decal.Face = Enum.NormalId.Front
+        decal.Transparency = 0
+        decal.Parent = snap.Head
+        snap.Decal = decal
+        snap.Texture = ""
+        snap.DecalTransparency = 0
+        snap.Created = true
+    end
+
+    appearanceSafeSet(decal, "Texture", texture)
     appearanceSafeSet(
-        snap.Decal,
+        decal,
         "Transparency",
-        runtime.Appearance.Enabled.Headless and 1 or snap.Transparency
+        runtime.Appearance.Enabled.Headless and 1 or (snap.DecalTransparency or 0)
     )
     return true
 end
@@ -5571,6 +5813,13 @@ function runtime.RestoreAppearance()
         runtime.ApplyHairRemoval(char)
     end
     runtime.ClearAppearanceBodyGuards()
+    for model in pairs(runtime.Appearance.FaceClassicVisuals) do
+        runtime.DestroyFaceClassicVisual(model)
+    end
+    if runtime.Appearance.FaceVisualContainer and runtime.Appearance.FaceVisualContainer.Parent then
+        pcall(function() runtime.Appearance.FaceVisualContainer:Destroy() end)
+    end
+    runtime.Appearance.FaceVisualContainer = nil
     table.clear(runtime.Appearance.AccessoryOffsets)
     table.clear(runtime.Appearance.ActiveAccessories)
     runtime.Appearance.EditorSelectedKey = nil

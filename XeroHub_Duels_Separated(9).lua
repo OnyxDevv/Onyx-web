@@ -2069,6 +2069,14 @@ runtime.AppearanceCatalog = {
     Korblox = {Name="Korblox Right Leg", Id=139607718, Category="Especiales", Kind="Korblox", Badge="OFF-SALE", Desc="Korblox Deathspeaker · reemplazo local R15"},
     HideHair = {Name="Eliminar cabello", Category="Especiales", Kind="HairToggle", Desc="Oculta únicamente el cabello del avatar."},
 
+    -- Caras clásicas/limited. El Id es el asset del catálogo; la textura real
+    -- se resuelve una sola vez con game:GetObjects y queda cacheada.
+    SSHF = {Name="Super Super Happy Face", Id=494291269, Category="Caras", Kind="Face", Badge="LIMITED • FACE"},
+    Stitchface = {Name="Stitchface", Id=8329679, Category="Caras", Kind="Face", Badge="LIMITED • FACE"},
+    PlayfulVampire = {Name="Playful Vampire", Id=2409285794, Category="Caras", Kind="Face", Badge="LIMITED • FACE"},
+    BeastMode = {Name="Beast Mode", Id=128992838, Category="Caras", Kind="Face", Badge="LIMITED • FACE"},
+    YumFace = {Name="Yum!", Id=26019070, Category="Caras", Kind="Face", Badge="LIMITED • FACE"},
+
     RC = {Name="8-Bit Royal Crown", Id=10159600649, Category="8-Bit", Kind="Accessory", Badge="LIMITED"},
     BitTabby = {Name="8-Bit Tabby Cat", Id=10159617728, Category="8-Bit", Kind="Accessory", Badge="LIMITED"},
     BitCoin = {Name="8-Bit Roblox Coin", Id=10159622004, Category="8-Bit", Kind="Accessory", Badge="LIMITED • FX"},
@@ -2138,6 +2146,7 @@ runtime.AppearanceCatalog = {
 
 runtime.AppearanceOrder = {
     "Headless", "Korblox", "HideHair",
+    "SSHF", "Stitchface", "PlayfulVampire", "BeastMode", "YumFace",
     "RC", "BitTabby", "BitCoin", "BitExtraLife", "BitHP", "BitClockwork", "BitEyeball", "BitTentacles", "BitBowler", "BitSwordpack",
     "FallFairy", "WinterFairy", "PatrickFairy", "SpringFairy",
     "GreenQueen", "BlueQueen", "PurpleQueen", "PinkQueen", "NavyQueen",
@@ -2152,7 +2161,7 @@ runtime.AppearanceOrder = {
 }
 
 runtime.AppearanceCategories = {
-    "8-Bit", "Fairies", "Queen of the Night", "Horns", "Valkyries",
+    "Caras", "8-Bit", "Fairies", "Queen of the Night", "Horns", "Valkyries",
     "Clockwork", "Dominus", "Sparkle Time", "Espalda", "Hombro", "Exclusivos"
 }
 
@@ -2162,6 +2171,9 @@ runtime.Appearance = {
     ToggleElements = {},
     OriginalHead = setmetatable({}, {__mode = "k"}),
     OriginalKorblox = setmetatable({}, {__mode = "k"}),
+    OriginalFace = setmetatable({}, {__mode = "k"}),
+    FaceTextureCache = {},
+    FaceToggleSyncing = false,
     HairVisualCache = setmetatable({}, {__mode = "k"}),
 
     -- Clonador de avatar: overlay visual local, sin ApplyDescription.
@@ -2298,6 +2310,149 @@ function runtime.ApplyHeadlessLayer(char)
     return true
 end
 
+function runtime.GetActiveFaceKey()
+    for _, key in ipairs(runtime.AppearanceOrder) do
+        local asset = runtime.AppearanceCatalog[key]
+        if asset and asset.Kind == "Face" and runtime.Appearance.Enabled[key] then
+            return key
+        end
+    end
+    return nil
+end
+
+function runtime.GetFaceTexture(key)
+    local asset = runtime.AppearanceCatalog[key]
+    if not asset or asset.Kind ~= "Face" then return nil end
+
+    local cached = runtime.Appearance.FaceTextureCache[key]
+    if cached and cached ~= "" then return cached end
+
+    local texture
+    local ok, objects = pcall(function()
+        return game:GetObjects("rbxassetid://" .. tostring(asset.Id))
+    end)
+
+    if ok and type(objects) == "table" then
+        for _, root in ipairs(objects) do
+            local decal
+            if root:IsA("Decal") then
+                decal = root
+            else
+                decal = root:FindFirstChildWhichIsA("Decal", true)
+            end
+            if decal and decal.Texture and decal.Texture ~= "" then
+                texture = decal.Texture
+                break
+            end
+        end
+        for _, root in ipairs(objects) do
+            pcall(function() root:Destroy() end)
+        end
+    end
+
+    if texture and texture ~= "" then
+        runtime.Appearance.FaceTextureCache[key] = texture
+        return texture
+    end
+    return nil
+end
+
+function runtime.GetFaceAppearanceSnapshot(model)
+    local head = model and model:FindFirstChild("Head")
+    if not head or not head:IsA("BasePart") then return nil end
+
+    local snap = runtime.Appearance.OriginalFace[model]
+    if snap and snap.Head == head and snap.Decal and snap.Decal.Parent == head then
+        return snap
+    end
+
+    local faceDecal
+    for _, child in ipairs(head:GetChildren()) do
+        if child:IsA("Decal") and (string_lower(child.Name) == "face" or child.Face == Enum.NormalId.Front) then
+            faceDecal = child
+            break
+        end
+    end
+
+    local created = false
+    if not faceDecal then
+        faceDecal = Instance.new("Decal")
+        faceDecal.Name = "face"
+        faceDecal.Face = Enum.NormalId.Front
+        faceDecal.Transparency = 0
+        faceDecal.Parent = head
+        created = true
+    end
+
+    snap = {
+        Head = head,
+        Decal = faceDecal,
+        Texture = faceDecal.Texture,
+        Transparency = faceDecal.Transparency,
+        Created = created,
+    }
+    runtime.Appearance.OriginalFace[model] = snap
+    return snap
+end
+
+function runtime.ApplyFaceLayer(model)
+    model = model or player.Character
+    if not model then return false end
+
+    local key = runtime.GetActiveFaceKey()
+    if not key then
+        local snap = runtime.Appearance.OriginalFace[model]
+        if not snap then return true end
+
+        if snap.Decal and snap.Decal.Parent then
+            if snap.Created then
+                pcall(function() snap.Decal:Destroy() end)
+            else
+                appearanceSafeSet(snap.Decal, "Texture", snap.Texture)
+                appearanceSafeSet(snap.Decal, "Transparency", snap.Transparency)
+            end
+        end
+        runtime.Appearance.OriginalFace[model] = nil
+        return true
+    end
+
+    local texture = runtime.GetFaceTexture(key)
+    if not texture then return false end
+
+    local snap = runtime.GetFaceAppearanceSnapshot(model)
+    if not snap or not snap.Decal then return false end
+
+    appearanceSafeSet(snap.Decal, "Texture", texture)
+    appearanceSafeSet(
+        snap.Decal,
+        "Transparency",
+        runtime.Appearance.Enabled.Headless and 1 or snap.Transparency
+    )
+    return true
+end
+
+function runtime.DisableOtherFaceToggles(activeKey)
+    if runtime.Appearance.FaceToggleSyncing then return end
+    runtime.Appearance.FaceToggleSyncing = true
+
+    local wasSuppressed = runtime.SuppressNotifications
+    runtime.SuppressNotifications = true
+    for _, otherKey in ipairs(runtime.AppearanceOrder) do
+        if otherKey ~= activeKey then
+            local otherAsset = runtime.AppearanceCatalog[otherKey]
+            if otherAsset and otherAsset.Kind == "Face" and runtime.Appearance.Enabled[otherKey] then
+                runtime.Appearance.Enabled[otherKey] = false
+                local toggle = runtime.Appearance.ToggleElements[otherKey]
+                if toggle then
+                    pcall(function() toggle:Set(false) end)
+                end
+            end
+        end
+    end
+    runtime.SuppressNotifications = wasSuppressed
+    runtime.Appearance.FaceToggleSyncing = false
+end
+
 function runtime.GetKorbloxSnapshot(char)
     local upper = char and char:FindFirstChild("RightUpperLeg")
     local lower = char and char:FindFirstChild("RightLowerLeg")
@@ -2378,6 +2533,7 @@ end
 function runtime.EnforceBodyAppearance(char)
     char = char or player.Character
     if not char then return end
+    runtime.ApplyFaceLayer(char)
     if runtime.Appearance.Enabled.Headless then runtime.ApplyHeadlessLayer(char) end
     if runtime.Appearance.Enabled.Korblox then runtime.ApplyKorbloxLayer(char) end
 end
@@ -2450,7 +2606,36 @@ function runtime.RebuildAppearanceBodyGuards(char)
         end
     end
 
-    if runtime.Appearance.Enabled.Headless or runtime.Appearance.Enabled.Korblox then
+    local activeFaceKey = runtime.GetActiveFaceKey()
+    if activeFaceKey then
+        local snap = runtime.GetFaceAppearanceSnapshot(char)
+        local desiredTexture = runtime.GetFaceTexture(activeFaceKey)
+        if snap and snap.Decal and desiredTexture then
+            local decal = snap.Decal
+            local faceConn = decal:GetPropertyChangedSignal("Texture"):Connect(function()
+                if not runtime.Alive or not runtime.GetActiveFaceKey() or not decal.Parent then return end
+                local wanted = runtime.GetFaceTexture(runtime.GetActiveFaceKey())
+                if wanted and decal.Texture ~= wanted then
+                    appearanceSafeSet(decal, "Texture", wanted)
+                end
+            end)
+            table_insert(runtime.Appearance.BodyGuardConnections, faceConn)
+        end
+
+        local head = char:FindFirstChild("Head")
+        if head and head:IsA("BasePart") then
+            local faceChildConn = head.DescendantAdded:Connect(function(d)
+                if runtime.GetActiveFaceKey() and d:IsA("Decal") then
+                    task.defer(function()
+                        if runtime.Alive and char.Parent then runtime.ApplyFaceLayer(char) end
+                    end)
+                end
+            end)
+            table_insert(runtime.Appearance.BodyGuardConnections, faceChildConn)
+        end
+    end
+
+    if runtime.Appearance.Enabled.Headless or runtime.Appearance.Enabled.Korblox or activeFaceKey then
         local conn = char.ChildAdded:Connect(function(child)
             if child.Name == "Head" or child.Name == "RightUpperLeg" or child.Name == "RightLowerLeg" or child.Name == "RightFoot" then
                 task.defer(function()
@@ -3097,6 +3282,8 @@ function runtime.UpdateAvatarCloneLayers()
     if not overlay or not overlay.Parent then return end
 
     runtime.AvatarCloneRestoreOverlayVisuals()
+
+    runtime.ApplyFaceLayer(overlay)
 
     if runtime.Appearance.Enabled.Headless then
         local head = overlay:FindFirstChild("Head")
@@ -5258,7 +5445,7 @@ function runtime.FastRestoreAppearanceOnRespawn(char, generation)
     if not runtime.Alive or not humanoid or not char.Parent then return end
     if generation and generation ~= runtime.Appearance.RespawnGeneration then return end
 
-    if runtime.Appearance.Enabled.Headless or hasEnabledAppearanceAccessory() then
+    if runtime.Appearance.Enabled.Headless or runtime.GetActiveFaceKey() or hasEnabledAppearanceAccessory() then
         if not char:FindFirstChild("Head") then
             char:WaitForChild("Head", 0.35)
         end
@@ -5325,6 +5512,20 @@ function runtime.SetAppearance(key, state)
     elseif asset.Kind == "HairToggle" then
         runtime.ApplyHairRemoval(char)
 
+    elseif asset.Kind == "Face" then
+        if state then
+            runtime.DisableOtherFaceToggles(key)
+        end
+        local ok = runtime.ApplyFaceLayer(char)
+        runtime.EnforceBodyAppearance(char)
+        runtime.RebuildAppearanceBodyGuards(char)
+        if state and not ok then
+            showBottomMessage("No se pudo cargar la textura de " .. asset.Name .. ".")
+            runtime.Appearance.Enabled[key] = false
+            local toggle = runtime.Appearance.ToggleElements[key]
+            if toggle then task.defer(function() pcall(function() toggle:Set(false) end) end) end
+        end
+
     else
         local ok = runtime.ApplyAppearanceAccessory(key, char)
         if state and not ok then
@@ -5364,6 +5565,7 @@ function runtime.RestoreAppearance()
             local asset = runtime.AppearanceCatalog[key]
             if asset and asset.Kind == "Accessory" then runtime.RemoveAppearanceAccessory(key, char) end
         end
+        runtime.ApplyFaceLayer(char)
         runtime.ApplyHeadlessLayer(char)
         runtime.ApplyKorbloxLayer(char)
         runtime.ApplyHairRemoval(char)
@@ -7165,6 +7367,8 @@ end
 local function applyAppearanceStudioBodyLayers(model)
     if not model then return end
 
+    runtime.ApplyFaceLayer(model)
+
     if runtime.Appearance.Enabled.Headless then
         local head = model:FindFirstChild("Head")
         if head and head:IsA("BasePart") then
@@ -8256,12 +8460,13 @@ for _, category in ipairs(runtime.AppearanceCategories) do
     for _, key in ipairs(runtime.AppearanceOrder) do
         local asset = runtime.AppearanceCatalog[key]
 
-        if asset and asset.Kind == "Accessory" and asset.Category == category then
+        if asset and (asset.Kind == "Accessory" or asset.Kind == "Face") and asset.Category == category then
             local capturedKey = key
             local baseOrder = nextAppearanceOrder()
 
             local toggle = Tabs.Apariencia:Toggle({
                 Title = asset.Name,
+                Desc = asset.Kind == "Face" and "Cara local · solo una activa a la vez" or nil,
                 Value = false,
                 Callback = function(state)
                     runtime.SetAppearance(capturedKey, state)
@@ -8270,10 +8475,12 @@ for _, category in ipairs(runtime.AppearanceCategories) do
 
             placeAppearanceElement(toggle, baseOrder)
             runtime.Appearance.ToggleElements[capturedKey] = toggle
-            runtime.Appearance.EditorSlots[capturedKey] = {
-                BaseOrder = baseOrder,
-                Controls = nil,
-            }
+            if asset.Kind == "Accessory" then
+                runtime.Appearance.EditorSlots[capturedKey] = {
+                    BaseOrder = baseOrder,
+                    Controls = nil,
+                }
+            end
 
             if capturedKey == "RC" then UIElements.TogAppearanceRC = toggle end
             if capturedKey == "Fiery" then UIElements.TogAppearanceFiery = toggle end
@@ -8284,7 +8491,7 @@ end
 
 local restoreAppearanceButton = Tabs.Apariencia:Button({
     Title = "Restaurar apariencia completa",
-    Desc = "Restaura tu avatar base y quita Headless, Korblox, HideHair y todos los limiteds aplicados por XeroHub.",
+    Desc = "Restaura tu avatar base y quita Headless, Korblox, caras, HideHair y todos los limiteds aplicados por XeroHub.",
     Callback = function()
         runtime.RestoreAppearance()
         local wasSuppressed = runtime.SuppressNotifications

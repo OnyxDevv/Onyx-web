@@ -2428,20 +2428,32 @@ function runtime.DestroyFaceClassicVisual(model)
     end
 end
 
-local CLASSIC_FACE_SIZE_MULTIPLIER = 0.97
+local function getClassicFaceHeadScale(model)
+    -- Una cara clásica debe conservar la geometría estándar de Roblox. Para igualar
+    -- el tamaño relativo de la skin usamos únicamente HeadScale, no las dimensiones
+    -- X/Y/Z de una Dynamic Head (esas dimensiones describen otra malla y deformaban
+    -- o empequeñecían el reemplazo clásico).
+    local humanoid = model and model:FindFirstChildOfClass("Humanoid")
+    if not humanoid then return 1 end
 
-local function getClassicFaceUniformScale(head)
-    -- Conserva la forma clásica 2:1:1. Sólo copiamos el tamaño GENERAL del head
-    -- original, usando la mediana de sus tres escalas para ignorar ejes deformados
-    -- de Dynamic Heads/custom heads. El multiplicador permite un ajuste uniforme
-    -- mínimo sin volver a deformar la cara por eje.
-    if not head or not head:IsA("BasePart") then return CLASSIC_FACE_SIZE_MULTIPLIER end
-    local size = head.Size
-    local sx = math.max(0.01, size.X / 2)
-    local sy = math.max(0.01, size.Y)
-    local sz = math.max(0.01, size.Z)
-    local uniform = sx + sy + sz - math.min(sx, sy, sz) - math.max(sx, sy, sz)
-    return math.clamp(uniform * CLASSIC_FACE_SIZE_MULTIPLIER, 0.65, 1.8)
+    -- En un Character/modelo ya escalado, este NumberValue representa el HeadScale
+    -- realmente aplicado y evita reconstruir HumanoidDescription en el hot path.
+    local scaleValue = humanoid:FindFirstChild("HeadScale")
+    if scaleValue and scaleValue:IsA("NumberValue") then
+        return math.clamp(tonumber(scaleValue.Value) or 1, 0.5, 2)
+    end
+
+    -- Fallback para templates/previews donde Roblox no haya creado el NumberValue.
+    local ok, description = pcall(function()
+        return humanoid:GetAppliedDescription()
+    end)
+    if ok and description then
+        local headScale = math.clamp(tonumber(description.HeadScale) or 1, 0.5, 2)
+        pcall(function() description:Destroy() end)
+        return headScale
+    end
+
+    return 1
 end
 
 function runtime.SyncFaceClassicVisual(model)
@@ -2478,13 +2490,21 @@ function runtime.SyncFaceClassicVisual(model)
         appearanceSafeSet(part, "Color", head.Color)
         appearanceSafeSet(part, "CastShadow", head.CastShadow)
 
-        local uniformScale = getClassicFaceUniformScale(head)
-        part.Size = Vector3.new(2, 1, 1) * uniformScale
+        -- El Part conserva siempre la caja clásica. El tamaño visual real de la
+        -- cabeza lo controla el SpecialMesh con la escala clásica 1.25 * HeadScale.
+        part.Size = Vector3.new(2, 1, 1)
+
+        local headScale = entry.HeadScale or getClassicFaceHeadScale(model)
+        local humanoid = model:FindFirstChildOfClass("Humanoid")
+        local scaleValue = humanoid and humanoid:FindFirstChild("HeadScale")
+        if scaleValue and scaleValue:IsA("NumberValue") then
+            headScale = math.clamp(tonumber(scaleValue.Value) or headScale, 0.5, 2)
+            entry.HeadScale = headScale
+        end
 
         local mesh = entry.Mesh
         if mesh then
-            -- El decal clásico depende de estas proporciones. No deformar por eje.
-            mesh.Scale = Vector3.new(1, 1, 1)
+            mesh.Scale = Vector3.new(1.25, 1.25, 1.25) * headScale
         end
 
         -- El visual está fuera del Character/overlay, por lo que CameraModule no lo
@@ -2539,11 +2559,11 @@ function runtime.CreateFaceClassicVisual(model, texture)
     local isLive = model == player.Character
         or (cloneState and cloneState.Overlay == model)
 
-    local uniformScale = getClassicFaceUniformScale(head)
+    local headScale = getClassicFaceHeadScale(model)
 
     local part = Instance.new("Part")
     part.Name = "Xero_FaceClassicVisual"
-    part.Size = Vector3.new(2, 1, 1) * uniformScale
+    part.Size = Vector3.new(2, 1, 1)
     part.CFrame = head.CFrame
     part.Color = head.Color
     part.Material = Enum.Material.SmoothPlastic
@@ -2560,7 +2580,7 @@ function runtime.CreateFaceClassicVisual(model, texture)
     local mesh = Instance.new("SpecialMesh")
     mesh.Name = "Xero_ClassicHeadMesh"
     mesh.MeshType = Enum.MeshType.Head
-    mesh.Scale = Vector3.new(1, 1, 1)
+    mesh.Scale = Vector3.new(1.25, 1.25, 1.25) * headScale
     mesh.Parent = part
 
     local decal = Instance.new("Decal")
@@ -2575,6 +2595,7 @@ function runtime.CreateFaceClassicVisual(model, texture)
         Part = part,
         Mesh = mesh,
         Decal = decal,
+        HeadScale = headScale,
         Static = not isLive,
     }
     runtime.Appearance.FaceClassicVisuals[model] = entry

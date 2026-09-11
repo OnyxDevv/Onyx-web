@@ -7809,6 +7809,24 @@ function runtime.RefreshAppearanceStudioPreview()
         pcall(function()
             model:PivotTo(CFrame.new())
         end)
+
+        -- La cabeza clásica de caras es un visual auxiliar. En el editor, el WeldConstraint
+        -- puede conservar el CFrame previo al PivotTo y dejarla flotando lejos del avatar.
+        -- Aquí ya no necesitamos física ni sync: la cámara es la que rota alrededor del modelo.
+        local faceVisual = model:FindFirstChild("Xero_FaceClassicVisual", true)
+        local previewHead = model:FindFirstChild("Head")
+        if faceVisual and faceVisual:IsA("BasePart")
+            and previewHead and previewHead:IsA("BasePart") then
+            local faceWeld = faceVisual:FindFirstChild("Xero_FaceClassicWeld")
+            if faceWeld then
+                pcall(function() faceWeld:Destroy() end)
+            end
+            faceVisual.CFrame = previewHead.CFrame
+            faceVisual.AssemblyLinearVelocity = Vector3.zero
+            faceVisual.AssemblyAngularVelocity = Vector3.zero
+            faceVisual.Anchored = true
+        end
+
         if previewRoot and previewRoot.Parent then
             previewRoot.Anchored = true
         end

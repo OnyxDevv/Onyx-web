@@ -12900,6 +12900,10 @@ function modes.sync()
     modes.syncing = false
 end
 function modes.restore()
+    if modes.customConnections then
+        for _, connection in ipairs(modes.customConnections) do connection:Disconnect() end
+        modes.customConnections = nil
+    end
     local active = modes.active
     modes.active = nil
     if active and modes.callbacks[active] then pcall(modes.callbacks[active], false) end
@@ -12944,6 +12948,7 @@ modes.presets = {
 function modes.updateIntensity()
     local preset = modes.presets[modes.active]
     if not preset then return end
+    if preset.sky == "Custom" then return end -- Original image: no tint, bloom or exposure blending.
     local amount = modes.intensity
     local base = modes.snapshot.lighting
     Lighting.Ambient = base.Ambient:Lerp(preset.ambient, amount)
@@ -12959,6 +12964,55 @@ function modes.updateIntensity()
         elseif effect:IsA("Atmosphere") then effect.Density = (preset.atmosphere or 0)*amount end
     end
 end
+-- Keep the image unobstructed, including effects inserted later by the game.
+function modes.clearCustomSky()
+    local saved = modes.snapshot
+    modes.customConnections = {}
+    local parked, watchedClouds, watchedParents = {}, {}, {}
+    local function watch(signal, callback)
+        table.insert(modes.customConnections, signal:Connect(callback))
+    end
+    local function suppress(object)
+        if modes.active ~= "Cielo personalizado" then return end
+        for _, owned in ipairs(modes.effects) do if object == owned then return end end
+        if object:IsA("Sky") or object:IsA("Atmosphere") or object:IsA("PostEffect") then
+            if not parked[object] then
+                parked[object] = true
+                table.insert(saved.hidden, {object, object.Parent})
+            end
+            object.Parent = nil
+        elseif object:IsA("Clouds") then
+            if saved.clouds[object] == nil then saved.clouds[object] = object.Enabled end
+            object.Enabled = false
+            if not watchedClouds[object] then
+                watchedClouds[object] = true
+                watch(object:GetPropertyChangedSignal("Enabled"), function()
+                    if object.Enabled then object.Enabled = false end
+                end)
+            end
+        end
+    end
+    local function bind(parent)
+        if not parent or watchedParents[parent] then return end
+        watchedParents[parent] = true
+        watch(parent.ChildAdded, suppress)
+        for _, object in ipairs(parent:GetChildren()) do suppress(object) end
+    end
+    bind(Lighting)
+    bind(terrain)
+    bind(workspace.CurrentCamera)
+    -- Workspace is checked only for direct Clouds, never map descendants.
+    for _, object in ipairs(workspace:GetChildren()) do if object:IsA("Clouds") then suppress(object) end end
+    watch(workspace.ChildAdded, function(object) if object:IsA("Clouds") then suppress(object) end end)
+    watch(workspace:GetPropertyChangedSignal("CurrentCamera"), function() bind(workspace.CurrentCamera) end)
+    local neutral = {ClockTime=14, ExposureCompensation=0, FogStart=1000000000, FogEnd=1000000000}
+    for property, value in pairs(neutral) do
+        Lighting[property] = value
+        watch(Lighting:GetPropertyChangedSignal(property), function()
+            if Lighting[property] ~= value then Lighting[property] = value end
+        end)
+    end
+end
 function modes.applyPreset(name)
     local preset = modes.presets[name]
     local faces = skies[preset.sky]
@@ -12966,8 +13020,10 @@ function modes.applyPreset(name)
     for index, property in ipairs({"SkyboxBk","SkyboxDn","SkyboxFt","SkyboxLf","SkyboxRt","SkyboxUp"}) do
         sky[property] = "rbxassetid://" .. faces[index]
     end
-    addEffect("ColorCorrectionEffect")
-    addEffect("BloomEffect", {Size=28, Threshold=0.9})
+    if preset.sky ~= "Custom" then
+        addEffect("ColorCorrectionEffect")
+        addEffect("BloomEffect", {Size=28, Threshold=0.9})
+    end
     if preset.rays then addEffect("SunRaysEffect", {Spread=0.8}) end
     if preset.atmosphere then addEffect("Atmosphere", {Color=rgb(165,165,183), Decay=rgb(80,75,95), Haze=1.2, Glare=0}) end
     Lighting.ClockTime = preset.time
@@ -12982,6 +13038,7 @@ function modes.applyPreset(name)
     Lighting.FogEnd = preset.fog or 100000
     Lighting.FogColor = preset.outdoor
     modes.updateIntensity()
+    if preset.sky == "Custom" then modes.clearCustomSky() end
     -- Preload once per selection; stale completions cannot alter another mode.
     local selectedSky = sky
     task.spawn(function()
@@ -13300,7 +13357,7 @@ Tabs.Graficos:Input({
 })
 Tabs.Graficos:Button({
     Title = "Aplicar cielo personalizado",
-    Desc = "Usa tu imagen con iluminación y resplandor. Puedes pegar un ID o rbxassetid://ID.",
+    Desc = "Reemplaza el cielo con tu imagen, sin nubes, niebla ni filtros. Pega un ID o rbxassetid://ID.",
     Callback = function()
         local text = modes.customInput:match("^%s*(.-)%s*$")
         if text == "" then text = skies.Custom[1] end
@@ -13317,7 +13374,7 @@ Tabs.Graficos:Button({
 })
 Tabs.Graficos:Slider({
     Title = "Intensidad del ambiente",
-    Desc = "Ajusta el color y resplandor de los ambientes y el cielo personalizado. El cielo conserva su textura.",
+    Desc = "Ajusta los ambientes. El cielo personalizado conserva su imagen sin filtros.",
     Step = 0.05,
     Value = {Min = 0, Max = 1, Default = 0.75},
     Callback = function(value)

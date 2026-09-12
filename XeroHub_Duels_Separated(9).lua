@@ -12928,18 +12928,20 @@ local function addEffect(className, properties)
 end
 local rgb = Color3.fromRGB
 -- Face order: back, down, front, left, right, up.
+local SKY_FACE_KEYS = {"bk", "dn", "ft", "lf", "rt", "up"}
+local SKY_PROPERTIES = {"SkyboxBk","SkyboxDn","SkyboxFt","SkyboxLf","SkyboxRt","SkyboxUp"}
+
 local skies = {
-    Xero = {"92427017914292","92427017914292","92427017914292","92427017914292","92427017914292","92427017914292"},
     Custom = {"74492294960478","74492294960478","74492294960478","74492294960478","74492294960478","74492294960478"},
     Galaxy = {149397692,149397686,149397697,149397684,149397688,149397702},
     Space = {159454299,159454296,159454293,159454286,159454300,159454288},
     Sunset = {323494035,323494368,323494130,323494252,323494067,323493360},
     Night = {169210090,169210108,169210121,169210133,169210143,169210149},
 }
+
 modes.customInput = "74492294960478"
 modes.presets = {
-    ["Cielo Xero"] = {sky="Xero", time=14, ambient=rgb(65,65,72), outdoor=rgb(95,95,105), tint=rgb(255,255,255), bloom=0, contrast=0, saturation=0, exposure=0, stars=0, celestial=false},
-    ["Cielo personalizado"] = {sky="Custom", time=0, ambient=rgb(65,65,72), outdoor=rgb(95,95,105), tint=rgb(255,255,255), bloom=0.18, contrast=0.06, saturation=0, exposure=0.12, stars=0, celestial=false},
+    ["Cielo personalizado"] = {sky="Custom", cleanSky=true, time=0, ambient=rgb(65,65,72), outdoor=rgb(95,95,105), tint=rgb(255,255,255), bloom=0.18, contrast=0.06, saturation=0, exposure=0.12, stars=0, celestial=false},
     Galaxy = {sky="Galaxy", time=0, ambient=rgb(64,40,95), outdoor=rgb(83,58,122), tint=rgb(224,203,255), bloom=0.35, contrast=0.12, saturation=0.18, exposure=0.1, stars=3000},
     ["Deep Space"] = {sky="Space", time=0, ambient=rgb(25,37,61), outdoor=rgb(47,67,102), tint=rgb(193,219,255), bloom=0.22, contrast=0.18, saturation=-0.08, exposure=0.08, stars=5000},
     ["Crimson Moon"] = {sky="Night", time=0, ambient=rgb(75,28,32), outdoor=rgb(115,44,50), tint=rgb(255,132,128), bloom=0.3, contrast=0.15, saturation=0.1, exposure=0.08, stars=1800, moon=24},
@@ -12947,10 +12949,172 @@ modes.presets = {
     ["Golden Sunset"] = {sky="Sunset", time=17.6, ambient=rgb(100,74,57), outdoor=rgb(145,108,77), tint=rgb(255,222,174), bloom=0.25, contrast=0.08, saturation=0.15, exposure=0.12, rays=0.09, stars=0},
     Gothic = {sky="Night", time=18.5, ambient=rgb(48,46,59), outdoor=rgb(72,70,85), tint=rgb(208,210,227), bloom=0.1, contrast=0.16, saturation=-0.55, exposure=0.02, stars=300, fog=650, atmosphere=0.27},
 }
+
+-- ============================================================
+-- SKYBOX REPO: descarga las seis caras sólo cuando se seleccionan.
+-- No necesita subir las imágenes a Roblox. Los archivos se cachean
+-- localmente y se registran con getcustomasset/getsynasset.
+-- ============================================================
+local skyEnv = (getgenv and getgenv()) or _G
+local SKYBOX_REPO_BASE = tostring(
+    skyEnv.XERO_SKYBOX_BASE_URL
+    or "https://raw.githubusercontent.com/OnyxDevv/Onyx-web/refs/heads/main/skyboxes"
+):gsub("/+$", "")
+
+local customAsset = getcustomasset
+    or getsynasset
+    or (syn and (syn.getcustomasset or syn.getsynasset))
+
+local function skyHttpGet(url)
+    local req = (syn and syn.request) or (http and http.request) or http_request or request
+    if req then
+        local ok, response = pcall(function()
+            return req({
+                Url = url,
+                Method = "GET",
+                Headers = {["User-Agent"] = "XeroHub-Skybox/1.0"},
+            })
+        end)
+        if ok and response then
+            local code = tonumber(response.StatusCode or response.Status or 200) or 200
+            if code >= 200 and code < 300 and type(response.Body) == "string" then
+                return response.Body
+            end
+        end
+    end
+
+    local ok, body = pcall(function()
+        return game:HttpGet(url)
+    end)
+    if ok and type(body) == "string" then return body end
+    return nil
+end
+
+local function ensureSkyFolder(path)
+    if not makefolder then return end
+    local current = ""
+    for part in string.gmatch(path, "[^/]+") do
+        current = current == "" and part or (current .. "/" .. part)
+        if not isfolder or not isfolder(current) then
+            pcall(makefolder, current)
+        end
+    end
+end
+
+local function safeRepoToken(value)
+    value = tostring(value or "")
+    if value:match("^[%w%._%-]+$") then return value end
+    return nil
+end
+
+modes.remoteSkyNames = {}
+modes.remoteSkyCache = {}
+
+function modes.loadRemoteManifest()
+    if not customAsset or not writefile then
+        return false, "Tu ejecutor no soporta getcustomasset/writefile."
+    end
+
+    local raw = skyHttpGet(SKYBOX_REPO_BASE .. "/manifest.json")
+    if not raw then return false, "No se pudo descargar manifest.json." end
+
+    local ok, decoded = pcall(function()
+        return HttpService:JSONDecode(raw)
+    end)
+    if not ok or type(decoded) ~= "table" then
+        return false, "manifest.json no es válido."
+    end
+
+    local list = decoded.skyboxes or decoded
+    if type(list) ~= "table" then return false, "El manifest no contiene skyboxes." end
+
+    local added = {}
+    for _, pack in ipairs(list) do
+        if type(pack) == "table" then
+            local name = tostring(pack.name or "")
+            local folder = safeRepoToken(pack.folder)
+            if name ~= "" and folder then
+                local displayName = "Skybox · " .. name
+                if not modes.presets[displayName] then
+                    local files = {}
+                    local valid = true
+                    for _, face in ipairs(SKY_FACE_KEYS) do
+                        local fileName = pack.files and safeRepoToken(pack.files[face]) or (face .. ".png")
+                        if not fileName then valid = false break end
+                        files[face] = fileName
+                    end
+                    if valid then
+                        modes.presets[displayName] = {
+                            remote = true,
+                            cleanSky = true,
+                            repoName = name,
+                            folder = folder,
+                            files = files,
+                            stars = 0,
+                            celestial = false,
+                        }
+                        table.insert(added, displayName)
+                    end
+                end
+            end
+        end
+    end
+
+    table.sort(added)
+    modes.remoteSkyNames = added
+    return #added > 0
+end
+
+function modes.loadRemoteSkyFaces(preset)
+    if not customAsset or not writefile then
+        error("Este ejecutor necesita getcustomasset/getsynasset + writefile para cielos del repo.")
+    end
+
+    local cacheKey = preset.folder
+    if modes.remoteSkyCache[cacheKey] then
+        return modes.remoteSkyCache[cacheKey]
+    end
+
+    local root = "XeroHub/skybox_cache/" .. preset.folder
+    ensureSkyFolder(root)
+
+    local result = {}
+    for index, face in ipairs(SKY_FACE_KEYS) do
+        local remoteName = preset.files[face]
+        local extension = remoteName:match("(%.[%w]+)$") or ".png"
+        local localPath = root .. "/" .. face .. extension
+
+        local exists = isfile and isfile(localPath)
+        if not exists then
+            local body = skyHttpGet(
+                SKYBOX_REPO_BASE .. "/" .. preset.folder .. "/" .. remoteName
+            )
+            if not body or #body < 64 then
+                error("No se pudo descargar la cara " .. face .. " de " .. tostring(preset.repoName))
+            end
+            local ok, err = pcall(writefile, localPath, body)
+            if not ok then
+                error("No se pudo guardar " .. localPath .. ": " .. tostring(err))
+            end
+        end
+
+        local ok, asset = pcall(customAsset, localPath)
+        if not ok or type(asset) ~= "string" or asset == "" then
+            error("getcustomasset falló con " .. localPath)
+        end
+        result[index] = asset
+    end
+
+    modes.remoteSkyCache[cacheKey] = result
+    return result
+end
+
+-- Carga sólo el JSON pequeño al iniciar. Las imágenes se descargan bajo demanda.
+pcall(modes.loadRemoteManifest)
 function modes.updateIntensity()
     local preset = modes.presets[modes.active]
     if not preset then return end
-    if (preset.sky == "Custom" or preset.sky == "Xero") then return end -- Original image: no tint, bloom or exposure blending.
+    if preset.remote or preset.sky == "Custom" then return end -- Repo/custom: conserva la imagen sin filtros.
     local amount = modes.intensity
     local base = modes.snapshot.lighting
     Lighting.Ambient = base.Ambient:Lerp(preset.ambient, amount)
@@ -12975,7 +13139,8 @@ function modes.clearCustomSky()
         table.insert(modes.customConnections, signal:Connect(callback))
     end
     local function suppress(object)
-        if modes.active ~= "Cielo personalizado" and modes.active ~= "Cielo Xero" then return end
+        local activePreset = modes.presets[modes.active]
+        if not activePreset or not activePreset.cleanSky then return end
         for _, owned in ipairs(modes.effects) do if object == owned then return end end
         if object:IsA("Sky") or object:IsA("Atmosphere") or object:IsA("PostEffect") then
             if not parked[object] then
@@ -13017,30 +13182,45 @@ function modes.clearCustomSky()
 end
 function modes.applyPreset(name)
     local preset = modes.presets[name]
-    local faces = skies[preset.sky]
-    local sky = addEffect("Sky", {CelestialBodiesShown=preset.celestial ~= false, StarCount=preset.stars, MoonAngularSize=preset.moon or 12, SunAngularSize=14})
-    for index, property in ipairs({"SkyboxBk","SkyboxDn","SkyboxFt","SkyboxLf","SkyboxRt","SkyboxUp"}) do
-        sky[property] = "rbxassetid://" .. faces[index]
+    local faces = preset.remote and modes.loadRemoteSkyFaces(preset) or skies[preset.sky]
+    if not faces or #faces < 6 then error("Skybox incompleto: " .. tostring(name)) end
+
+    local sky = addEffect("Sky", {
+        CelestialBodiesShown = preset.celestial ~= false,
+        StarCount = preset.stars or 0,
+        MoonAngularSize = preset.moon or 12,
+        SunAngularSize = 14,
+    })
+
+    for index, property in ipairs(SKY_PROPERTIES) do
+        sky[property] = preset.remote and faces[index] or ("rbxassetid://" .. tostring(faces[index]))
     end
-    if (preset.sky ~= "Custom" and preset.sky ~= "Xero") then
-        addEffect("ColorCorrectionEffect")
-        addEffect("BloomEffect", {Size=28, Threshold=0.9})
+
+    if preset.remote then
+        -- Los packs del repo son skybox puro: no tint/bloom y no tocan el mapa.
+        modes.clearCustomSky()
+    else
+        if preset.sky ~= "Custom" then
+            addEffect("ColorCorrectionEffect")
+            addEffect("BloomEffect", {Size=28, Threshold=0.9})
+        end
+        if preset.rays then addEffect("SunRaysEffect", {Spread=0.8}) end
+        if preset.atmosphere then addEffect("Atmosphere", {Color=rgb(165,165,183), Decay=rgb(80,75,95), Haze=1.2, Glare=0}) end
+        Lighting.ClockTime = preset.time
+        Lighting.Brightness = 2
+        Lighting.GlobalShadows = true
+        Lighting.ShadowSoftness = 0.3
+        Lighting.EnvironmentDiffuseScale = 0.7
+        Lighting.EnvironmentSpecularScale = 1
+        Lighting.ColorShift_Top = rgb(0,0,0)
+        Lighting.ColorShift_Bottom = rgb(0,0,0)
+        Lighting.FogStart = 0
+        Lighting.FogEnd = preset.fog or 100000
+        Lighting.FogColor = preset.outdoor
+        modes.updateIntensity()
+        if preset.sky == "Custom" then modes.clearCustomSky() end
     end
-    if preset.rays then addEffect("SunRaysEffect", {Spread=0.8}) end
-    if preset.atmosphere then addEffect("Atmosphere", {Color=rgb(165,165,183), Decay=rgb(80,75,95), Haze=1.2, Glare=0}) end
-    Lighting.ClockTime = preset.time
-    Lighting.Brightness = 2
-    Lighting.GlobalShadows = true
-    Lighting.ShadowSoftness = 0.3
-    Lighting.EnvironmentDiffuseScale = 0.7
-    Lighting.EnvironmentSpecularScale = 1
-    Lighting.ColorShift_Top = rgb(0,0,0)
-    Lighting.ColorShift_Bottom = rgb(0,0,0)
-    Lighting.FogStart = 0
-    Lighting.FogEnd = preset.fog or 100000
-    Lighting.FogColor = preset.outdoor
-    modes.updateIntensity()
-    if (preset.sky == "Custom" or preset.sky == "Xero") then modes.clearCustomSky() end
+
     -- Preload once per selection; stale completions cannot alter another mode.
     local selectedSky = sky
     task.spawn(function()
@@ -13341,25 +13521,16 @@ UIElements.TogPink = modes.toggle("Pink Hour", {
 
 
 Tabs.Graficos:Section({Title = "Cielos y ambientes"})
-UIElements.TogXeroSky = Tabs.Graficos:Toggle({
-    Title = "Cielo Xero",
-    Desc = "Activo al iniciar. Apágalo para recuperar el cielo original del juego.",
-    Value = false,
-    Callback = function(value)
-        if modes.syncing then return end
-        if value then
-            modes.select("Cielo Xero")
-        elseif modes.active == "Cielo Xero" then
-            modes.select(nil)
-        end
-    end
-})
-modes.controls["Cielo Xero"] = UIElements.TogXeroSky
+local skyDropdownValues = {"Ninguno", "Galaxy", "Deep Space", "Crimson Moon", "Dreamy", "Golden Sunset", "Gothic"}
+for _, remoteName in ipairs(modes.remoteSkyNames or {}) do
+    table.insert(skyDropdownValues, remoteName)
+end
+table.insert(skyDropdownValues, "Cielo personalizado")
 
 modes.dropdown = Tabs.Graficos:Dropdown({
     Title = "Modo de ambiente",
-    Desc = "Cada modo combina cielo, iluminación y efectos. Se activa uno a la vez.",
-    Values = {"Ninguno", "Galaxy", "Deep Space", "Crimson Moon", "Dreamy", "Golden Sunset", "Gothic", "Cielo personalizado", "Cielo Xero"},
+    Desc = "Incluye skyboxes del repo. El pack elegido se descarga una sola vez y queda en caché local.",
+    Values = skyDropdownValues,
     Value = "Ninguno",
     Callback = function(value) modes.select(type(value) == "table" and value[1] or value) end
 })
@@ -13532,8 +13703,6 @@ Tabs.Graficos:Slider({
 
 
 
--- Activate once after all graphics controls exist; toggling OFF never schedules a restart.
-modes.select("Cielo Xero")
 end -- graphics scope
 
 Tabs.Farm:Section({Title = "Farmeo de Evento"})

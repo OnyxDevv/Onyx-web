@@ -1,0 +1,653 @@
+{
+  "version": 4,
+  "skyboxes": [
+    {
+      "name": "Black Hole",
+      "folder": "black-hole",
+      "files": {
+        "bk": "bk.png",
+        "dn": "dn.png",
+        "ft": "ft.png",
+        "lf": "lf.png",
+        "rt": "rt.png",
+        "up": "up.png"
+      }
+    },
+    {
+      "name": "Broken Sky",
+      "folder": "broken-sky",
+      "files": {
+        "bk": "bk.png",
+        "dn": "dn.png",
+        "ft": "ft.png",
+        "lf": "lf.png",
+        "rt": "rt.png",
+        "up": "up.png"
+      }
+    },
+    {
+      "name": "Castle Grounds",
+      "folder": "castle-grounds",
+      "files": {
+        "bk": "bk.png",
+        "dn": "dn.png",
+        "ft": "ft.png",
+        "lf": "lf.png",
+        "rt": "rt.png",
+        "up": "up.png"
+      }
+    },
+    {
+      "name": "Chill Gray",
+      "folder": "chill-gray",
+      "files": {
+        "bk": "bk.png",
+        "dn": "dn.png",
+        "ft": "ft.png",
+        "lf": "lf.png",
+        "rt": "rt.png",
+        "up": "up.png"
+      }
+    },
+    {
+      "name": "Aurora",
+      "folder": "aurora",
+      "files": {
+        "bk": "bk.png",
+        "dn": "dn.png",
+        "ft": "ft.png",
+        "lf": "lf.png",
+        "rt": "rt.png",
+        "up": "up.png"
+      }
+    },
+    {
+      "name": "Beautiful",
+      "folder": "beautiful",
+      "files": {
+        "bk": "bk.png",
+        "dn": "dn.png",
+        "ft": "ft.png",
+        "lf": "lf.png",
+        "rt": "rt.png",
+        "up": "up.png"
+      }
+    },
+    {
+      "name": "Emo",
+      "folder": "emo",
+      "files": {
+        "bk": "bk.png",
+        "dn": "dn.png",
+        "ft": "ft.png",
+        "lf": "lf.png",
+        "rt": "rt.png",
+        "up": "up.png"
+      }
+    },
+    {
+      "name": "Fade Blue Sky",
+      "folder": "fade-blue-sky",
+      "files": {
+        "bk": "bk.png",
+        "dn": "dn.png",
+        "ft": "ft.png",
+        "lf": "lf.png",
+        "rt": "rt.png",
+        "up": "up.png"
+      }
+    },
+    {
+      "name": "Forest",
+      "folder": "forest",
+      "files": {
+        "bk": "bk.png",
+        "dn": "dn.png",
+        "ft": "ft.png",
+        "lf": "lf.png",
+        "rt": "rt.png",
+        "up": "up.png"
+      }
+    },
+    {
+      "name": "Goodnight",
+      "folder": "goodnight",
+      "files": {
+        "bk": "bk.png",
+        "dn": "dn.png",
+        "ft": "ft.png",
+        "lf": "lf.png",
+        "rt": "rt.png",
+        "up": "up.png"
+      }
+    },
+    {
+      "name": "Grimnight",
+      "folder": "grimnight",
+      "files": {
+        "bk": "bk.png",
+        "dn": "dn.png",
+        "ft": "ft.png",
+        "lf": "lf.png",
+        "rt": "rt.png",
+        "up": "up.png"
+      }
+    },
+    {
+      "name": "Hades",
+      "folder": "hades",
+      "files": {
+        "bk": "bk.png",
+        "dn": "dn.png",
+        "ft": "ft.png",
+        "lf": "lf.png",
+        "rt": "rt.png",
+        "up": "up.png"
+      }
+    },
+    {
+      "name": "Hazy",
+      "folder": "hazy",
+      "files": {
+        "bk": "bk.png",
+        "dn": "dn.png",
+        "ft": "ft.png",
+        "lf": "lf.png",
+        "rt": "rt.png",
+        "up": "up.png"
+      }
+    },
+    {
+      "name": "Jungle CSGO",
+      "folder": "jungle-csgo",
+      "files": {
+        "bk": "bk.png",
+        "dn": "dn.png",
+        "ft": "ft.png",
+        "lf": "lf.png",
+        "rt": "rt.png",
+        "up": "up.png"
+      }
+    },
+    {
+      "name": "Blue",
+      "folder": "blue",
+      "files": {
+        "bk": "bk.png",
+        "dn": "dn.png",
+        "ft": "ft.png",
+        "lf": "lf.png",
+        "rt": "rt.png",
+        "up": "up.png"
+      }
+    },
+    {
+      "name": "Chill Pink",
+      "folder": "chill-pink",
+      "files": {
+        "bk": "bk.png",
+        "dn": "dn.png",
+        "ft": "ft.png",
+        "lf": "lf.png",
+        "rt": "rt.png",
+        "up": "up.png"
+      }
+    },
+    {
+      "name": "Clear Skies",
+      "folder": "clear-skies",
+      "files": {
+        "bk": "bk.png",
+        "dn": "dn.png",
+        "ft": "ft.png",
+        "lf": "lf.png",
+        "rt": "rt.png",
+        "up": "up.png"
+      }
+    },
+    {
+      "name": "Cyan",
+      "folder": "cyan",
+      "files": {
+        "bk": "bk.png",
+        "dn": "dn.png",
+        "ft": "ft.png",
+        "lf": "lf.png",
+        "rt": "rt.png",
+        "up": "up.png"
+      }
+    },
+    {
+      "name": "Dead Star Forest",
+      "folder": "dead-star-forest",
+      "files": {
+        "bk": "bk.png",
+        "dn": "dn.png",
+        "ft": "ft.png",
+        "lf": "lf.png",
+        "rt": "rt.png",
+        "up": "up.png"
+      }
+    },
+    {
+      "name": "Elegant Morning Sky",
+      "folder": "elegant-morning-sky",
+      "files": {
+        "bk": "bk.png",
+        "dn": "dn.png",
+        "ft": "ft.png",
+        "lf": "lf.png",
+        "rt": "rt.png",
+        "up": "up.png"
+      }
+    },
+    {
+      "name": "Pumpkin Hill",
+      "folder": "pumpkin-hill",
+      "files": {
+        "bk": "bk.png",
+        "dn": "dn.png",
+        "ft": "ft.png",
+        "lf": "lf.png",
+        "rt": "rt.png",
+        "up": "up.png"
+      }
+    },
+    {
+      "name": "Purple Nebula",
+      "folder": "purple-nebula",
+      "files": {
+        "bk": "bk.png",
+        "dn": "dn.png",
+        "ft": "ft.png",
+        "lf": "lf.png",
+        "rt": "rt.png",
+        "up": "up.png"
+      }
+    },
+    {
+      "name": "Red",
+      "folder": "red",
+      "files": {
+        "bk": "bk.png",
+        "dn": "dn.png",
+        "ft": "ft.png",
+        "lf": "lf.png",
+        "rt": "rt.png",
+        "up": "up.png"
+      }
+    },
+    {
+      "name": "Light Blue",
+      "folder": "light-blue",
+      "files": {
+        "bk": "bk.png",
+        "dn": "dn.png",
+        "ft": "ft.png",
+        "lf": "lf.png",
+        "rt": "rt.png",
+        "up": "up.png"
+      }
+    },
+    {
+      "name": "Light Pink",
+      "folder": "light-pink",
+      "files": {
+        "bk": "bk.png",
+        "dn": "dn.png",
+        "ft": "ft.png",
+        "lf": "lf.png",
+        "rt": "rt.png",
+        "up": "up.png"
+      }
+    },
+    {
+      "name": "MC End Sky",
+      "folder": "mc-end-sky",
+      "files": {
+        "bk": "bk.png",
+        "dn": "dn.png",
+        "ft": "ft.png",
+        "lf": "lf.png",
+        "rt": "rt.png",
+        "up": "up.png"
+      }
+    },
+    {
+      "name": "MC Skybox",
+      "folder": "mc-skybox",
+      "files": {
+        "bk": "bk.png",
+        "dn": "dn.png",
+        "ft": "ft.png",
+        "lf": "lf.png",
+        "rt": "rt.png",
+        "up": "up.png"
+      }
+    },
+    {
+      "name": "Moonlight",
+      "folder": "moonlight",
+      "files": {
+        "bk": "bk.png",
+        "dn": "dn.png",
+        "ft": "ft.png",
+        "lf": "lf.png",
+        "rt": "rt.png",
+        "up": "up.png"
+      }
+    },
+    {
+      "name": "Neon Sky",
+      "folder": "neon-sky",
+      "files": {
+        "bk": "bk.png",
+        "dn": "dn.png",
+        "ft": "ft.png",
+        "lf": "lf.png",
+        "rt": "rt.png",
+        "up": "up.png"
+      }
+    },
+    {
+      "name": "Neon Sky 2",
+      "folder": "neon-sky-2",
+      "files": {
+        "bk": "bk.png",
+        "dn": "dn.png",
+        "ft": "ft.png",
+        "lf": "lf.png",
+        "rt": "rt.png",
+        "up": "up.png"
+      }
+    },
+    {
+      "name": "Night",
+      "folder": "night",
+      "files": {
+        "bk": "bk.png",
+        "dn": "dn.png",
+        "ft": "ft.png",
+        "lf": "lf.png",
+        "rt": "rt.png",
+        "up": "up.png"
+      }
+    },
+    {
+      "name": "Night Sky W Moon",
+      "folder": "night-sky-w-moon",
+      "files": {
+        "bk": "bk.png",
+        "dn": "dn.png",
+        "ft": "ft.png",
+        "lf": "lf.png",
+        "rt": "rt.png",
+        "up": "up.png"
+      }
+    },
+    {
+      "name": "Northern Lights",
+      "folder": "northern-lights",
+      "files": {
+        "bk": "bk.png",
+        "dn": "dn.png",
+        "ft": "ft.png",
+        "lf": "lf.png",
+        "rt": "rt.png",
+        "up": "up.png"
+      }
+    },
+    {
+      "name": "Oblivion",
+      "folder": "oblivion",
+      "files": {
+        "bk": "bk.png",
+        "dn": "dn.png",
+        "ft": "ft.png",
+        "lf": "lf.png",
+        "rt": "rt.png",
+        "up": "up.png"
+      }
+    },
+    {
+      "name": "Orange",
+      "folder": "orange",
+      "files": {
+        "bk": "bk.png",
+        "dn": "dn.png",
+        "ft": "ft.png",
+        "lf": "lf.png",
+        "rt": "rt.png",
+        "up": "up.png"
+      }
+    },
+    {
+      "name": "Overcast",
+      "folder": "overcast",
+      "files": {
+        "bk": "bk.png",
+        "dn": "dn.png",
+        "ft": "ft.png",
+        "lf": "lf.png",
+        "rt": "rt.png",
+        "up": "up.png"
+      }
+    },
+    {
+      "name": "Pandora",
+      "folder": "pandora",
+      "files": {
+        "bk": "bk.png",
+        "dn": "dn.png",
+        "ft": "ft.png",
+        "lf": "lf.png",
+        "rt": "rt.png",
+        "up": "up.png"
+      }
+    },
+    {
+      "name": "Peaceful Morning Sky",
+      "folder": "peaceful-morning-sky",
+      "files": {
+        "bk": "bk.png",
+        "dn": "dn.png",
+        "ft": "ft.png",
+        "lf": "lf.png",
+        "rt": "rt.png",
+        "up": "up.png"
+      }
+    },
+    {
+      "name": "Pink Sunrise",
+      "folder": "pink-sunrise",
+      "files": {
+        "bk": "bk.png",
+        "dn": "dn.png",
+        "ft": "ft.png",
+        "lf": "lf.png",
+        "rt": "rt.png",
+        "up": "up.png"
+      }
+    },
+    {
+      "name": "Winterness",
+      "folder": "winterness",
+      "files": {
+        "bk": "bk.png",
+        "dn": "dn.png",
+        "ft": "ft.png",
+        "lf": "lf.png",
+        "rt": "rt.png",
+        "up": "up.png"
+      }
+    },
+    {
+      "name": "Xen Skybox",
+      "folder": "xen-skybox",
+      "files": {
+        "bk": "bk.png",
+        "dn": "dn.png",
+        "ft": "ft.png",
+        "lf": "lf.png",
+        "rt": "rt.png",
+        "up": "up.png"
+      }
+    },
+    {
+      "name": "Zen End",
+      "folder": "zen-end",
+      "files": {
+        "bk": "bk.png",
+        "dn": "dn.png",
+        "ft": "ft.png",
+        "lf": "lf.png",
+        "rt": "rt.png",
+        "up": "up.png"
+      }
+    },
+    {
+      "name": "Vibrant Blue Skies",
+      "folder": "vibrant-blue-skies",
+      "files": {
+        "bk": "bk.png",
+        "dn": "dn.png",
+        "ft": "ft.png",
+        "lf": "lf.png",
+        "rt": "rt.png",
+        "up": "up.png"
+      }
+    },
+    {
+      "name": "Whomp Fortress",
+      "folder": "whomp-fortress",
+      "files": {
+        "bk": "bk.png",
+        "dn": "dn.png",
+        "ft": "ft.png",
+        "lf": "lf.png",
+        "rt": "rt.png",
+        "up": "up.png"
+      }
+    },
+    {
+      "name": "Universe",
+      "folder": "universe",
+      "files": {
+        "bk": "bk.png",
+        "dn": "dn.png",
+        "ft": "ft.png",
+        "lf": "lf.png",
+        "rt": "rt.png",
+        "up": "up.png"
+      }
+    },
+    {
+      "name": "Utter East",
+      "folder": "utter-east",
+      "files": {
+        "bk": "bk.png",
+        "dn": "dn.png",
+        "ft": "ft.png",
+        "lf": "lf.png",
+        "rt": "rt.png",
+        "up": "up.png"
+      }
+    },
+    {
+      "name": "Nibiru BL",
+      "folder": "nibiru-bl",
+      "files": {
+        "bk": "bk.png",
+        "dn": "dn.png",
+        "ft": "ft.png",
+        "lf": "lf.png",
+        "rt": "rt.png",
+        "up": "up.png"
+      }
+    },
+    {
+      "name": "Purple Sky",
+      "folder": "purple-sky",
+      "files": {
+        "bk": "bk.png",
+        "dn": "dn.png",
+        "ft": "ft.png",
+        "lf": "lf.png",
+        "rt": "rt.png",
+        "up": "up.png"
+      }
+    },
+    {
+      "name": "Sunset Sky",
+      "folder": "sunset-sky",
+      "files": {
+        "bk": "bk.png",
+        "dn": "dn.png",
+        "ft": "ft.png",
+        "lf": "lf.png",
+        "rt": "rt.png",
+        "up": "up.png"
+      }
+    },
+    {
+      "name": "Sky Universe",
+      "folder": "sky-universe",
+      "files": {
+        "bk": "bk.png",
+        "dn": "dn.png",
+        "ft": "ft.png",
+        "lf": "lf.png",
+        "rt": "rt.png",
+        "up": "up.png"
+      }
+    },
+    {
+      "name": "Sky 2006",
+      "folder": "sky-2006",
+      "files": {
+        "bk": "bk.png",
+        "dn": "dn.png",
+        "ft": "ft.png",
+        "lf": "lf.png",
+        "rt": "rt.png",
+        "up": "up.png"
+      }
+    },
+    {
+      "name": "Space Blue",
+      "folder": "space-blue",
+      "files": {
+        "bk": "bk.png",
+        "dn": "dn.png",
+        "ft": "ft.png",
+        "lf": "lf.png",
+        "rt": "rt.png",
+        "up": "up.png"
+      }
+    },
+    {
+      "name": "Spooky",
+      "folder": "spooky",
+      "files": {
+        "bk": "bk.png",
+        "dn": "dn.png",
+        "ft": "ft.png",
+        "lf": "lf.png",
+        "rt": "rt.png",
+        "up": "up.png"
+      }
+    },
+    {
+      "name": "Sunny Sky",
+      "folder": "sunny-sky",
+      "files": {
+        "bk": "bk.png",
+        "dn": "dn.png",
+        "ft": "ft.png",
+        "lf": "lf.png",
+        "rt": "rt.png",
+        "up": "up.png"
+      }
+    }
+  ]
+}

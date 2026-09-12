@@ -12929,6 +12929,7 @@ end
 local rgb = Color3.fromRGB
 -- Face order: back, down, front, left, right, up.
 local skies = {
+    Xero = {"92427017914292","92427017914292","92427017914292","92427017914292","92427017914292","92427017914292"},
     Custom = {"74492294960478","74492294960478","74492294960478","74492294960478","74492294960478","74492294960478"},
     Galaxy = {149397692,149397686,149397697,149397684,149397688,149397702},
     Space = {159454299,159454296,159454293,159454286,159454300,159454288},
@@ -12937,6 +12938,7 @@ local skies = {
 }
 modes.customInput = "74492294960478"
 modes.presets = {
+    ["Cielo Xero"] = {sky="Xero", time=14, ambient=rgb(65,65,72), outdoor=rgb(95,95,105), tint=rgb(255,255,255), bloom=0, contrast=0, saturation=0, exposure=0, stars=0, celestial=false},
     ["Cielo personalizado"] = {sky="Custom", time=0, ambient=rgb(65,65,72), outdoor=rgb(95,95,105), tint=rgb(255,255,255), bloom=0.18, contrast=0.06, saturation=0, exposure=0.12, stars=0, celestial=false},
     Galaxy = {sky="Galaxy", time=0, ambient=rgb(64,40,95), outdoor=rgb(83,58,122), tint=rgb(224,203,255), bloom=0.35, contrast=0.12, saturation=0.18, exposure=0.1, stars=3000},
     ["Deep Space"] = {sky="Space", time=0, ambient=rgb(25,37,61), outdoor=rgb(47,67,102), tint=rgb(193,219,255), bloom=0.22, contrast=0.18, saturation=-0.08, exposure=0.08, stars=5000},
@@ -12948,7 +12950,7 @@ modes.presets = {
 function modes.updateIntensity()
     local preset = modes.presets[modes.active]
     if not preset then return end
-    if preset.sky == "Custom" then return end -- Original image: no tint, bloom or exposure blending.
+    if (preset.sky == "Custom" or preset.sky == "Xero") then return end -- Original image: no tint, bloom or exposure blending.
     local amount = modes.intensity
     local base = modes.snapshot.lighting
     Lighting.Ambient = base.Ambient:Lerp(preset.ambient, amount)
@@ -12973,7 +12975,7 @@ function modes.clearCustomSky()
         table.insert(modes.customConnections, signal:Connect(callback))
     end
     local function suppress(object)
-        if modes.active ~= "Cielo personalizado" then return end
+        if modes.active ~= "Cielo personalizado" and modes.active ~= "Cielo Xero" then return end
         for _, owned in ipairs(modes.effects) do if object == owned then return end end
         if object:IsA("Sky") or object:IsA("Atmosphere") or object:IsA("PostEffect") then
             if not parked[object] then
@@ -13020,7 +13022,7 @@ function modes.applyPreset(name)
     for index, property in ipairs({"SkyboxBk","SkyboxDn","SkyboxFt","SkyboxLf","SkyboxRt","SkyboxUp"}) do
         sky[property] = "rbxassetid://" .. faces[index]
     end
-    if preset.sky ~= "Custom" then
+    if (preset.sky ~= "Custom" and preset.sky ~= "Xero") then
         addEffect("ColorCorrectionEffect")
         addEffect("BloomEffect", {Size=28, Threshold=0.9})
     end
@@ -13038,7 +13040,7 @@ function modes.applyPreset(name)
     Lighting.FogEnd = preset.fog or 100000
     Lighting.FogColor = preset.outdoor
     modes.updateIntensity()
-    if preset.sky == "Custom" then modes.clearCustomSky() end
+    if (preset.sky == "Custom" or preset.sky == "Xero") then modes.clearCustomSky() end
     -- Preload once per selection; stale completions cannot alter another mode.
     local selectedSky = sky
     task.spawn(function()
@@ -13339,10 +13341,25 @@ UIElements.TogPink = modes.toggle("Pink Hour", {
 
 
 Tabs.Graficos:Section({Title = "Cielos y ambientes"})
+UIElements.TogXeroSky = Tabs.Graficos:Toggle({
+    Title = "Cielo Xero",
+    Desc = "Activo al iniciar. Apágalo para recuperar el cielo original del juego.",
+    Value = false,
+    Callback = function(value)
+        if modes.syncing then return end
+        if value then
+            modes.select("Cielo Xero")
+        elseif modes.active == "Cielo Xero" then
+            modes.select(nil)
+        end
+    end
+})
+modes.controls["Cielo Xero"] = UIElements.TogXeroSky
+
 modes.dropdown = Tabs.Graficos:Dropdown({
     Title = "Modo de ambiente",
     Desc = "Cada modo combina cielo, iluminación y efectos. Se activa uno a la vez.",
-    Values = {"Ninguno", "Galaxy", "Deep Space", "Crimson Moon", "Dreamy", "Golden Sunset", "Gothic", "Cielo personalizado"},
+    Values = {"Ninguno", "Galaxy", "Deep Space", "Crimson Moon", "Dreamy", "Golden Sunset", "Gothic", "Cielo personalizado", "Cielo Xero"},
     Value = "Ninguno",
     Callback = function(value) modes.select(type(value) == "table" and value[1] or value) end
 })
@@ -13515,6 +13532,8 @@ Tabs.Graficos:Slider({
 
 
 
+-- Activate once after all graphics controls exist; toggling OFF never schedules a restart.
+modes.select("Cielo Xero")
 end -- graphics scope
 
 Tabs.Farm:Section({Title = "Farmeo de Evento"})

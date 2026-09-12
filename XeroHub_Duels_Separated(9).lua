@@ -12932,22 +12932,17 @@ local SKY_FACE_KEYS = {"bk", "dn", "ft", "lf", "rt", "up"}
 local SKY_PROPERTIES = {"SkyboxBk","SkyboxDn","SkyboxFt","SkyboxLf","SkyboxRt","SkyboxUp"}
 
 local skies = {
-    Custom = {"74492294960478","74492294960478","74492294960478","74492294960478","74492294960478","74492294960478"},
-    Galaxy = {149397692,149397686,149397697,149397684,149397688,149397702},
-    Space = {159454299,159454296,159454293,159454286,159454300,159454288},
-    Sunset = {323494035,323494368,323494130,323494252,323494067,323493360},
-    Night = {169210090,169210108,169210121,169210133,169210143,169210149},
+    Custom = {"92427017914292","92427017914292","92427017914292","92427017914292","92427017914292","92427017914292"},
 }
 
-modes.customInput = "74492294960478"
+modes.customInput = "92427017914292"
 modes.presets = {
-    ["Cielo personalizado"] = {sky="Custom", cleanSky=true, time=0, ambient=rgb(65,65,72), outdoor=rgb(95,95,105), tint=rgb(255,255,255), bloom=0.18, contrast=0.06, saturation=0, exposure=0.12, stars=0, celestial=false},
-    Galaxy = {sky="Galaxy", time=0, ambient=rgb(64,40,95), outdoor=rgb(83,58,122), tint=rgb(224,203,255), bloom=0.35, contrast=0.12, saturation=0.18, exposure=0.1, stars=3000},
-    ["Deep Space"] = {sky="Space", time=0, ambient=rgb(25,37,61), outdoor=rgb(47,67,102), tint=rgb(193,219,255), bloom=0.22, contrast=0.18, saturation=-0.08, exposure=0.08, stars=5000},
-    ["Crimson Moon"] = {sky="Night", time=0, ambient=rgb(75,28,32), outdoor=rgb(115,44,50), tint=rgb(255,132,128), bloom=0.3, contrast=0.15, saturation=0.1, exposure=0.08, stars=1800, moon=24},
-    Dreamy = {sky="Sunset", time=6.7, ambient=rgb(130,100,125), outdoor=rgb(160,130,160), tint=rgb(255,215,237), bloom=0.35, contrast=-0.04, saturation=0.12, exposure=0.18, rays=0.04, stars=800},
-    ["Golden Sunset"] = {sky="Sunset", time=17.6, ambient=rgb(100,74,57), outdoor=rgb(145,108,77), tint=rgb(255,222,174), bloom=0.25, contrast=0.08, saturation=0.15, exposure=0.12, rays=0.09, stars=0},
-    Gothic = {sky="Night", time=18.5, ambient=rgb(48,46,59), outdoor=rgb(72,70,85), tint=rgb(208,210,227), bloom=0.1, contrast=0.16, saturation=-0.55, exposure=0.02, stars=300, fog=650, atmosphere=0.27},
+    ["Cielo personalizado"] = {
+        sky = "Custom",
+        cleanSky = true,
+        stars = 0,
+        celestial = false,
+    },
 }
 
 -- ============================================================
@@ -13530,25 +13525,25 @@ UIElements.TogPink = modes.toggle("Pink Hour", {
 })
 
 
-Tabs.Graficos:Section({Title = "Cielos y ambientes"})
-local skyDropdownValues = {"Ninguno", "Galaxy", "Deep Space", "Crimson Moon", "Dreamy", "Golden Sunset", "Gothic"}
+Tabs.Graficos:Section({Title = "Skyboxes"})
+local skyDropdownValues = {"Ninguno"}
 for _, remoteName in ipairs(modes.remoteSkyNames or {}) do
     table.insert(skyDropdownValues, remoteName)
 end
 table.insert(skyDropdownValues, "Cielo personalizado")
 
 modes.dropdown = Tabs.Graficos:Dropdown({
-    Title = "Modo de ambiente",
-    Desc = "Incluye skyboxes del repo. El pack elegido se descarga una sola vez y queda en caché local.",
+    Title = "Skybox",
+    Desc = "Elige un skybox del repo o usa tu cielo personalizado.",
     Values = skyDropdownValues,
-    Value = "Ninguno",
+    Value = "Cielo personalizado",
     Callback = function(value) modes.select(type(value) == "table" and value[1] or value) end
 })
 Tabs.Graficos:Input({
     Title = "ID de tu cielo",
-    Desc = "Imagen actual: 74492294960478. Se repite en las seis caras del cielo.",
-    Placeholder = "74492294960478",
-    Value = "74492294960478",
+    Desc = "Imagen actual: 92427017914292. Se repite en las seis caras del cielo.",
+    Placeholder = "92427017914292",
+    Value = "92427017914292",
     Callback = function(text)
         modes.customInput = tostring(text or "")
     end
@@ -13561,7 +13556,7 @@ Tabs.Graficos:Button({
         if text == "" then text = skies.Custom[1] end
         local id = text:match("^(%d+)$") or text:match("^rbxassetid://(%d+)$")
         if not id or not id:find("[1-9]") then
-            showBottomMessage("Pega un ID de textura válido, por ejemplo 74492294960478.")
+            showBottomMessage("Pega un ID de textura válido, por ejemplo 92427017914292.")
             return
         end
         modes.select(nil)
@@ -13570,19 +13565,9 @@ Tabs.Graficos:Button({
         modes.select("Cielo personalizado")
     end
 })
-Tabs.Graficos:Slider({
-    Title = "Intensidad del ambiente",
-    Desc = "Ajusta los ambientes. El cielo personalizado conserva su imagen sin filtros.",
-    Step = 0.05,
-    Value = {Min = 0, Max = 1, Default = 0.75},
-    Callback = function(value)
-        modes.intensity = math.clamp(tonumber(value) or 0.75, 0, 1)
-        modes.updateIntensity()
-    end
-})
 Tabs.Graficos:Button({
     Title = "Restaurar gráficos originales",
-    Desc = "Desactiva el ambiente y FPS Boost, y recupera el cielo y los efectos anteriores.",
+    Desc = "Quita el skybox activo, desactiva FPS Boost y recupera los gráficos originales.",
     Callback = function()
         modes.select(nil)
         if fpsBoostEnabled and UIElements.ToggleFPS then UIElements.ToggleFPS:Set(false) end
@@ -13712,6 +13697,27 @@ Tabs.Graficos:Slider({
 })
 
 
+
+
+-- ============================================================
+-- SKYBOX XERO POR DEFECTO
+-- Se aplica al terminar de construir toda la sección de gráficos,
+-- para que ningún control inicial vuelva a pisarlo durante el arranque.
+-- ============================================================
+do
+    for index = 1, 6 do
+        skies.Custom[index] = "92427017914292"
+    end
+    modes.customInput = "92427017914292"
+
+    local okDefault, defaultErr = pcall(function()
+        modes.select("Cielo personalizado")
+    end)
+
+    if not okDefault then
+        warn("[XeroHub] No se pudo aplicar el cielo inicial: " .. tostring(defaultErr))
+    end
+end
 
 end -- graphics scope
 

@@ -12859,7 +12859,7 @@ end))
 do
 local Lighting = game:GetService("Lighting")
 local terrain = workspace:FindFirstChildOfClass("Terrain")
-local modes = {callbacks = {}, controls = {}, active = nil, snapshot = nil, effects = {}, intensity = 0.75, syncing = false}
+local modes = {callbacks = {}, controls = {}, active = nil, snapshot = nil, effects = {}, intensity = 0.75, syncing = false, selectionSerial = 0}
 local lightProperties = {"Brightness", "ClockTime", "Ambient", "OutdoorAmbient", "ColorShift_Top", "ColorShift_Bottom", "FogColor", "FogStart", "FogEnd", "ExposureCompensation", "ShadowSoftness", "GlobalShadows", "GeographicLatitude", "EnvironmentSpecularScale", "EnvironmentDiffuseScale"}
 local waterProperties = {"WaterWaveSize", "WaterWaveSpeed", "WaterReflectance", "WaterTransparency", "WaterColor"}
 local function copyProperties(object, names)
@@ -13027,6 +13027,7 @@ function modes.loadRemoteManifest()
 
     local list = decoded.skyboxes or decoded
     if type(list) ~= "table" then return false, "El manifest no contiene skyboxes." end
+    modes.remoteManifestVersion = tostring(decoded.version or "1"):gsub("[^%w%._%-]", "_")
 
     local added = {}
     for _, pack in ipairs(list) do
@@ -13070,19 +13071,23 @@ function modes.loadRemoteSkyFaces(preset)
         error("Este ejecutor necesita getcustomasset/getsynasset + writefile para cielos del repo.")
     end
 
-    local cacheKey = preset.folder
+    local manifestVersion = tostring(modes.remoteManifestVersion or "1")
+    local cacheKey = manifestVersion .. ":" .. preset.folder
     if modes.remoteSkyCache[cacheKey] then
         return modes.remoteSkyCache[cacheKey]
     end
 
-    local root = "XeroHub/skybox_cache/" .. preset.folder
+    -- v3 usa BASENAMES únicos por pack. Algunos ejecutores colisionan si todos
+    -- los custom assets se llaman bk.png/dn.png/etc aunque estén en carpetas distintas.
+    local root = "XeroHub/skybox_cache_v3"
     ensureSkyFolder(root)
 
     local result = {}
     for index, face in ipairs(SKY_FACE_KEYS) do
         local remoteName = preset.files[face]
         local extension = remoteName:match("(%.[%w]+)$") or ".png"
-        local localPath = root .. "/" .. face .. extension
+        local uniqueBase = "xero_" .. manifestVersion .. "_" .. preset.folder .. "_" .. face .. extension
+        local localPath = root .. "/" .. uniqueBase
 
         local exists = isfile and isfile(localPath)
         if not exists then
@@ -13107,6 +13112,53 @@ function modes.loadRemoteSkyFaces(preset)
 
     modes.remoteSkyCache[cacheKey] = result
     return result
+end
+
+local ContentProvider = game:GetService("ContentProvider")
+
+-- Prepara un Sky COMPLETO fuera de Lighting. Roblox no lo ve hasta que sus
+-- seis texturas ya fueron resueltas, evitando cubos con caras del cielo anterior.
+function modes.prepareRemoteSky(name, preset)
+    local faces = modes.loadRemoteSkyFaces(preset)
+    if not faces or #faces < 6 then
+        error("Skybox incompleto: " .. tostring(name))
+    end
+
+    local sky = Instance.new("Sky")
+    sky.Name = "XeroPreparedSky_" .. tostring(preset.folder)
+    sky.CelestialBodiesShown = preset.celestial ~= false
+    sky.StarCount = preset.stars or 0
+    sky.MoonAngularSize = preset.moon or 12
+    sky.SunAngularSize = 14
+
+    for index, property in ipairs(SKY_PROPERTIES) do
+        sky[property] = faces[index]
+    end
+
+    local lastError = nil
+    for attempt = 1, 2 do
+        local failed = {}
+        local ok, preloadError = pcall(function()
+            ContentProvider:PreloadAsync({sky}, function(contentId, status)
+                if status ~= Enum.AssetFetchStatus.Success then
+                    table.insert(failed, tostring(contentId))
+                end
+            end)
+        end)
+
+        if ok and #failed == 0 then
+            return sky
+        end
+
+        lastError = ok
+            and ("fallaron " .. tostring(#failed) .. " texturas")
+            or tostring(preloadError)
+
+        if attempt < 2 then task.wait(0.08) end
+    end
+
+    sky:Destroy()
+    error("No se pudieron precargar las 6 caras de " .. tostring(name) .. ": " .. tostring(lastError))
 end
 
 -- Carga sólo el JSON pequeño al iniciar. Las imágenes se descargan bajo demanda.
@@ -13180,20 +13232,35 @@ function modes.clearCustomSky()
         end)
     end
 end
-function modes.applyPreset(name)
+function modes.applyPreset(name, preparedRemoteSky)
     local preset = modes.presets[name]
-    local faces = preset.remote and modes.loadRemoteSkyFaces(preset) or skies[preset.sky]
-    if not faces or #faces < 6 then error("Skybox incompleto: " .. tostring(name)) end
+    local sky
 
-    local sky = addEffect("Sky", {
-        CelestialBodiesShown = preset.celestial ~= false,
-        StarCount = preset.stars or 0,
-        MoonAngularSize = preset.moon or 12,
-        SunAngularSize = 14,
-    })
+    if preset.remote then
+        sky = preparedRemoteSky
+        if not sky then
+            error("Falta el cielo precargado para " .. tostring(name))
+        end
 
-    for index, property in ipairs(SKY_PROPERTIES) do
-        sky[property] = preset.remote and faces[index] or ("rbxassetid://" .. tostring(faces[index]))
+        -- El mismo Instance que se precargó se vuelve visible; no creamos otro
+        -- Sky con texturas aún pendientes.
+        table.insert(modes.effects, sky)
+        sky.Name = "iLunXGraphics_Sky_" .. tostring(preset.folder)
+        sky.Parent = Lighting
+    else
+        local faces = skies[preset.sky]
+        if not faces or #faces < 6 then error("Skybox incompleto: " .. tostring(name)) end
+
+        sky = addEffect("Sky", {
+            CelestialBodiesShown = preset.celestial ~= false,
+            StarCount = preset.stars or 0,
+            MoonAngularSize = preset.moon or 12,
+            SunAngularSize = 14,
+        })
+
+        for index, property in ipairs(SKY_PROPERTIES) do
+            sky[property] = "rbxassetid://" .. tostring(faces[index])
+        end
     end
 
     if preset.remote then
@@ -13219,44 +13286,96 @@ function modes.applyPreset(name)
         Lighting.FogColor = preset.outdoor
         modes.updateIntensity()
         if preset.sky == "Custom" then modes.clearCustomSky() end
-    end
 
-    -- Preload once per selection; stale completions cannot alter another mode.
-    local selectedSky = sky
-    task.spawn(function()
-        local failed = false
-        local ok = pcall(function()
-            game:GetService("ContentProvider"):PreloadAsync({selectedSky}, function(_, status)
-                if status ~= Enum.AssetFetchStatus.Success then failed = true end
+        -- Los assets de Roblox normales pueden precargarse en segundo plano.
+        local selectedSky = sky
+        task.spawn(function()
+            local failed = false
+            local ok = pcall(function()
+                ContentProvider:PreloadAsync({selectedSky}, function(_, status)
+                    if status ~= Enum.AssetFetchStatus.Success then failed = true end
+                end)
             end)
+            if modes.active == name and selectedSky.Parent == Lighting and (not ok or failed) then
+                showBottomMessage("No se pudo cargar todo el cielo de " .. name .. ". Prueba otro modo.")
+            end
         end)
-        if modes.active == name and selectedSky.Parent == Lighting and (not ok or failed) then
-            showBottomMessage("No se pudo cargar todo el cielo de " .. name .. ". Prueba otro modo.")
-        end
-    end)
+    end
 end
+
 function modes.select(name)
     if modes.syncing then return end
     if name == "Ninguno" then name = nil end
     if name and not modes.callbacks[name] and not modes.presets[name] then return end
     if modes.active == name then return end
+
+    -- Cada selección invalida cualquier descarga/precarga anterior que siga
+    -- corriendo. Así A nunca puede reaparecer encima de B si el usuario cambia rápido.
+    modes.selectionSerial = (modes.selectionSerial or 0) + 1
+    local mySerial = modes.selectionSerial
+
+    local preset = name and modes.presets[name] or nil
+    local preparedSky = nil
+
+    -- Para skyboxes del repo NO quitamos el cielo actual mientras descarga.
+    -- Primero descargamos + registramos + precargamos las seis caras.
+    if preset and preset.remote then
+        local ok, result = pcall(function()
+            return modes.prepareRemoteSky(name, preset)
+        end)
+
+        if mySerial ~= modes.selectionSerial then
+            if ok and typeof(result) == "Instance" then pcall(function() result:Destroy() end) end
+            return
+        end
+
+        if not ok then
+            warn("XeroHub remote skybox: " .. tostring(result))
+            showBottomMessage("No se pudo cargar " .. tostring(name) .. ". El cielo anterior se mantiene.")
+            modes.sync()
+            return
+        end
+
+        preparedSky = result
+    end
+
+    if mySerial ~= modes.selectionSerial then
+        if preparedSky then pcall(function() preparedSky:Destroy() end) end
+        return
+    end
+
+    -- Recién aquí hacemos el swap. Desde este punto no hay HTTP ni preload
+    -- en los cielos del repo, así que el cambio ocurre prácticamente de golpe.
     modes.restore()
+
     if name then
-        -- FPS Boost and cinematic lighting own the same properties.
         if fpsBoostEnabled and UIElements.ToggleFPS then UIElements.ToggleFPS:Set(false) end
+
         local ok, err = pcall(function()
             modes.capture()
             modes.active = name
-            if modes.callbacks[name] then modes.callbacks[name](true) else modes.applyPreset(name) end
+
+            if modes.callbacks[name] then
+                modes.callbacks[name](true)
+            else
+                modes.applyPreset(name, preparedSky)
+                preparedSky = nil -- modes.effects pasa a ser dueño del Instance.
+            end
         end)
+
         if not ok then
+            if preparedSky then pcall(function() preparedSky:Destroy() end) end
             modes.restore()
             warn("iLunXHub graphics: " .. tostring(err))
             showBottomMessage("No se pudo aplicar el modo; se restauraron los gráficos.")
         end
+    elseif preparedSky then
+        pcall(function() preparedSky:Destroy() end)
     end
+
     modes.sync()
 end
+
 function modes.toggle(name, config)
     modes.callbacks[name] = config.Callback
     config.Value = false
@@ -13269,6 +13388,7 @@ function modes.toggle(name, config)
     return control
 end
 runtime.GraphicsCleanup = function()
+    modes.selectionSerial = (modes.selectionSerial or 0) + 1
     modes.restore()
     modes.sync()
 end

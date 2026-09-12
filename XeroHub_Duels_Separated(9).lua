@@ -13079,7 +13079,7 @@ function modes.loadRemoteSkyFaces(preset)
 
     -- v3 usa BASENAMES únicos por pack. Algunos ejecutores colisionan si todos
     -- los custom assets se llaman bk.png/dn.png/etc aunque estén en carpetas distintas.
-    local root = "XeroHub/skybox_cache_v3"
+    local root = "XeroHub/skybox_cache_v4"
     ensureSkyFolder(root)
 
     local result = {}
@@ -13124,6 +13124,33 @@ function modes.prepareRemoteSky(name, preset)
         error("Skybox incompleto: " .. tostring(name))
     end
 
+    -- Warm-up de las seis texturas. IMPORTANTE:
+    -- getcustomasset/getsynasset no siempre devuelve AssetFetchStatus.Success
+    -- aunque Roblox sí pueda renderizar el archivo. Por eso PreloadAsync aquí
+    -- es best-effort y NUNCA decide si el cielo se acepta o se rechaza.
+    local warmupObjects = {}
+    for index = 1, 6 do
+        local image = Instance.new("ImageLabel")
+        image.Name = "XeroSkyWarmup_" .. tostring(index)
+        image.BackgroundTransparency = 1
+        image.Size = UDim2.fromOffset(1, 1)
+        image.Visible = false
+        image.Image = faces[index]
+        warmupObjects[index] = image
+    end
+
+    pcall(function()
+        ContentProvider:PreloadAsync(warmupObjects)
+    end)
+
+    for _, object in ipairs(warmupObjects) do
+        pcall(function() object:Destroy() end)
+    end
+
+    -- Ceder un frame permite que el ejecutor/cliente termine de registrar
+    -- los custom assets antes de usarlos en las seis propiedades del Sky.
+    pcall(function() RunService.Heartbeat:Wait() end)
+
     local sky = Instance.new("Sky")
     sky.Name = "XeroPreparedSky_" .. tostring(preset.folder)
     sky.CelestialBodiesShown = preset.celestial ~= false
@@ -13131,34 +13158,12 @@ function modes.prepareRemoteSky(name, preset)
     sky.MoonAngularSize = preset.moon or 12
     sky.SunAngularSize = 14
 
+    -- Asignamos las seis caras al MISMO frame y antes de parentarlo a Lighting.
     for index, property in ipairs(SKY_PROPERTIES) do
         sky[property] = faces[index]
     end
 
-    local lastError = nil
-    for attempt = 1, 2 do
-        local failed = {}
-        local ok, preloadError = pcall(function()
-            ContentProvider:PreloadAsync({sky}, function(contentId, status)
-                if status ~= Enum.AssetFetchStatus.Success then
-                    table.insert(failed, tostring(contentId))
-                end
-            end)
-        end)
-
-        if ok and #failed == 0 then
-            return sky
-        end
-
-        lastError = ok
-            and ("fallaron " .. tostring(#failed) .. " texturas")
-            or tostring(preloadError)
-
-        if attempt < 2 then task.wait(0.08) end
-    end
-
-    sky:Destroy()
-    error("No se pudieron precargar las 6 caras de " .. tostring(name) .. ": " .. tostring(lastError))
+    return sky
 end
 
 -- Carga sólo el JSON pequeño al iniciar. Las imágenes se descargan bajo demanda.

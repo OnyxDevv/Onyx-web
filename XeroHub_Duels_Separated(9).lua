@@ -12925,12 +12925,15 @@ end
 local rgb = Color3.fromRGB
 -- Face order: back, down, front, left, right, up.
 local skies = {
+    Custom = {"74492294960478","74492294960478","74492294960478","74492294960478","74492294960478","74492294960478"},
     Galaxy = {149397692,149397686,149397697,149397684,149397688,149397702},
     Space = {159454299,159454296,159454293,159454286,159454300,159454288},
     Sunset = {323494035,323494368,323494130,323494252,323494067,323493360},
     Night = {169210090,169210108,169210121,169210133,169210143,169210149},
 }
+modes.customInput = "74492294960478"
 modes.presets = {
+    ["Cielo personalizado"] = {sky="Custom", time=0, ambient=rgb(65,65,72), outdoor=rgb(95,95,105), tint=rgb(255,255,255), bloom=0.18, contrast=0.06, saturation=0, exposure=0.12, stars=0, celestial=false},
     Galaxy = {sky="Galaxy", time=0, ambient=rgb(64,40,95), outdoor=rgb(83,58,122), tint=rgb(224,203,255), bloom=0.35, contrast=0.12, saturation=0.18, exposure=0.1, stars=3000},
     ["Deep Space"] = {sky="Space", time=0, ambient=rgb(25,37,61), outdoor=rgb(47,67,102), tint=rgb(193,219,255), bloom=0.22, contrast=0.18, saturation=-0.08, exposure=0.08, stars=5000},
     ["Crimson Moon"] = {sky="Night", time=0, ambient=rgb(75,28,32), outdoor=rgb(115,44,50), tint=rgb(255,132,128), bloom=0.3, contrast=0.15, saturation=0.1, exposure=0.08, stars=1800, moon=24},
@@ -12959,7 +12962,7 @@ end
 function modes.applyPreset(name)
     local preset = modes.presets[name]
     local faces = skies[preset.sky]
-    local sky = addEffect("Sky", {CelestialBodiesShown=true, StarCount=preset.stars, MoonAngularSize=preset.moon or 12, SunAngularSize=14})
+    local sky = addEffect("Sky", {CelestialBodiesShown=preset.celestial ~= false, StarCount=preset.stars, MoonAngularSize=preset.moon or 12, SunAngularSize=14})
     for index, property in ipairs({"SkyboxBk","SkyboxDn","SkyboxFt","SkyboxLf","SkyboxRt","SkyboxUp"}) do
         sky[property] = "rbxassetid://" .. faces[index]
     end
@@ -13282,13 +13285,39 @@ Tabs.Graficos:Section({Title = "Cielos y ambientes"})
 modes.dropdown = Tabs.Graficos:Dropdown({
     Title = "Modo de ambiente",
     Desc = "Cada modo combina cielo, iluminación y efectos. Se activa uno a la vez.",
-    Values = {"Ninguno", "Galaxy", "Deep Space", "Crimson Moon", "Dreamy", "Golden Sunset", "Gothic"},
+    Values = {"Ninguno", "Galaxy", "Deep Space", "Crimson Moon", "Dreamy", "Golden Sunset", "Gothic", "Cielo personalizado"},
     Value = "Ninguno",
     Callback = function(value) modes.select(type(value) == "table" and value[1] or value) end
 })
+Tabs.Graficos:Input({
+    Title = "ID de tu cielo",
+    Desc = "Imagen actual: 74492294960478. Se repite en las seis caras del cielo.",
+    Placeholder = "74492294960478",
+    Value = "74492294960478",
+    Callback = function(text)
+        modes.customInput = tostring(text or "")
+    end
+})
+Tabs.Graficos:Button({
+    Title = "Aplicar cielo personalizado",
+    Desc = "Usa tu imagen con iluminación y resplandor. Puedes pegar un ID o rbxassetid://ID.",
+    Callback = function()
+        local text = modes.customInput:match("^%s*(.-)%s*$")
+        if text == "" then text = skies.Custom[1] end
+        local id = text:match("^(%d+)$") or text:match("^rbxassetid://(%d+)$")
+        if not id or not id:find("[1-9]") then
+            showBottomMessage("Pega un ID de textura válido, por ejemplo 74492294960478.")
+            return
+        end
+        modes.select(nil)
+        for index = 1, 6 do skies.Custom[index] = id end
+        modes.customInput = id
+        modes.select("Cielo personalizado")
+    end
+})
 Tabs.Graficos:Slider({
     Title = "Intensidad del ambiente",
-    Desc = "Ajusta el color y resplandor de los seis nuevos modos. El cielo conserva su textura.",
+    Desc = "Ajusta el color y resplandor de los ambientes y el cielo personalizado. El cielo conserva su textura.",
     Step = 0.05,
     Value = {Min = 0, Max = 1, Default = 0.75},
     Callback = function(value)

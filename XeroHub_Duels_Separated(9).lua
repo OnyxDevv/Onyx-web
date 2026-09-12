@@ -660,4 +660,3 @@ refresh()
 log('Weapon Lab v0.1 listo. Escanea primero; carga catálogo para asociar nombres.')
 scan()
 return state
-

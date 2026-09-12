@@ -99,6 +99,7 @@ end
 function runtime.Cleanup()
     if not runtime.Alive then return end
     runtime.Alive = false
+    if runtime.GraphicsCleanup then pcall(runtime.GraphicsCleanup) end
 
     for i = #runtime.Connections, 1, -1 do
         local connection = runtime.Connections[i]
@@ -1084,6 +1085,7 @@ UIElements.ToggleFPS = Tabs.Graficos:Toggle({
     Desc = "Reduce materiales, texturas y efectos del mapa sin tocar los avatares.",
     Value = false,
     Callback = function(state)
+        if state and runtime.GraphicsCleanup then runtime.GraphicsCleanup() end
         fpsBoostEnabled = state
         local Lighting = game:GetService("Lighting")
         local Terrain = workspace:FindFirstChildOfClass("Terrain")
@@ -12201,13 +12203,13 @@ UIElements.TogEspNm = Tabs.Vis:Toggle({Title = "Mostrar Nombre", Value = true, C
 UIElements.TogEspDs = Tabs.Vis:Toggle({Title = "Mostrar Distancia", Value = true, Callback = function(s) espSettings.Distance = s end})
 UIElements.TogEspBox = Tabs.Vis:Toggle({
     Title = "ESP Box 2D",
-    Desc = "Caja estable anclada al cuerpo real; ignora hitbox y accesorios.",
+    Desc = "Caja anclada al enemigo",
     Value = false,
     Callback = function(s) espSettings.Box = s end,
 })
 UIElements.TogEspHealth = Tabs.Vis:Toggle({
     Title = "Barra de vida",
-    Desc = "Muestra la vida junto a la caja sin crear otro bucle de renderizado.",
+    Desc = "Muestra la vida.",
     Value = false,
     Callback = function(s) espSettings.HealthBar = s end,
 })
@@ -12852,6 +12854,183 @@ end))
 -- ==========================================
 -- PESTAÑA GRÁFICOS (SHADERS Y OPTIMIZACIÓN)
 -- ==========================================
+-- iLunXHub graphics presets | AlexDev
+-- Event-driven: no render loops, only one active mode and one sky.
+do
+local Lighting = game:GetService("Lighting")
+local terrain = workspace:FindFirstChildOfClass("Terrain")
+local modes = {callbacks = {}, controls = {}, active = nil, snapshot = nil, effects = {}, intensity = 0.75, syncing = false}
+local lightProperties = {"Brightness", "ClockTime", "Ambient", "OutdoorAmbient", "ColorShift_Top", "ColorShift_Bottom", "FogColor", "FogStart", "FogEnd", "ExposureCompensation", "ShadowSoftness", "GlobalShadows", "GeographicLatitude", "EnvironmentSpecularScale", "EnvironmentDiffuseScale"}
+local waterProperties = {"WaterWaveSize", "WaterWaveSpeed", "WaterReflectance", "WaterTransparency", "WaterColor"}
+local function copyProperties(object, names)
+    local result = {}
+    if object then for _, name in ipairs(names) do result[name] = object[name] end end
+    return result
+end
+local function restoreProperties(object, values)
+    if object then for name, value in pairs(values) do pcall(function() object[name] = value end) end end
+end
+function modes.capture()
+    local saved = {lighting = copyProperties(Lighting, lightProperties), water = copyProperties(terrain, waterProperties), hidden = {}, clouds = {}}
+    modes.snapshot = saved
+    -- Retain original instances and their properties instead of destroying them.
+    for _, object in ipairs(Lighting:GetChildren()) do
+        if object:IsA("Sky") or object:IsA("Atmosphere") or object:IsA("PostEffect") then
+            table.insert(saved.hidden, {object, object.Parent})
+            object.Parent = nil
+        end
+    end
+    for _, parent in ipairs({workspace, terrain or workspace}) do
+        for _, object in ipairs(parent:GetChildren()) do
+            if object:IsA("Clouds") and saved.clouds[object] == nil then
+                saved.clouds[object] = object.Enabled
+                object.Enabled = false
+            end
+        end
+    end
+end
+function modes.sync()
+    modes.syncing = true
+    for name, control in pairs(modes.controls) do
+        pcall(function() control:Set(modes.active == name) end)
+    end
+    if modes.dropdown then
+        pcall(function() modes.dropdown:Select(modes.presets[modes.active] and modes.active or "Ninguno") end)
+    end
+    modes.syncing = false
+end
+function modes.restore()
+    local active = modes.active
+    modes.active = nil
+    if active and modes.callbacks[active] then pcall(modes.callbacks[active], false) end
+    for _, effect in ipairs(modes.effects) do pcall(function() effect:Destroy() end) end
+    table.clear(modes.effects)
+    local saved = modes.snapshot
+    modes.snapshot = nil
+    if saved then
+        restoreProperties(Lighting, saved.lighting)
+        restoreProperties(terrain, saved.water)
+        for _, entry in ipairs(saved.hidden) do pcall(function() entry[1].Parent = entry[2] end) end
+        for cloud, enabled in pairs(saved.clouds) do pcall(function() cloud.Enabled = enabled end) end
+    end
+end
+local function addEffect(className, properties)
+    local object = Instance.new(className)
+    table.insert(modes.effects, object)
+    object.Name = "iLunXGraphics_" .. className
+    for key, value in pairs(properties or {}) do object[key] = value end
+    object.Parent = Lighting
+    return object
+end
+local rgb = Color3.fromRGB
+-- Face order: back, down, front, left, right, up.
+local skies = {
+    Galaxy = {149397692,149397686,149397697,149397684,149397688,149397702},
+    Space = {159454299,159454296,159454293,159454286,159454300,159454288},
+    Sunset = {323494035,323494368,323494130,323494252,323494067,323493360},
+    Night = {169210090,169210108,169210121,169210133,169210143,169210149},
+}
+modes.presets = {
+    Galaxy = {sky="Galaxy", time=0, ambient=rgb(64,40,95), outdoor=rgb(83,58,122), tint=rgb(224,203,255), bloom=0.35, contrast=0.12, saturation=0.18, exposure=0.1, stars=3000},
+    ["Deep Space"] = {sky="Space", time=0, ambient=rgb(25,37,61), outdoor=rgb(47,67,102), tint=rgb(193,219,255), bloom=0.22, contrast=0.18, saturation=-0.08, exposure=0.08, stars=5000},
+    ["Crimson Moon"] = {sky="Night", time=0, ambient=rgb(75,28,32), outdoor=rgb(115,44,50), tint=rgb(255,132,128), bloom=0.3, contrast=0.15, saturation=0.1, exposure=0.08, stars=1800, moon=24},
+    Dreamy = {sky="Sunset", time=6.7, ambient=rgb(130,100,125), outdoor=rgb(160,130,160), tint=rgb(255,215,237), bloom=0.35, contrast=-0.04, saturation=0.12, exposure=0.18, rays=0.04, stars=800},
+    ["Golden Sunset"] = {sky="Sunset", time=17.6, ambient=rgb(100,74,57), outdoor=rgb(145,108,77), tint=rgb(255,222,174), bloom=0.25, contrast=0.08, saturation=0.15, exposure=0.12, rays=0.09, stars=0},
+    Gothic = {sky="Night", time=18.5, ambient=rgb(48,46,59), outdoor=rgb(72,70,85), tint=rgb(208,210,227), bloom=0.1, contrast=0.16, saturation=-0.55, exposure=0.02, stars=300, fog=650, atmosphere=0.27},
+}
+function modes.updateIntensity()
+    local preset = modes.presets[modes.active]
+    if not preset then return end
+    local amount = modes.intensity
+    local base = modes.snapshot.lighting
+    Lighting.Ambient = base.Ambient:Lerp(preset.ambient, amount)
+    Lighting.OutdoorAmbient = base.OutdoorAmbient:Lerp(preset.outdoor, amount)
+    Lighting.ExposureCompensation = base.ExposureCompensation + (preset.exposure-base.ExposureCompensation)*amount
+    for _, effect in ipairs(modes.effects) do
+        if effect:IsA("ColorCorrectionEffect") then
+            effect.TintColor = rgb(255,255,255):Lerp(preset.tint, amount)
+            effect.Saturation = preset.saturation*amount
+            effect.Contrast = preset.contrast*amount
+        elseif effect:IsA("BloomEffect") then effect.Intensity = preset.bloom*amount
+        elseif effect:IsA("SunRaysEffect") then effect.Intensity = (preset.rays or 0)*amount
+        elseif effect:IsA("Atmosphere") then effect.Density = (preset.atmosphere or 0)*amount end
+    end
+end
+function modes.applyPreset(name)
+    local preset = modes.presets[name]
+    local faces = skies[preset.sky]
+    local sky = addEffect("Sky", {CelestialBodiesShown=true, StarCount=preset.stars, MoonAngularSize=preset.moon or 12, SunAngularSize=14})
+    for index, property in ipairs({"SkyboxBk","SkyboxDn","SkyboxFt","SkyboxLf","SkyboxRt","SkyboxUp"}) do
+        sky[property] = "rbxassetid://" .. faces[index]
+    end
+    addEffect("ColorCorrectionEffect")
+    addEffect("BloomEffect", {Size=28, Threshold=0.9})
+    if preset.rays then addEffect("SunRaysEffect", {Spread=0.8}) end
+    if preset.atmosphere then addEffect("Atmosphere", {Color=rgb(165,165,183), Decay=rgb(80,75,95), Haze=1.2, Glare=0}) end
+    Lighting.ClockTime = preset.time
+    Lighting.Brightness = 2
+    Lighting.GlobalShadows = true
+    Lighting.ShadowSoftness = 0.3
+    Lighting.EnvironmentDiffuseScale = 0.7
+    Lighting.EnvironmentSpecularScale = 1
+    Lighting.ColorShift_Top = rgb(0,0,0)
+    Lighting.ColorShift_Bottom = rgb(0,0,0)
+    Lighting.FogStart = 0
+    Lighting.FogEnd = preset.fog or 100000
+    Lighting.FogColor = preset.outdoor
+    modes.updateIntensity()
+    -- Preload once per selection; stale completions cannot alter another mode.
+    local selectedSky = sky
+    task.spawn(function()
+        local failed = false
+        local ok = pcall(function()
+            game:GetService("ContentProvider"):PreloadAsync({selectedSky}, function(_, status)
+                if status ~= Enum.AssetFetchStatus.Success then failed = true end
+            end)
+        end)
+        if modes.active == name and selectedSky.Parent == Lighting and (not ok or failed) then
+            showBottomMessage("No se pudo cargar todo el cielo de " .. name .. ". Prueba otro modo.")
+        end
+    end)
+end
+function modes.select(name)
+    if modes.syncing then return end
+    if name == "Ninguno" then name = nil end
+    if name and not modes.callbacks[name] and not modes.presets[name] then return end
+    if modes.active == name then return end
+    modes.restore()
+    if name then
+        -- FPS Boost and cinematic lighting own the same properties.
+        if fpsBoostEnabled and UIElements.ToggleFPS then UIElements.ToggleFPS:Set(false) end
+        local ok, err = pcall(function()
+            modes.capture()
+            modes.active = name
+            if modes.callbacks[name] then modes.callbacks[name](true) else modes.applyPreset(name) end
+        end)
+        if not ok then
+            modes.restore()
+            warn("iLunXHub graphics: " .. tostring(err))
+            showBottomMessage("No se pudo aplicar el modo; se restauraron los gráficos.")
+        end
+    end
+    modes.sync()
+end
+function modes.toggle(name, config)
+    modes.callbacks[name] = config.Callback
+    config.Value = false
+    config.Callback = function(value)
+        if modes.syncing then return end
+        if value then modes.select(name) elseif modes.active == name then modes.select(nil) end
+    end
+    local control = Tabs.Graficos:Toggle(config)
+    modes.controls[name] = control
+    return control
+end
+runtime.GraphicsCleanup = function()
+    modes.restore()
+    modes.sync()
+end
+
 Tabs.Graficos:Section({Title = "Modos Visuales (Elige solo uno)"})
 
 local shaderEffects = {}
@@ -12888,15 +13067,12 @@ function ToggleNubesYAtmo(apagar, tag)
             if apagar then
                 if not obj:GetAttribute("OrigGuardado_"..tag) then
                     obj:SetAttribute("OrigDensity_"..tag, obj.Density)
-                    obj:SetAttribute("OrigCapacity_"..tag, obj.Capacity)
                     obj:SetAttribute("OrigGuardado_"..tag, true)
                 end
                 obj.Density = 0
-                obj.Capacity = 0
             else
                 if obj:GetAttribute("OrigGuardado_"..tag) then
                     obj.Density = obj:GetAttribute("OrigDensity_"..tag)
-                    obj.Capacity = obj:GetAttribute("OrigCapacity_"..tag)
                     obj:SetAttribute("OrigGuardado_"..tag, nil)
                 end
             end
@@ -12965,7 +13141,7 @@ end
 -- ==========================================
 -- 1. SHADERS TOKYOWAMI SHRINE (AESTHETIC)
 -- ==========================================
-UIElements.TogTokyowami = Tabs.Graficos:Toggle({
+UIElements.TogTokyowami = modes.toggle("Tokyowami", {
     Title = "Shaders Tokyowami",
     Desc = "Aplica Shaders originales.",
     Callback = function(Value)
@@ -12979,8 +13155,6 @@ UIElements.TogTokyowami = Tabs.Graficos:Toggle({
             for _, v in ipairs(tokyowamiEffects) do pcall(function() v:Destroy() end) end table.clear(tokyowamiEffects)
 
             local Bloom = Instance.new("BloomEffect") Bloom.Intensity = 0.1 Bloom.Threshold = 0 Bloom.Size = 100 Bloom.Parent = Lighting table.insert(tokyowamiEffects, Bloom)
-            local Tropic = Instance.new("Sky") Tropic.Name = "Tropic" Tropic.SkyboxUp = "http://www.roblox.com/asset/?id=169210149" Tropic.SkyboxLf = "http://www.roblox.com/asset/?id=169210133" Tropic.SkyboxBk = "http://www.roblox.com/asset/?id=169210090" Tropic.SkyboxFt = "http://www.roblox.com/asset/?id=169210121" Tropic.StarCount = 100 Tropic.SkyboxDn = "http://www.roblox.com/asset/?id=169210108" Tropic.SkyboxRt = "http://www.roblox.com/asset/?id=169210143" Tropic.Parent = Lighting table.insert(tokyowamiEffects, Tropic)
-            local Sky = Instance.new("Sky") Sky.SkyboxUp = "http://www.roblox.com/asset/?id=196263782" Sky.SkyboxLf = "http://www.roblox.com/asset/?id=196263721" Sky.SkyboxBk = "http://www.roblox.com/asset/?id=196263721" Sky.SkyboxFt = "http://www.roblox.com/asset/?id=196263721" Sky.CelestialBodiesShown = false Sky.SkyboxDn = "http://www.roblox.com/asset/?id=196263643" Sky.SkyboxRt = "http://www.roblox.com/asset/?id=196263721" Sky.Parent = Lighting table.insert(tokyowamiEffects, Sky)
             local Blur = Instance.new("BlurEffect") Blur.Size = 2 Blur.Parent = Lighting table.insert(tokyowamiEffects, Blur)
             local Inaritaisha = Instance.new("ColorCorrectionEffect") Inaritaisha.Name = "Inari taisha" Inaritaisha.Saturation = 0.05 Inaritaisha.TintColor = Color3.fromRGB(255, 224, 219) Inaritaisha.Parent = Lighting table.insert(tokyowamiEffects, Inaritaisha)
             local SunRays = Instance.new("SunRaysEffect") SunRays.Intensity = 0.05 SunRays.Parent = Lighting table.insert(tokyowamiEffects, SunRays)
@@ -13001,7 +13175,7 @@ UIElements.TogTokyowami = Tabs.Graficos:Toggle({
 -- ==========================================
 -- 2. SHADERS NOCTURNOS (CUSTOM PBR)
 -- ==========================================
-UIElements.TogNight = Tabs.Graficos:Toggle({
+UIElements.TogNight = modes.toggle("Noche", {
     Title = "Modo Noche",
     Desc = "Modo noche ajustable.",
     Callback = function(Value)
@@ -13055,7 +13229,7 @@ UIElements.TogNight = Tabs.Graficos:Toggle({
 -- ==========================================
 -- 3. SHADER PINK HOUR 🌸 (MORADO AESTHETIC VIBE)
 -- ==========================================
-UIElements.TogPink = Tabs.Graficos:Toggle({
+UIElements.TogPink = modes.toggle("Pink Hour", {
     Title = "Pink Hour",
     Desc = "Estilo Synthwave. Cielo y ambiente ajustable con los sliders.",
     Callback = function(Value)
@@ -13100,6 +13274,35 @@ UIElements.TogPink = Tabs.Graficos:Toggle({
             ToggleNubesYAtmo(false, "Pink")
             showBottomMessage("Pink Hour: OFF")
         end
+    end
+})
+
+
+Tabs.Graficos:Section({Title = "Cielos y ambientes"})
+modes.dropdown = Tabs.Graficos:Dropdown({
+    Title = "Modo de ambiente",
+    Desc = "Cada modo combina cielo, iluminación y efectos. Se activa uno a la vez.",
+    Values = {"Ninguno", "Galaxy", "Deep Space", "Crimson Moon", "Dreamy", "Golden Sunset", "Gothic"},
+    Value = "Ninguno",
+    Callback = function(value) modes.select(type(value) == "table" and value[1] or value) end
+})
+Tabs.Graficos:Slider({
+    Title = "Intensidad del ambiente",
+    Desc = "Ajusta el color y resplandor de los seis nuevos modos. El cielo conserva su textura.",
+    Step = 0.05,
+    Value = {Min = 0, Max = 1, Default = 0.75},
+    Callback = function(value)
+        modes.intensity = math.clamp(tonumber(value) or 0.75, 0, 1)
+        modes.updateIntensity()
+    end
+})
+Tabs.Graficos:Button({
+    Title = "Restaurar gráficos originales",
+    Desc = "Desactiva el ambiente y FPS Boost, y recupera el cielo y los efectos anteriores.",
+    Callback = function()
+        modes.select(nil)
+        if fpsBoostEnabled and UIElements.ToggleFPS then UIElements.ToggleFPS:Set(false) end
+        showBottomMessage("Cielo e iluminación originales restaurados.")
     end
 })
 
@@ -13224,6 +13427,9 @@ Tabs.Graficos:Slider({
     end
 })
 
+
+
+end -- graphics scope
 
 Tabs.Farm:Section({Title = "Farmeo de Evento"})
 getgenv().AutoEventFarm = false

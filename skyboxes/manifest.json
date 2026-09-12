@@ -1,0 +1,77 @@
+{
+  "version": 1,
+  "skyboxes": [
+    {
+      "name": "Black Hole",
+      "folder": "black-hole",
+      "files": {
+        "bk": "bk.png",
+        "dn": "dn.png",
+        "ft": "ft.png",
+        "lf": "lf.png",
+        "rt": "rt.png",
+        "up": "up.png"
+      }
+    },
+    {
+      "name": "Broken Sky",
+      "folder": "broken-sky",
+      "files": {
+        "bk": "bk.png",
+        "dn": "dn.png",
+        "ft": "ft.png",
+        "lf": "lf.png",
+        "rt": "rt.png",
+        "up": "up.png"
+      }
+    },
+    {
+      "name": "Castle Grounds",
+      "folder": "castle-grounds",
+      "files": {
+        "bk": "bk.png",
+        "dn": "dn.png",
+        "ft": "ft.png",
+        "lf": "lf.png",
+        "rt": "rt.png",
+        "up": "up.png"
+      }
+    },
+    {
+      "name": "Chill Gray",
+      "folder": "chill-gray",
+      "files": {
+        "bk": "bk.png",
+        "dn": "dn.png",
+        "ft": "ft.png",
+        "lf": "lf.png",
+        "rt": "rt.png",
+        "up": "up.png"
+      }
+    },
+    {
+      "name": "Aurora",
+      "folder": "aurora",
+      "files": {
+        "bk": "bk.png",
+        "dn": "dn.png",
+        "ft": "ft.png",
+        "lf": "lf.png",
+        "rt": "rt.png",
+        "up": "up.png"
+      }
+    },
+    {
+      "name": "Beautiful",
+      "folder": "beautiful",
+      "files": {
+        "bk": "bk.png",
+        "dn": "dn.png",
+        "ft": "ft.png",
+        "lf": "lf.png",
+        "rt": "rt.png",
+        "up": "up.png"
+      }
+    }
+  ]
+}

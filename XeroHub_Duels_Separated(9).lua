@@ -13197,14 +13197,13 @@ function modes.applyPreset(name)
         sky[property] = preset.remote and faces[index] or ("rbxassetid://" .. tostring(faces[index]))
     end
 
-    if preset.remote then
-        -- Los packs del repo son skybox puro: no tint/bloom y no tocan el mapa.
+    if preset.remote or preset.sky == "Custom" then
+        -- Repo y cielo personalizado son skybox puro:
+        -- no necesitan time/outdoor/tint/bloom ni modifican la iluminación del mapa.
         modes.clearCustomSky()
     else
-        if preset.sky ~= "Custom" then
-            addEffect("ColorCorrectionEffect")
-            addEffect("BloomEffect", {Size=28, Threshold=0.9})
-        end
+        addEffect("ColorCorrectionEffect")
+        addEffect("BloomEffect", {Size=28, Threshold=0.9})
         if preset.rays then addEffect("SunRaysEffect", {Spread=0.8}) end
         if preset.atmosphere then addEffect("Atmosphere", {Color=rgb(165,165,183), Decay=rgb(80,75,95), Haze=1.2, Glare=0}) end
         Lighting.ClockTime = preset.time
@@ -13219,7 +13218,6 @@ function modes.applyPreset(name)
         Lighting.FogEnd = preset.fog or 100000
         Lighting.FogColor = preset.outdoor
         modes.updateIntensity()
-        if preset.sky == "Custom" then modes.clearCustomSky() end
     end
 
     -- Preload once per selection; stale completions cannot alter another mode.

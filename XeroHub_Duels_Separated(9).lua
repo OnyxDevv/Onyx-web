@@ -1,663 +1,1040 @@
--- iLunXHub | Weapon Lab v0.1 | AlexDev
--- Standalone LOCAL cosmetic experiment. Does not grant inventory ownership.
--- Run separately from the main hub for the first test. No remote loader/network calls.
--- Scan -> optionally load catalog -> select -> equip a real Tool -> Apply.
--- Restore / Close undo this lab's changes. Respawn clears the applied visual.
--- Script-driven animation, bursts and server-only assets cannot be reconstructed here.
--- The chunk also exposes its pure resolver via chunk('core') for reuse/testing.
+-- iLunXHub | Sound Lab
+-- Creador: AlexDev
+-- Laboratorio local para identificar y sustituir el sonido de disparo.
 
 local Core = {}
-function Core.normalize(value)
-    return tostring(value or ''):lower():gsub('[%s%p]', '')
-end
-function Core.newIndex()
-    return {items={}, aliases={}, visuals={}}
-end
-function Core.addItem(index, key, data)
-    if type(key) ~= 'string' or type(data) ~= 'table' then return end
-    index.items[key] = data
-    for _, alias in ipairs({key, data.ItemName or key}) do
-        alias = Core.normalize(alias)
-        if alias ~= '' then
-            index.aliases[alias] = index.aliases[alias] or {}
-            index.aliases[alias][key] = true
-        end
-    end
-end
-function Core.resolve(index, identities)
-    local selected
-    for _, identity in ipairs(identities) do
-        local match
-        if index.items[identity] then
-            match = identity
-        else
-            local aliases = index.aliases[Core.normalize(identity)] or {}
-            for key in pairs(aliases) do
-                if match and match ~= key then return nil end
-                match = key
-            end
-        end
-        if match then
-            if selected and selected ~= match then return nil end
-            selected = match
-        end
-    end
-    return selected
-end
-function Core.register(index, key, template, score, source)
-    local old = index.visuals[key]
-    if old and old.score > score then return false end
-    index.visuals[key] = {template=template, score=score, source=source}
-    return true, old
-end
-function Core.ingest(index, data)
-    local seen, budget = {}, 12000
-    local function walk(node, depth)
-        if type(node) ~= 'table' or seen[node] or depth > 5 or budget <= 0 then return end
-        seen[node] = true
-        for key, value in pairs(node) do
-            budget = budget - 1
-            if budget <= 0 then break end
-            if type(value) == 'table' then
-                if type(key) == 'string' and (value.ItemName or value.Image)
-                    and (value.ItemType == 'Knife' or value.ItemType == 'Gun' or value.ItemType == 'Effect') then
-                    Core.addItem(index, key, value)
-                end
-                walk(value, depth + 1)
-            end
-        end
-    end
-    walk(data, 0)
-end
-function Core.filter(index, query, kind, onlyAvailable)
-    local result, needle = {}, tostring(query or ''):lower()
-    for key, data in pairs(index.items) do
-        local text = (key .. ' ' .. tostring(data.ItemName or '')):lower()
-        if (kind == 'Todos' or data.ItemType == kind)
-            and (not onlyAvailable or index.visuals[key]) and text:find(needle, 1, true) then
-            result[#result+1] = key
-        end
-    end
-    table.sort(result)
-    return result
-end
-function Core.toolKind(name, children)
-    name = Core.normalize(name)
-    if name == 'gun' or name == 'pistol' or name == 'revolver' or children.GunClient then return 'Gun' end
-    if name == 'knife' or children.KnifeClient or children.Throw then return 'Knife' end
-    return nil
-end
-function Core.identities(name, metadata, isTool)
-    local result = {}
-    for _, value in ipairs(metadata) do result[#result+1] = value end
-    local generic = {knife=true, gun=true, pistol=true, revolver=true, weapon=true, tool=true}
-    if not isTool or not generic[Core.normalize(name)] then result[#result+1] = name end
-    return result
-end
-if ... == 'core' then return Core end
 
-local Players = game:GetService('Players')
-local RS = game:GetService('ReplicatedStorage')
-local UIS = game:GetService('UserInputService')
-local player = Players.LocalPlayer
-assert(player, 'Weapon Lab debe ejecutarse en el cliente, no en un Script de servidor.')
-local playerGui = player:WaitForChild('PlayerGui')
-local env = (getgenv and getgenv()) or _G
-local singleton = '__ILUNX_WEAPON_LAB_V1'
-if env[singleton] and env[singleton].close then pcall(env[singleton].close) end
-local state = {
-    alive=true, index=Core.newIndex(), connections={}, playerConnections={}, jobs={},
-    snapshots={}, selected=nil, page=1, query='', kind='Todos', available=false,
-    learning=false, scanning=false, loading=false, logs={}, active=nil,
-}
-env[singleton] = state
-local refresh, detail, statusLabel, logBox
-local function log(message)
-    message = tostring(message)
-    state.logs[#state.logs+1] = os.date('%H:%M:%S') .. ' | ' .. message
-    if #state.logs > 80 then table.remove(state.logs, 1) end
-    print('[iLunX Weapon Lab] ' .. message)
-    if statusLabel then statusLabel.Text = message end
-    if logBox then logBox.Text = table.concat(state.logs, '\n') end
+local function trim(value)
+    return tostring(value or ""):match("^%s*(.-)%s*$")
 end
-local function connect(signal, callback, bucket)
-    local connection = signal:Connect(callback)
-    local list = bucket or state.connections
-    list[#list+1] = connection
+
+function Core.normalizeAssetId(value)
+    local text = trim(value)
+    local digits = text:match("^(%d+)$")
+        or text:match("^rbxassetid://(%d+)$")
+        or text:match("[?&]id=(%d+)")
+
+    if not digits or tonumber(digits) == nil or tonumber(digits) <= 0 then
+        return nil
+    end
+
+    return "rbxassetid://" .. digits
+end
+
+
+local POSITIVE_NAME_HINTS = {
+    gun = 28,
+    shot = 42,
+    shoot = 42,
+    fire = 28,
+    bang = 36,
+    blast = 32,
+    pistol = 28,
+    revolver = 28,
+    rifle = 28,
+    laser = 20,
+    weapon = 14,
+}
+
+local NEGATIVE_NAME_HINTS = {
+    reload = 54,
+    equip = 42,
+    hit = 28,
+    impact = 34,
+    kill = 28,
+    empty = 30,
+    music = 70,
+    foot = 60,
+    step = 60,
+    ui = 24,
+}
+
+local SCOPE_SCORES = {
+    tool = 145,
+    character = 88,
+    camera = 62,
+    workspace = 30,
+    soundservice = 18,
+    interface = 5,
+    unknown = 0,
+}
+
+function Core.scoreCandidate(candidate)
+    candidate = candidate or {}
+    local score = SCOPE_SCORES[candidate.scope] or 0
+    local loweredName = string.lower(tostring(candidate.name or ""))
+
+    for hint, value in pairs(POSITIVE_NAME_HINTS) do
+        if string.find(loweredName, hint, 1, true) then
+            score = score + value
+        end
+    end
+
+    for hint, value in pairs(NEGATIVE_NAME_HINTS) do
+        if string.find(loweredName, hint, 1, true) then
+            score = score - value
+        end
+    end
+
+    if Core.normalizeAssetId(candidate.soundId) then
+        score = score + 14
+    end
+
+    local distance = tonumber(candidate.distance)
+    if distance then
+        if distance <= 10 then
+            score = score + 28
+        elseif distance <= 30 then
+            score = score + 14
+        elseif distance > 120 then
+            score = score - 12
+        end
+    end
+
+    if candidate.newlyCreated then
+        score = score + 16
+    end
+    if candidate.wasPlaying then
+        score = score + 12
+    end
+
+    return score
+end
+
+function Core.chooseBestCandidate(candidates)
+    local best = nil
+    local bestScore = -math.huge
+
+    for _, candidate in ipairs(candidates or {}) do
+        local score = Core.scoreCandidate(candidate)
+        local newer = best and (tonumber(candidate.observedAt) or 0) > (tonumber(best.observedAt) or 0)
+        if not best or score > bestScore or (score == bestScore and newer) then
+            best = candidate
+            bestScore = score
+        end
+    end
+
+    return best, bestScore
+end
+
+function Core.matchesTarget(candidate, target)
+    if type(candidate) ~= "table" or type(target) ~= "table" then
+        return false
+    end
+
+    local candidateId = Core.normalizeAssetId(candidate.soundId)
+    local originalId = Core.normalizeAssetId(target.originalId)
+    if candidateId and originalId and candidateId == originalId then
+        return true
+    end
+
+    local candidateName = string.lower(trim(candidate.name))
+    local targetName = string.lower(trim(target.name))
+    local candidateScoped = candidate.scope == "tool" or candidate.scope == "character"
+    local targetScoped = target.scope == "tool" or target.scope == "character"
+
+    return candidateId == nil
+        and candidateName ~= ""
+        and candidateName == targetName
+        and candidateScoped
+        and targetScoped
+end
+
+-- El intérprete de pruebas no tiene el objeto `game`; Roblox continúa debajo.
+if game == nil then
+    return Core
+end
+
+
+local Players = game:GetService("Players")
+local UserInputService = game:GetService("UserInputService")
+local SoundService = game:GetService("SoundService")
+local TweenService = game:GetService("TweenService")
+local Workspace = game:GetService("Workspace")
+
+local player = Players.LocalPlayer
+while not player do
+    task.wait()
+    player = Players.LocalPlayer
+end
+
+local playerGui = player:WaitForChild("PlayerGui")
+local environment = (getgenv and getgenv()) or _G
+local previousRuntime = environment.__ILUNX_SOUNDLAB_RUNTIME
+if previousRuntime and previousRuntime.cleanup then
+    pcall(previousRuntime.cleanup)
+end
+
+local runtime = {
+    alive = true,
+    connections = {},
+    captureConnections = {},
+    liveConnections = {},
+    soundWatchers = setmetatable({}, { __mode = "k" }),
+    originals = setmetatable({}, { __mode = "k" }),
+    applying = setmetatable({}, { __mode = "k" }),
+    candidates = {},
+    candidateBySound = setmetatable({}, { __mode = "k" }),
+    selectedIndex = 0,
+    captureToken = 0,
+    target = nil,
+    replacementId = nil,
+    liveEnabled = false,
+}
+
+local function disconnectList(list)
+    for index = #list, 1, -1 do
+        local connection = list[index]
+        pcall(function()
+            connection:Disconnect()
+        end)
+        list[index] = nil
+    end
+end
+
+local function track(connection, list)
+    if connection then
+        table.insert(list or runtime.connections, connection)
+    end
     return connection
 end
-local function disconnectAll(list)
-    for _, connection in ipairs(list) do connection:Disconnect() end
-    table.clear(list)
-end
-local function schedule(seconds, callback)
-    local thread
-    thread = task.delay(seconds, function()
-        state.jobs[thread] = nil
-        if state.alive then callback() end
-    end)
-    state.jobs[thread] = true
-    return thread
-end
-local function path(object)
-    local ok, value = pcall(function() return object:GetFullName() end)
-    return ok and value or object.Name
-end
-local function isVisual(object)
-    return typeof(object) == 'Instance' and
-        (object:IsA('Tool') or object:IsA('Model') or object:IsA('BasePart'))
-end
-local function all(root)
-    local list = root:GetDescendants()
-    table.insert(list, 1, root)
-    return list
-end
-local function rootPart(root)
-    if root:IsA('BasePart') then return root end
-    local handle = root:FindFirstChild('Handle', true)
-    if handle and handle:IsA('BasePart') then return handle end
-    if root:IsA('Model') and root.PrimaryPart then return root.PrimaryPart end
-    return root:FindFirstChildWhichIsA('BasePart', true)
-end
-local function identities(object)
-    local result = {}
-    for _, key in ipairs({'Skin','SkinName','WeaponName','ItemName','ItemId','WeaponId'}) do
-        local value = object:GetAttribute(key)
-        if type(value) == 'string' then result[#result+1] = value end
-        local child = object:FindFirstChild(key)
-        if child and child:IsA('StringValue') then result[#result+1] = child.Value end
-    end
-    return Core.identities(object.Name, result, object:IsA('Tool'))
-end
-local function kindOf(tool)
-    local kind = tool:GetAttribute('ItemType') or tool:GetAttribute('WeaponType')
-    if kind == 'Knife' or kind == 'Gun' then return kind end
-    local key = Core.resolve(state.index, identities(tool))
-    if key then
-        kind = state.index.items[key].ItemType
-        if kind == 'Knife' or kind == 'Gun' then return kind end
-    end
-    return Core.toolKind(tool.Name, {
-        GunClient=tool:FindFirstChild('GunClient') ~= nil,
-        KnifeClient=tool:FindFirstChild('KnifeClient') ~= nil,
-        Throw=tool:FindFirstChild('Throw') ~= nil,
-    })
-end
-local function sanitize(template)
-    -- Clone off-world; never enable scripts in the copy.
-    local changed = {}
-    for _, object in ipairs(all(template)) do
-        if not object.Archivable then
-            changed[#changed+1] = object
-            object.Archivable = true
+
+local gui
+local previewSound
+
+local function restoreOriginals()
+    runtime.liveEnabled = false
+    disconnectList(runtime.liveConnections)
+
+    for sound, originalId in pairs(runtime.originals) do
+        if sound and sound.Parent then
+            runtime.applying[sound] = true
+            pcall(function()
+                sound.SoundId = originalId
+            end)
+            runtime.applying[sound] = nil
         end
+        runtime.originals[sound] = nil
     end
-    local ok, copy = pcall(function() return template:Clone() end)
-    for _, object in ipairs(changed) do pcall(function() object.Archivable = false end) end
-    if not ok or not copy then return nil, 'El modelo no se pudo clonar.' end
-    local partCount = 0
-    for _, object in ipairs(all(copy)) do
-        if object:IsA('LuaSourceContainer') or object:IsA('JointInstance')
-            or object:IsA('Constraint') or object:IsA('WeldConstraint') or object:IsA('BodyMover')
-            or object:IsA('Sound') or object:IsA('Humanoid')
-            or object:IsA('AnimationController') or object:IsA('ClickDetector')
-            or object:IsA('ProximityPrompt') or object:IsA('RemoteEvent')
-            or object:IsA('RemoteFunction') or object:IsA('BindableEvent')
-            or object:IsA('BindableFunction') then
-            object:Destroy()
-        elseif object:IsA('BasePart') then
-            partCount = partCount + 1
-            object.Anchored = true
-            object.CanCollide, object.CanTouch, object.CanQuery = false, false, false
-            object.Massless = true
-            object.LocalTransparencyModifier = 0
-        end
+
+    for sound, connection in pairs(runtime.soundWatchers) do
+        pcall(function()
+            connection:Disconnect()
+        end)
+        runtime.soundWatchers[sound] = nil
     end
-    if partCount == 0 or partCount > 350 then
-        copy:Destroy()
-        return nil, 'Modelo vacío o demasiado grande (>350 piezas).'
-    end
-    -- Remove external endpoint references. Internal cloned endpoints remain intact.
-    for _, object in ipairs(copy:GetDescendants()) do
-        if object:IsA('Beam') or object:IsA('Trail') then
-            for _, property in ipairs({'Attachment0','Attachment1'}) do
-                local endpoint = object[property]
-                if endpoint and not endpoint:IsDescendantOf(copy) then object[property] = nil end
-            end
-        end
-    end
-    return copy
-end
-local function register(key, object, score, source, snapshot)
-    if not rootPart(object) then return end
-    local old = state.index.visuals[key]
-    if old and old.score > score then return end
-    if snapshot then
-        local count = 0
-        for _ in pairs(state.snapshots) do count = count + 1 end
-        if count >= 80 and not (old and state.snapshots[old.template]) then return end
-        local copy = sanitize(object)
-        if not copy then return end
-        object = copy
-        state.snapshots[copy] = true
-    end
-    Core.register(state.index, key, object, score, source)
-    if old and old.template ~= object and state.snapshots[old.template] then
-        state.snapshots[old.template] = nil
-        old.template:Destroy()
-    end
-end
-local function restore(silent)
-    local active = state.active
-    state.active = nil
-    if not active then return end
-    disconnectAll(active.connections)
-    if active.model then active.model:Destroy() end
-    for object, properties in pairs(active.originals) do
-        for property, value in pairs(properties) do
-            pcall(function() object[property] = value end)
-        end
-    end
-    if not silent then log('Visual restaurado. El Tool original sigue intacto.') end
-end
-state.restore = restore
-local function hideOriginal(active, object)
-    if object:IsDescendantOf(active.model) then return end
-    local property, replacement
-    if object:IsA('BasePart') then property, replacement = 'LocalTransparencyModifier', 1
-    elseif object:IsA('Decal') or object:IsA('Texture') then property, replacement = 'Transparency', 1
-    elseif object:IsA('ParticleEmitter') or object:IsA('Trail') or object:IsA('Beam') or object:IsA('Light') then
-        property, replacement = 'Enabled', false
-    end
-    if property and not active.originals[object] then
-        active.originals[object] = {[property]=object[property]}
-        object[property] = replacement
-        connect(object:GetPropertyChangedSignal(property), function()
-            if state.active == active and object[property] ~= replacement then
-                object[property] = replacement
-            end
-        end, active.connections)
-    end
-end
-local function apply()
-    local key = state.selected
-    local record = key and state.index.visuals[key]
-    if not record then log('Sin modelo 3D: carga el catálogo, escanea o activa Aprender.') return end
-    local character = player.Character
-    local tool = character and character:FindFirstChildWhichIsA('Tool')
-    if not tool then log('Primero equipa en la mano tu cuchillo o pistola real.') return end
-    local handle = tool:FindFirstChild('Handle')
-    if not handle or not handle:IsA('BasePart') then log('Tool sin Handle compatible.') return end
-    local expected, actual = state.index.items[key].ItemType, kindOf(tool)
-    if expected == 'Effect' then log('Esta prueba aplica modelos completos; efectos sueltos aún no.') return end
-    if actual and (expected == 'Knife' or expected == 'Gun') and expected ~= actual then
-        log('Tipo distinto: equipa un arma de tipo ' .. expected .. '.') return
-    end
-    local copy, problem = sanitize(record.template)
-    if not copy then log(problem) return end
-    local sourceRoot = rootPart(copy)
-    local origin = sourceRoot.CFrame
-    local model = Instance.new('Model')
-    model.Name = 'iLunX_WeaponLab_Visual'
-    model:SetAttribute('WeaponLabVisual', true)
-    -- Tool -> Model: do not create a second functional Tool or lose child effects.
-    if copy:IsA('Tool') then
-        for _, child in ipairs(copy:GetChildren()) do child.Parent = model end
-        copy:Destroy()
-    else copy.Parent = model end
-    local ok, err = pcall(function()
-        for _, object in ipairs(model:GetDescendants()) do
-            if object:IsA('BasePart') then
-                object.CFrame = handle.CFrame * origin:ToObjectSpace(object.CFrame)
-                local weld = Instance.new('WeldConstraint')
-                weld.Part0, weld.Part1 = handle, object
-                weld.Parent = object
-                object.Anchored = false
-            end
-        end
-    end)
-    if not ok then model:Destroy() log('No se pudo preparar el visual: ' .. tostring(err)) return end
-    restore(true)
-    local active = {tool=tool, model=model, originals={}, connections={}}
-    state.active = active
-    local committed, commitError = pcall(function()
-        model.Parent = tool
-        for _, object in ipairs(tool:GetDescendants()) do hideOriginal(active, object) end
-        connect(tool.DescendantAdded, function(object)
-            if state.active == active then hideOriginal(active, object) end
-        end, active.connections)
-        connect(tool.AncestryChanged, function()
-            if state.active == active and not tool:IsDescendantOf(character) then restore(true) log('Arma guardada: visual restaurado.') end
-        end, active.connections)
-    end)
-    if not committed then restore(true) log('Aplicación cancelada: ' .. tostring(commitError)) return end
-    log('Aplicado: ' .. tostring(state.index.items[key].ItemName or key) .. '. Solo visible para ti.')
 end
 
-local function candidate(object)
-    if not isVisual(object) or not rootPart(object) then return end
-    local key = Core.resolve(state.index, identities(object))
-    if key then
-        local score = object:IsA('Tool') and 90 or (object:IsA('Model') and 80 or 70)
-        register(key, object, score, path(object), false)
+function runtime.cleanup()
+    if not runtime.alive then
         return
     end
-    -- Unidentified models remain explicitly raw candidates; never pretend a skin match.
-    local parent = object.Parent
-    if not parent or parent:IsA('Tool') or parent:IsA('Model') or parent:IsA('BasePart') then return end
-    local context = path(parent):lower()
-    local weaponContext = context:find('weapon',1,true) or context:find('skin',1,true)
-        or context:find('knife',1,true) or context:find('gun',1,true)
-    if not weaponContext and not object:IsA('Tool') then return end
-    local rawKey = '@modelo:' .. path(object)
-    Core.addItem(state.index, rawKey, {ItemName=object.Name .. ' [modelo sin identificar]', ItemType='Modelo'})
-    register(rawKey, object, 10, path(object), false)
-end
-local function scan()
-    if state.scanning then log('Ya hay un escaneo en curso.') return end
-    state.scanning = true
-    log('Escaneando modelos replicados...')
-    schedule(0, function()
-        local ok, err = pcall(function()
-            for i, object in ipairs(RS:GetDescendants()) do
-                if not state.alive then return end
-                candidate(object)
-                if i % 160 == 0 then task.wait() end
-            end
-            -- Direct Instance metadata links; do not interpret icon IDs as mesh IDs.
-            for key, data in pairs(state.index.items) do
-                for _, value in pairs(data) do
-                    if isVisual(value) then register(key, value, 100, 'Metadata: ' .. path(value), false) end
-                end
-            end
+
+    runtime.alive = false
+    runtime.captureToken = runtime.captureToken + 1
+    disconnectList(runtime.captureConnections)
+    restoreOriginals()
+    disconnectList(runtime.connections)
+
+    if previewSound then
+        pcall(function()
+            previewSound:Destroy()
         end)
-        state.scanning = false
-        if not state.alive then return end
-        if not ok then log('Escaneo incompleto: ' .. tostring(err)) else log('Escaneo terminado. Revisa el contador y los modelos disponibles.') end
-        refresh()
-    end)
+        previewSound = nil
+    end
+
+    if gui then
+        pcall(function()
+            gui:Destroy()
+        end)
+        gui = nil
+    end
+
+    if environment.__ILUNX_SOUNDLAB_RUNTIME == runtime then
+        environment.__ILUNX_SOUNDLAB_RUNTIME = nil
+    end
 end
-local function loadCatalog()
-    if state.loading then return end
-    state.loading = true
-    log('Leyendo ModuleScripts replicados (pueden ejecutar lógica propia)...')
-    schedule(0, function()
-        local loaded, failed, timeout = 0, 0, 0
-        for _, module in ipairs(RS:GetDescendants()) do
-            if not state.alive then break end
-            if module:IsA('ModuleScript') then
-                local done, ok, data = false, false, nil
-                local worker = task.spawn(function()
-                    ok, data = pcall(require, module)
-                    done = true
-                end)
-                state.jobs[worker] = true
-                local deadline = os.clock() + 0.6
-                repeat task.wait() until done or not state.alive or os.clock() >= deadline
-                state.jobs[worker] = nil
-                if not done then
-                    pcall(task.cancel, worker)
-                    timeout = timeout + 1
-                elseif ok and type(data) == 'table' then
-                    Core.ingest(state.index, data)
-                    loaded = loaded + 1
-                else failed = failed + 1 end
-                if (loaded+failed+timeout) % 20 == 0 then
-                    log(string.format('Catálogo: %d tablas / %d errores / %d tiempos agotados', loaded, failed, timeout))
-                    refresh()
+
+environment.__ILUNX_SOUNDLAB_RUNTIME = runtime
+
+
+local COLORS = {
+    background = Color3.fromRGB(8, 8, 9),
+    panel = Color3.fromRGB(14, 14, 16),
+    card = Color3.fromRGB(20, 20, 23),
+    cardHover = Color3.fromRGB(27, 27, 30),
+    border = Color3.fromRGB(48, 48, 54),
+    text = Color3.fromRGB(244, 244, 246),
+    secondary = Color3.fromRGB(158, 158, 168),
+    muted = Color3.fromRGB(104, 104, 114),
+    accent = Color3.fromRGB(235, 235, 238),
+    darkText = Color3.fromRGB(18, 18, 20),
+    success = Color3.fromRGB(141, 219, 157),
+    warning = Color3.fromRGB(235, 199, 118),
+    error = Color3.fromRGB(235, 126, 126),
+}
+
+local function addCorner(object, radius)
+    local corner = Instance.new("UICorner")
+    corner.CornerRadius = UDim.new(0, radius or 12)
+    corner.Parent = object
+    return corner
+end
+
+local function addStroke(object, color, transparency)
+    local stroke = Instance.new("UIStroke")
+    stroke.Color = color or COLORS.border
+    stroke.Transparency = transparency or 0
+    stroke.Thickness = 1
+    stroke.Parent = object
+    return stroke
+end
+
+local function makeLabel(parent, text, size, color, font)
+    local label = Instance.new("TextLabel")
+    label.BackgroundTransparency = 1
+    label.Text = text or ""
+    label.TextColor3 = color or COLORS.text
+    label.TextSize = size or 13
+    label.Font = font or Enum.Font.Gotham
+    label.TextXAlignment = Enum.TextXAlignment.Left
+    label.TextYAlignment = Enum.TextYAlignment.Center
+    label.Parent = parent
+    return label
+end
+
+local function makeButton(parent, text, primary)
+    local button = Instance.new("TextButton")
+    button.AutoButtonColor = false
+    button.BackgroundColor3 = primary and COLORS.accent or COLORS.card
+    button.BorderSizePixel = 0
+    button.Text = text
+    button.TextColor3 = primary and COLORS.darkText or COLORS.text
+    button.TextSize = 12
+    button.Font = Enum.Font.GothamMedium
+    button.Parent = parent
+    addCorner(button, 11)
+    addStroke(button, primary and Color3.fromRGB(255, 255, 255) or COLORS.border, primary and 0.72 or 0)
+
+    local baseColor = button.BackgroundColor3
+    local hoverColor = primary and Color3.fromRGB(214, 214, 220) or COLORS.cardHover
+    track(button.MouseEnter:Connect(function()
+        TweenService:Create(button, TweenInfo.new(0.12), { BackgroundColor3 = hoverColor }):Play()
+    end))
+    track(button.MouseLeave:Connect(function()
+        TweenService:Create(button, TweenInfo.new(0.12), { BackgroundColor3 = baseColor }):Play()
+    end))
+
+    return button
+end
+
+local parent = playerGui
+pcall(function()
+    if gethui then
+        parent = gethui()
+    else
+        parent = game:GetService("CoreGui")
+    end
+end)
+
+local oldGui = parent:FindFirstChild("iLunXHub_SoundLab")
+if oldGui then
+    oldGui:Destroy()
+end
+
+gui = Instance.new("ScreenGui")
+gui.Name = "iLunXHub_SoundLab"
+gui.ResetOnSpawn = false
+gui.IgnoreGuiInset = true
+gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+gui.DisplayOrder = 2147483000
+pcall(function()
+    if syn and syn.protect_gui then
+        syn.protect_gui(gui)
+    end
+end)
+
+local parented = pcall(function()
+    gui.Parent = parent
+end)
+if not parented then
+    gui.Parent = playerGui
+end
+
+local panel = Instance.new("Frame")
+panel.Name = "Panel"
+panel.AnchorPoint = Vector2.new(0.5, 0.5)
+panel.Position = UDim2.fromScale(0.5, 0.5)
+panel.Size = UDim2.fromOffset(440, 520)
+panel.BackgroundColor3 = COLORS.panel
+panel.BorderSizePixel = 0
+panel.ClipsDescendants = true
+panel.Parent = gui
+addCorner(panel, 18)
+addStroke(panel, Color3.fromRGB(58, 58, 65), 0.08)
+
+local panelScale = Instance.new("UIScale")
+panelScale.Parent = panel
+
+local function updateScale()
+    local camera = Workspace.CurrentCamera
+    local viewport = camera and camera.ViewportSize or Vector2.new(1280, 720)
+    panelScale.Scale = math.min(1, (viewport.X - 24) / 440, (viewport.Y - 24) / 520)
+end
+updateScale()
+track(Workspace:GetPropertyChangedSignal("CurrentCamera"):Connect(updateScale))
+if Workspace.CurrentCamera then
+    track(Workspace.CurrentCamera:GetPropertyChangedSignal("ViewportSize"):Connect(updateScale))
+end
+
+local topGlow = Instance.new("Frame")
+topGlow.Size = UDim2.new(1, 0, 0, 2)
+topGlow.BackgroundColor3 = COLORS.accent
+topGlow.BackgroundTransparency = 0.16
+topGlow.BorderSizePixel = 0
+topGlow.Parent = panel
+
+local header = Instance.new("Frame")
+header.Size = UDim2.new(1, 0, 0, 68)
+header.BackgroundTransparency = 1
+header.Active = true
+header.Parent = panel
+
+local mark = Instance.new("Frame")
+mark.Size = UDim2.fromOffset(34, 34)
+mark.Position = UDim2.fromOffset(18, 17)
+mark.BackgroundColor3 = COLORS.accent
+mark.BorderSizePixel = 0
+mark.Parent = header
+addCorner(mark, 10)
+
+local markText = makeLabel(mark, "iX", 13, COLORS.darkText, Enum.Font.GothamBold)
+markText.Size = UDim2.fromScale(1, 1)
+markText.TextXAlignment = Enum.TextXAlignment.Center
+
+local title = makeLabel(header, "iLunXHub", 17, COLORS.text, Enum.Font.GothamBold)
+title.Position = UDim2.fromOffset(64, 14)
+title.Size = UDim2.new(1, -118, 0, 23)
+
+local subtitle = makeLabel(header, "SOUND LAB  ·  ALEXDEV", 9, COLORS.secondary, Enum.Font.GothamMedium)
+subtitle.Position = UDim2.fromOffset(64, 36)
+subtitle.Size = UDim2.new(1, -118, 0, 17)
+
+local closeButton = Instance.new("TextButton")
+closeButton.AutoButtonColor = false
+closeButton.Size = UDim2.fromOffset(32, 32)
+closeButton.Position = UDim2.new(1, -48, 0, 18)
+closeButton.BackgroundColor3 = COLORS.card
+closeButton.BorderSizePixel = 0
+closeButton.Text = "×"
+closeButton.TextColor3 = COLORS.secondary
+closeButton.TextSize = 20
+closeButton.Font = Enum.Font.Gotham
+closeButton.Parent = header
+addCorner(closeButton, 10)
+track(closeButton.Activated:Connect(runtime.cleanup))
+
+local dragging = false
+local dragStart
+local startPosition
+
+track(header.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1
+        or input.UserInputType == Enum.UserInputType.Touch then
+        dragging = true
+        dragStart = input.Position
+        startPosition = panel.Position
+    end
+end))
+
+track(header.InputEnded:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1
+        or input.UserInputType == Enum.UserInputType.Touch then
+        dragging = false
+    end
+end))
+
+track(UserInputService.InputChanged:Connect(function(input)
+    if not dragging then
+        return
+    end
+    if input.UserInputType ~= Enum.UserInputType.MouseMovement
+        and input.UserInputType ~= Enum.UserInputType.Touch then
+        return
+    end
+
+    local scale = math.max(panelScale.Scale, 0.01)
+    local delta = (input.Position - dragStart) / scale
+    panel.Position = UDim2.new(
+        startPosition.X.Scale,
+        startPosition.X.Offset + delta.X,
+        startPosition.Y.Scale,
+        startPosition.Y.Offset + delta.Y
+    )
+end))
+
+local body = Instance.new("Frame")
+body.Position = UDim2.fromOffset(14, 68)
+body.Size = UDim2.new(1, -28, 1, -82)
+body.BackgroundTransparency = 1
+body.Parent = panel
+
+local intro = makeLabel(
+    body,
+    "Equipa el arma, inicia la detección y dispara una sola vez.",
+    11,
+    COLORS.secondary,
+    Enum.Font.Gotham
+)
+intro.Size = UDim2.new(1, 0, 0, 30)
+intro.TextWrapped = true
+intro.TextYAlignment = Enum.TextYAlignment.Top
+
+local detectButton = makeButton(body, "1  ·  DETECTAR DISPARO", true)
+detectButton.Position = UDim2.fromOffset(0, 38)
+detectButton.Size = UDim2.new(1, 0, 0, 42)
+
+local statusCard = Instance.new("Frame")
+statusCard.Position = UDim2.fromOffset(0, 90)
+statusCard.Size = UDim2.new(1, 0, 0, 110)
+statusCard.BackgroundColor3 = COLORS.card
+statusCard.BorderSizePixel = 0
+statusCard.Parent = body
+addCorner(statusCard, 13)
+addStroke(statusCard, COLORS.border, 0.08)
+
+local statusDot = Instance.new("Frame")
+statusDot.Size = UDim2.fromOffset(7, 7)
+statusDot.Position = UDim2.fromOffset(14, 15)
+statusDot.BackgroundColor3 = COLORS.muted
+statusDot.BorderSizePixel = 0
+statusDot.Parent = statusCard
+addCorner(statusDot, 7)
+
+local statusLabel = makeLabel(statusCard, "Esperando detección", 10, COLORS.secondary, Enum.Font.GothamMedium)
+statusLabel.Position = UDim2.fromOffset(28, 8)
+statusLabel.Size = UDim2.new(1, -42, 0, 22)
+
+local detectedLabel = makeLabel(statusCard, "Todavía no hay un sonido seleccionado.", 11, COLORS.text, Enum.Font.Gotham)
+detectedLabel.Position = UDim2.fromOffset(14, 34)
+detectedLabel.Size = UDim2.new(1, -28, 0, 64)
+detectedLabel.TextWrapped = true
+detectedLabel.TextYAlignment = Enum.TextYAlignment.Top
+
+local navigation = Instance.new("Frame")
+navigation.Position = UDim2.fromOffset(0, 210)
+navigation.Size = UDim2.new(1, 0, 0, 34)
+navigation.BackgroundTransparency = 1
+navigation.Parent = body
+
+local previousButton = makeButton(navigation, "‹  ANTERIOR", false)
+previousButton.Size = UDim2.new(0.32, 0, 1, 0)
+
+local candidateCount = makeLabel(navigation, "0 candidatos", 10, COLORS.muted, Enum.Font.GothamMedium)
+candidateCount.Position = UDim2.new(0.32, 8, 0, 0)
+candidateCount.Size = UDim2.new(0.36, -16, 1, 0)
+candidateCount.TextXAlignment = Enum.TextXAlignment.Center
+
+local nextButton = makeButton(navigation, "SIGUIENTE  ›", false)
+nextButton.Position = UDim2.new(0.68, 0, 0, 0)
+nextButton.Size = UDim2.new(0.32, 0, 1, 0)
+
+local fieldTitle = makeLabel(body, "NUEVO ASSET ID", 9, COLORS.secondary, Enum.Font.GothamMedium)
+fieldTitle.Position = UDim2.fromOffset(2, 258)
+fieldTitle.Size = UDim2.new(1, -4, 0, 18)
+
+local replacementBox = Instance.new("TextBox")
+replacementBox.Position = UDim2.fromOffset(0, 280)
+replacementBox.Size = UDim2.new(1, 0, 0, 42)
+replacementBox.BackgroundColor3 = COLORS.card
+replacementBox.BorderSizePixel = 0
+replacementBox.ClearTextOnFocus = false
+replacementBox.PlaceholderText = "Ejemplo: 9123456789"
+replacementBox.PlaceholderColor3 = COLORS.muted
+replacementBox.Text = ""
+replacementBox.TextColor3 = COLORS.text
+replacementBox.TextSize = 12
+replacementBox.Font = Enum.Font.Code
+replacementBox.TextXAlignment = Enum.TextXAlignment.Left
+replacementBox.Parent = body
+addCorner(replacementBox, 11)
+addStroke(replacementBox, COLORS.border, 0.08)
+
+local fieldPadding = Instance.new("UIPadding")
+fieldPadding.PaddingLeft = UDim.new(0, 14)
+fieldPadding.PaddingRight = UDim.new(0, 14)
+fieldPadding.Parent = replacementBox
+
+local actionRow = Instance.new("Frame")
+actionRow.Position = UDim2.fromOffset(0, 332)
+actionRow.Size = UDim2.new(1, 0, 0, 42)
+actionRow.BackgroundTransparency = 1
+actionRow.Parent = body
+
+local previewButton = makeButton(actionRow, "PROBAR SONIDO", false)
+previewButton.Size = UDim2.new(0.42, -5, 1, 0)
+
+local applyButton = makeButton(actionRow, "2  ·  APLICAR", true)
+applyButton.Position = UDim2.new(0.42, 5, 0, 0)
+applyButton.Size = UDim2.new(0.58, -5, 1, 0)
+
+local restoreButton = makeButton(body, "RESTAURAR SONIDO ORIGINAL", false)
+restoreButton.Position = UDim2.fromOffset(0, 384)
+restoreButton.Size = UDim2.new(1, 0, 0, 38)
+
+local footer = makeLabel(
+    body,
+    "El cambio es local y se mantiene en nuevas copias del mismo sonido.",
+    9,
+    COLORS.muted,
+    Enum.Font.Gotham
+)
+footer.Position = UDim2.fromOffset(0, 428)
+footer.Size = UDim2.new(1, 0, 0, 22)
+footer.TextXAlignment = Enum.TextXAlignment.Center
+
+local function setStatus(text, color)
+    statusLabel.Text = tostring(text)
+    statusLabel.TextColor3 = color or COLORS.secondary
+    statusDot.BackgroundColor3 = color or COLORS.muted
+end
+
+local function safeFullName(instance)
+    local ok, name = pcall(function()
+        return instance:GetFullName()
+    end)
+    return ok and name or tostring(instance and instance.Name or "Sound")
+end
+
+local function getEquippedTool()
+    local character = player.Character
+    return character and character:FindFirstChildOfClass("Tool") or nil
+end
+
+local function isDescendantOf(instance, ancestor)
+    return instance and ancestor and instance:IsDescendantOf(ancestor)
+end
+
+local function getScope(sound)
+    local tool = sound:FindFirstAncestorWhichIsA("Tool")
+    if tool then
+        return "tool"
+    end
+
+    local character = player.Character
+    if isDescendantOf(sound, character) then
+        return "character"
+    end
+    if isDescendantOf(sound, Workspace.CurrentCamera) then
+        return "camera"
+    end
+    if isDescendantOf(sound, playerGui) then
+        return "interface"
+    end
+    if isDescendantOf(sound, SoundService) then
+        return "soundservice"
+    end
+    if isDescendantOf(sound, Workspace) then
+        return "workspace"
+    end
+    return "unknown"
+end
+
+local function getDistance(sound)
+    local character = player.Character
+    local root = character and character:FindFirstChild("HumanoidRootPart")
+    local part = sound:FindFirstAncestorWhichIsA("BasePart")
+    if not root or not part then
+        return nil
+    end
+    return (part.Position - root.Position).Magnitude
+end
+
+local function describeSound(sound, newlyCreated, observedAt)
+    local soundId = ""
+    pcall(function()
+        soundId = sound.SoundId
+    end)
+
+    return {
+        instance = sound,
+        name = sound.Name,
+        soundId = soundId,
+        path = safeFullName(sound),
+        scope = getScope(sound),
+        distance = getDistance(sound),
+        newlyCreated = newlyCreated == true,
+        wasPlaying = sound.IsPlaying == true,
+        observedAt = observedAt or 0,
+    }
+end
+
+local function updateSelectedCandidate(index)
+    local count = #runtime.candidates
+    candidateCount.Text = tostring(count) .. (count == 1 and " candidato" or " candidatos")
+
+    if count == 0 then
+        runtime.selectedIndex = 0
+        detectedLabel.Text = "No se detectó ningún sonido. Equipa el arma y vuelve a intentarlo."
+        return
+    end
+
+    if index < 1 then
+        index = count
+    elseif index > count then
+        index = 1
+    end
+
+    runtime.selectedIndex = index
+    local candidate = runtime.candidates[index]
+    local normalized = Core.normalizeAssetId(candidate.soundId) or "ID vacío/no disponible"
+    local path = candidate.path
+    if #path > 66 then
+        path = "…" .. string.sub(path, -65)
+    end
+
+    detectedLabel.Text = string.format(
+        "%s  ·  %s\n%s\n%s",
+        candidate.name,
+        string.upper(candidate.scope),
+        normalized,
+        path
+    )
+end
+
+local function addCandidate(sound, newlyCreated, captureStartedAt)
+    if not runtime.alive or not sound or not sound:IsA("Sound") then
+        return
+    end
+
+    local candidate = runtime.candidateBySound[sound]
+    if candidate then
+        candidate.wasPlaying = sound.IsPlaying == true
+        candidate.observedAt = os.clock() - captureStartedAt
+        return
+    end
+
+    candidate = describeSound(sound, newlyCreated, os.clock() - captureStartedAt)
+    runtime.candidateBySound[sound] = candidate
+    table.insert(runtime.candidates, candidate)
+
+    local best = Core.chooseBestCandidate(runtime.candidates)
+    for index, current in ipairs(runtime.candidates) do
+        if current == best then
+            updateSelectedCandidate(index)
+            break
+        end
+    end
+end
+
+local function beginCapture()
+    runtime.captureToken = runtime.captureToken + 1
+    local token = runtime.captureToken
+    disconnectList(runtime.captureConnections)
+    runtime.candidates = {}
+    runtime.candidateBySound = setmetatable({}, { __mode = "k" })
+    runtime.selectedIndex = 0
+    updateSelectedCandidate(0)
+
+    local equippedTool = getEquippedTool()
+    if not equippedTool then
+        setStatus("Equipa un arma antes de detectar", COLORS.warning)
+        detectedLabel.Text = "No encontré ningún Tool equipado en tu personaje."
+        return
+    end
+
+    setStatus("Escuchando 4 s · dispara una vez", COLORS.warning)
+    detectedLabel.Text = "Capturando sonidos reproducidos por " .. equippedTool.Name .. "…"
+    detectButton.Text = "ESCUCHANDO… DISPARA AHORA"
+
+    local captureStartedAt = os.clock()
+    local observed = setmetatable({}, { __mode = "k" })
+
+    local function observe(sound, newlyCreated)
+        if observed[sound] or not sound:IsA("Sound") then
+            return
+        end
+        observed[sound] = true
+
+        local okPlayed, playedConnection = pcall(function()
+            return sound.Played:Connect(function()
+                if runtime.captureToken == token then
+                    addCandidate(sound, newlyCreated, captureStartedAt)
+                end
+            end)
+        end)
+        if okPlayed then
+            track(playedConnection, runtime.captureConnections)
+        end
+
+        local okPlaying, playingConnection = pcall(function()
+            return sound:GetPropertyChangedSignal("Playing"):Connect(function()
+                if runtime.captureToken == token and sound.Playing then
+                    addCandidate(sound, newlyCreated, captureStartedAt)
+                end
+            end)
+        end)
+        if okPlaying then
+            track(playingConnection, runtime.captureConnections)
+        end
+
+        if newlyCreated then
+            task.defer(function()
+                if runtime.captureToken == token and sound.Parent and sound.IsPlaying then
+                    addCandidate(sound, true, captureStartedAt)
+                end
+            end)
+        end
+    end
+
+    local roots = {
+        equippedTool,
+        player.Character,
+        player:FindFirstChildOfClass("Backpack"),
+        Workspace.CurrentCamera,
+        SoundService,
+        playerGui,
+    }
+
+    for _, root in ipairs(roots) do
+        if root then
+            if root:IsA("Sound") then
+                observe(root, false)
+            end
+            for _, descendant in ipairs(root:GetDescendants()) do
+                if descendant:IsA("Sound") then
+                    observe(descendant, false)
                 end
             end
         end
-        state.loading = false
-        if state.alive then
-            log(string.format('Catálogo listo: %d tablas, %d errores, %d tiempos agotados.', loaded, failed, timeout))
-            scan()
+    end
+
+    track(game.DescendantAdded:Connect(function(descendant)
+        if runtime.captureToken == token and descendant:IsA("Sound") then
+            observe(descendant, true)
+        end
+    end), runtime.captureConnections)
+
+    task.delay(4, function()
+        if not runtime.alive or runtime.captureToken ~= token then
+            return
+        end
+
+        disconnectList(runtime.captureConnections)
+        detectButton.Text = "1  ·  DETECTAR DISPARO"
+
+        if #runtime.candidates == 0 then
+            setStatus("No se detectó sonido", COLORS.error)
+            updateSelectedCandidate(0)
+            return
+        end
+
+        local best = Core.chooseBestCandidate(runtime.candidates)
+        for index, candidate in ipairs(runtime.candidates) do
+            if candidate == best then
+                updateSelectedCandidate(index)
+                break
+            end
+        end
+        setStatus("Disparo detectado · revisa el resultado", COLORS.success)
+    end)
+end
+
+local function selectedCandidate()
+    return runtime.candidates[runtime.selectedIndex]
+end
+
+local function metadataForMatch(sound)
+    return {
+        name = sound.Name,
+        soundId = sound.SoundId,
+        scope = getScope(sound),
+    }
+end
+
+local applyToSound
+
+local function watchSound(sound)
+    if runtime.soundWatchers[sound] or not sound:IsA("Sound") then
+        return
+    end
+
+    local connection = sound:GetPropertyChangedSignal("SoundId"):Connect(function()
+        if runtime.liveEnabled and not runtime.applying[sound] then
+            applyToSound(sound)
+        end
+    end)
+    runtime.soundWatchers[sound] = connection
+end
+
+applyToSound = function(sound)
+    if not runtime.liveEnabled or not runtime.target or not runtime.replacementId then
+        return false
+    end
+    if not sound or not sound.Parent or not sound:IsA("Sound") then
+        return false
+    end
+
+    watchSound(sound)
+    if not Core.matchesTarget(metadataForMatch(sound), runtime.target) then
+        return false
+    end
+
+    if runtime.originals[sound] == nil then
+        runtime.originals[sound] = sound.SoundId
+    end
+
+    if sound.SoundId ~= runtime.replacementId then
+        runtime.applying[sound] = true
+        local ok = pcall(function()
+            sound.SoundId = runtime.replacementId
+        end)
+        runtime.applying[sound] = nil
+        return ok
+    end
+
+    return true
+end
+
+local function scanLikelySounds(callback)
+    local roots = {
+        getEquippedTool(),
+        player.Character,
+        player:FindFirstChildOfClass("Backpack"),
+        Workspace.CurrentCamera,
+        SoundService,
+        playerGui,
+    }
+    local seen = setmetatable({}, { __mode = "k" })
+
+    for _, root in ipairs(roots) do
+        if root then
+            if root:IsA("Sound") and not seen[root] then
+                seen[root] = true
+                callback(root)
+            end
+            for _, descendant in ipairs(root:GetDescendants()) do
+                if descendant:IsA("Sound") and not seen[descendant] then
+                    seen[descendant] = true
+                    callback(descendant)
+                end
+            end
+        end
+    end
+end
+
+local function applyReplacement()
+    local candidate = selectedCandidate()
+    if not candidate then
+        setStatus("Primero detecta el disparo", COLORS.error)
+        return
+    end
+
+    local replacementId = Core.normalizeAssetId(replacementBox.Text)
+    if not replacementId then
+        setStatus("Asset ID inválido", COLORS.error)
+        return
+    end
+
+    restoreOriginals()
+    runtime.target = {
+        originalId = candidate.soundId,
+        name = candidate.name,
+        scope = candidate.scope,
+    }
+    runtime.replacementId = replacementId
+    runtime.liveEnabled = true
+
+    local changed = 0
+    if candidate.instance and candidate.instance.Parent and applyToSound(candidate.instance) then
+        changed = changed + 1
+    end
+
+    scanLikelySounds(function(sound)
+        if sound ~= candidate.instance and applyToSound(sound) then
+            changed = changed + 1
+        else
+            watchSound(sound)
+        end
+    end)
+
+    track(game.DescendantAdded:Connect(function(descendant)
+        if runtime.liveEnabled and descendant:IsA("Sound") then
+            watchSound(descendant)
+            applyToSound(descendant)
+        end
+    end), runtime.liveConnections)
+
+    setStatus("Cambio activo · dispara para comprobar", COLORS.success)
+    applyButton.Text = "APLICADO  ·  SEGUIMIENTO ACTIVO"
+    footer.Text = "Instancias cambiadas ahora: " .. tostring(changed) .. " · también vigila sonidos nuevos."
+end
+
+local function previewReplacement()
+    local replacementId = Core.normalizeAssetId(replacementBox.Text)
+    if not replacementId then
+        setStatus("Asset ID inválido", COLORS.error)
+        return
+    end
+
+    if previewSound then
+        pcall(function()
+            previewSound:Destroy()
+        end)
+    end
+
+    previewSound = Instance.new("Sound")
+    previewSound.Name = "iLunXHub_SoundPreview"
+    previewSound.SoundId = replacementId
+    previewSound.Volume = 1
+    previewSound.Parent = SoundService
+
+    local ok = pcall(function()
+        SoundService:PlayLocalSound(previewSound)
+    end)
+    if not ok then
+        pcall(function()
+            previewSound:Play()
+        end)
+    end
+
+    setStatus("Reproduciendo vista previa", COLORS.success)
+    task.delay(12, function()
+        if previewSound and previewSound.Parent then
+            previewSound:Destroy()
+            previewSound = nil
         end
     end)
 end
-local observed = setmetatable({}, {__mode='k'})
-local function learnTool(tool, owner)
-    if not state.learning or not tool:IsA('Tool') or not tool.Parent then return end
-    if tool:FindFirstChild('iLunX_WeaponLab_Visual') then return end
-    local key = Core.resolve(state.index, identities(tool))
-    if not key then
-        key = '@visto:' .. owner.UserId .. ':' .. tool.Name
-        Core.addItem(state.index, key, {
-            ItemName=tool.Name .. ' [visto en ' .. owner.DisplayName .. '; skin no identificada]',
-            ItemType=kindOf(tool) or 'Modelo',
-        })
-    end
-    register(key, tool, 60, 'Equipado por ' .. owner.Name .. ' | ' .. path(tool), true)
-    refresh()
-end
-local function queueLearn(tool, owner)
-    if not state.learning or not tool:IsA('Tool') or observed[tool] then return end
-    observed[tool] = true
-    schedule(0.6, function() learnTool(tool, owner) end)
-    schedule(1.8, function() learnTool(tool, owner) observed[tool] = nil end)
-end
-local function watchPlayer(owner)
-    local bucket = {}
-    state.playerConnections[owner] = bucket
-    local characterBucket = {}
-    local function bind(character)
-        disconnectAll(characterBucket)
-        connect(character.ChildAdded, function(child) queueLearn(child, owner) end, characterBucket)
-        connect(character.DescendantAdded, function(child)
-            local tool = child:FindFirstAncestorWhichIsA('Tool')
-            if tool then queueLearn(tool, owner) end
-        end, characterBucket)
-        for _, child in ipairs(character:GetChildren()) do queueLearn(child, owner) end
-    end
-    connect(owner.CharacterAdded, bind, bucket)
-    connect(owner.CharacterRemoving, function() disconnectAll(characterBucket) end, bucket)
-    bucket.characterBucket = characterBucket
-    if owner.Character then bind(owner.Character) end
-end
 
--- Native self-contained UI. All IDs and runtime state are separate from the main hub.
-local gui = Instance.new('ScreenGui')
-gui.Name = 'iLunX_WeaponLab'
-gui.ResetOnSpawn = false
-gui.IgnoreGuiInset = false
-gui.DisplayOrder = 500
-gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
-gui.Parent = playerGui
-local function create(class, properties, parent)
-    local object = Instance.new(class)
-    for key, value in pairs(properties) do object[key] = value end
-    object.Parent = parent
-    return object
-end
-local white, gray = Color3.fromRGB(238,238,238), Color3.fromRGB(175,175,175)
-local function round(object, radius)
-    create('UICorner', {CornerRadius=UDim.new(0,radius or 9)}, object)
-end
-local panel = create('Frame', {
-    AnchorPoint=Vector2.new(0.5,0.5), Position=UDim2.fromScale(0.5,0.5),
-    Size=UDim2.new(1,-20,1,-28), BackgroundColor3=Color3.fromRGB(12,12,14), BorderSizePixel=0,
-}, gui)
-create('UISizeConstraint', {MaxSize=Vector2.new(590,740)}, panel)
-round(panel, 16)
-create('UIStroke', {Color=Color3.fromRGB(72,72,76), Thickness=1}, panel)
-local header = create('TextLabel', {Text='iLunXHub / WEAPON LAB  ·  AlexDev',
-    Size=UDim2.new(1,-96,0,46), Position=UDim2.fromOffset(14,0), BackgroundTransparency=1,
-    Font=Enum.Font.GothamMedium, TextSize=13, TextColor3=white, TextXAlignment=Enum.TextXAlignment.Left,
-    TextTruncate=Enum.TextTruncate.AtEnd, Active=true}, panel)
-local scroll = create('ScrollingFrame', {Size=UDim2.new(1,-20,1,-58), Position=UDim2.fromOffset(10,48),
-    BackgroundTransparency=1, BorderSizePixel=0, ScrollBarThickness=3,
-    AutomaticCanvasSize=Enum.AutomaticSize.Y, CanvasSize=UDim2.new(), ScrollingDirection=Enum.ScrollingDirection.Y}, panel)
-create('UIListLayout', {Padding=UDim.new(0,7), SortOrder=Enum.SortOrder.LayoutOrder}, scroll)
-create('UIPadding', {PaddingBottom=UDim.new(0,16), PaddingRight=UDim.new(0,5)}, scroll)
-local order = 0
-local function nextOrder() order=order+1 return order end
-local function label(text, height)
-    return create('TextLabel', {Text=text, Size=UDim2.new(1,0,0,height or 34), BackgroundTransparency=1,
-        TextColor3=gray, TextSize=12, Font=Enum.Font.Gotham, TextWrapped=true,
-        TextXAlignment=Enum.TextXAlignment.Left, LayoutOrder=nextOrder()}, scroll)
-end
-local function button(text, callback, parent)
-    local object = create('TextButton', {Text=text, Size=UDim2.new(1,0,0,34),
-        BackgroundColor3=Color3.fromRGB(29,29,33), BorderSizePixel=0, TextColor3=white,
-        TextSize=12, Font=Enum.Font.GothamMedium, TextWrapped=true, LayoutOrder=nextOrder()}, parent or scroll)
-    round(object)
-    connect(object.Activated, function()
-        local ok, err = pcall(callback)
-        if not ok then log('Error controlado: ' .. tostring(err)) end
-    end)
-    return object
-end
-local function row()
-    local frame = create('Frame', {Size=UDim2.new(1,0,0,36), BackgroundTransparency=1, LayoutOrder=nextOrder()}, scroll)
-    create('UIListLayout', {FillDirection=Enum.FillDirection.Horizontal, Padding=UDim.new(0,6), SortOrder=Enum.SortOrder.LayoutOrder}, frame)
-    return frame
-end
-label('Prueba local · no modifica tu inventario ni concede armas. Equipa un Tool real antes de aplicar.', 38)
-local counts = label('Modelos: 0', 28)
-local actions = row()
-local scanButton = button('Escanear modelos', scan, actions)
-local catalogButton = button('Cargar catálogo', loadCatalog, actions)
-scanButton.Size, catalogButton.Size = UDim2.new(0.5,-3,1,0), UDim2.new(0.5,-3,1,0)
-label('Catálogo es opcional: usa require en módulos del juego. No puede deshacer efectos internos de esos módulos.', 35)
-local learnButton
-learnButton = button('Aprender equipados: OFF', function()
-    state.learning = not state.learning
-    learnButton.Text = 'Aprender equipados: ' .. (state.learning and 'ON' or 'OFF')
-    if state.learning then
-        for _, owner in ipairs(Players:GetPlayers()) do
-            if owner.Character then for _, child in ipairs(owner.Character:GetChildren()) do queueLearn(child, owner) end end
-        end
+track(detectButton.Activated:Connect(beginCapture))
+track(previousButton.Activated:Connect(function()
+    if #runtime.candidates > 0 then
+        updateSelectedCandidate(runtime.selectedIndex - 1)
+        setStatus("Candidato anterior seleccionado", COLORS.secondary)
     end
-    log(state.learning and 'Aprendizaje activo. Captura local: máximo 80 modelos.' or 'Aprendizaje detenido; caché conservada hasta cerrar.')
-end)
-local search = create('TextBox', {Size=UDim2.new(1,0,0,36), BackgroundColor3=Color3.fromRGB(23,23,26),
-    Text='', PlaceholderText='Buscar arma / modelo...', PlaceholderColor3=gray, TextColor3=white,
-    TextSize=13, Font=Enum.Font.Gotham, ClearTextOnFocus=false, LayoutOrder=nextOrder()}, scroll)
-round(search)
-local filters = row()
-local types = {'Todos','Knife','Gun','Effect','Modelo'}
-local typeIndex, typeButton, availableButton = 1
-typeButton = button('Tipo: Todos', function()
-    typeIndex = typeIndex % #types + 1
-    state.kind = types[typeIndex]
-    typeButton.Text = 'Tipo: ' .. state.kind
-    state.page=1 refresh()
-end, filters)
-availableButton = button('Solo disponibles: OFF', function()
-    state.available = not state.available
-    availableButton.Text = 'Solo disponibles: ' .. (state.available and 'ON' or 'OFF')
-    state.page=1 refresh()
-end, filters)
-typeButton.Size, availableButton.Size = UDim2.new(0.45,-3,1,0), UDim2.new(0.55,-3,1,0)
-local list = create('Frame', {Size=UDim2.new(1,0,0,0), AutomaticSize=Enum.AutomaticSize.Y,
-    BackgroundTransparency=1, LayoutOrder=nextOrder()}, scroll)
-create('UIListLayout', {Padding=UDim.new(0,4), SortOrder=Enum.SortOrder.LayoutOrder}, list)
-local rowButtons, rowKeys = {}, {}
-for i=1,8 do
-    local b = button('', function()
-        state.selected = rowKeys[i]
-        refresh()
-    end, list)
-    b.TextXAlignment = Enum.TextXAlignment.Left
-    create('UIPadding', {PaddingLeft=UDim.new(0,9), PaddingRight=UDim.new(0,7)}, b)
-    b.Size = UDim2.new(1,0,0,40)
-    rowButtons[i]=b
-end
-local paging = row()
-local prev = button('< Anterior', function() state.page=math.max(1,state.page-1) refresh() end, paging)
-local pageLabel = create('TextLabel', {Size=UDim2.new(0.34,-4,1,0), Text='', BackgroundTransparency=1,
-    TextColor3=gray, TextSize=12, Font=Enum.Font.Gotham, LayoutOrder=nextOrder()}, paging)
-local nextPage = button('Siguiente >', function() state.page=state.page+1 refresh() end, paging)
-prev.Size, nextPage.Size = UDim2.new(0.33,-4,1,0), UDim2.new(0.33,-4,1,0)
-detail = label('Selecciona un modelo. [3D] = encontrado; [--] = solo metadata.', 84)
-local applyRow = row()
-local applyButton = button('Aplicar a mi arma', apply, applyRow)
-local restoreButton = button('Restaurar', function() restore(false) end, applyRow)
-applyButton.Size, restoreButton.Size = UDim2.new(0.6,-3,1,0), UDim2.new(0.4,-3,1,0)
-statusLabel = label('Listo para escanear.', 48)
-label('Diagnóstico (selecciona y copia el texto si hay un fallo):', 22)
-logBox = create('TextBox', {Size=UDim2.new(1,0,0,150), BackgroundColor3=Color3.fromRGB(20,20,23),
-    Text='', TextColor3=gray, TextSize=11, Font=Enum.Font.Code, TextWrapped=true, MultiLine=true,
-    ClearTextOnFocus=false, TextEditable=false, TextXAlignment=Enum.TextXAlignment.Left,
-    TextYAlignment=Enum.TextYAlignment.Top, LayoutOrder=nextOrder()}, scroll)
-round(logBox)
-label('Efectos que dependan de scripts, disparos o animaciones no se reproducen automáticamente. Al guardar el arma o reaparecer, se restaura.', 44)
-refresh = function()
-    if not state.alive then return end
-    local n, v = 0, 0
-    for _ in pairs(state.index.items) do n=n+1 end
-    for _ in pairs(state.index.visuals) do v=v+1 end
-    counts.Text = string.format('Entradas: %d  ·  Con modelo 3D: %d',n,v)
-    local found = Core.filter(state.index,state.query,state.kind,state.available)
-    local pages = math.max(1,math.ceil(#found/8))
-    state.page = math.min(state.page,pages)
-    for i,b in ipairs(rowButtons) do
-        local key = found[(state.page-1)*8+i]
-        rowKeys[i] = key
-        b.Visible = key ~= nil
-        if key then
-            local data = state.index.items[key]
-            b.Text = (state.index.visuals[key] and '[3D] ' or '[--] ') .. tostring(data.ItemName or key)
-            b.BackgroundColor3 = key == state.selected and Color3.fromRGB(62,62,68) or Color3.fromRGB(29,29,33)
-        end
+end))
+track(nextButton.Activated:Connect(function()
+    if #runtime.candidates > 0 then
+        updateSelectedCandidate(runtime.selectedIndex + 1)
+        setStatus("Candidato siguiente seleccionado", COLORS.secondary)
     end
-    pageLabel.Text = state.page .. ' / ' .. pages .. ' · ' .. #found
-    local key = state.selected
-    if key then
-        local record = state.index.visuals[key]
-        local data = state.index.items[key]
-        detail.Text = tostring(data.ItemName or key) .. '\nTipo: ' .. tostring(data.ItemType) .. '\n' ..
-            (record and ('Fuente: ' .. record.source) or 'Sin modelo replicado localizado. El icono no contiene la geometría 3D.')
-    end
-end
-connect(search:GetPropertyChangedSignal('Text'), function() state.query=search.Text state.page=1 refresh() end)
-local openButton = button('Abrir Weapon Lab', function() panel.Visible=true end, gui)
-openButton.Size, openButton.Position = UDim2.fromOffset(150,34), UDim2.new(0.5,-75,0,8)
-openButton.Visible = false
-connect(panel:GetPropertyChangedSignal('Visible'), function() openButton.Visible=not panel.Visible end)
-local minimize = button('–', function() panel.Visible=false end, panel)
-minimize.Size, minimize.Position = UDim2.fromOffset(32,30), UDim2.new(1,-80,0,8)
-function state.close()
-    if not state.alive then return end
-    state.alive=false
-    restore(true)
-    disconnectAll(state.connections)
-    for _, bucket in pairs(state.playerConnections) do
-        disconnectAll(bucket.characterBucket)
-        disconnectAll(bucket)
-    end
-    for thread in pairs(state.jobs) do pcall(task.cancel,thread) end
-    for copy in pairs(state.snapshots) do copy:Destroy() end
-    table.clear(state.snapshots)
-    gui:Destroy()
-    if env[singleton] == state then env[singleton]=nil end
-end
-local closeButton = button('×', state.close, panel)
-closeButton.Size, closeButton.Position = UDim2.fromOffset(32,30), UDim2.new(1,-42,0,8)
-local drag
-connect(header.InputBegan, function(input)
-    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-        drag={input=input, origin=input.Position, position=panel.Position}
-    end
-end)
-connect(UIS.InputChanged, function(input)
-    if not drag then return end
-    if input == drag.input or input.UserInputType == Enum.UserInputType.MouseMovement then
-        local delta=input.Position-drag.origin
-        panel.Position=UDim2.new(drag.position.X.Scale,drag.position.X.Offset+delta.X,
-            drag.position.Y.Scale,drag.position.Y.Offset+delta.Y)
-    end
-end)
-connect(UIS.InputEnded, function(input) if drag and input == drag.input then drag=nil end end)
-connect(player.CharacterRemoving, function() restore(true) end)
-connect(Players.PlayerAdded, watchPlayer)
-connect(Players.PlayerRemoving, function(owner)
-    local bucket=state.playerConnections[owner]
-    if bucket then disconnectAll(bucket.characterBucket) disconnectAll(bucket) state.playerConnections[owner]=nil end
-end)
-for _, owner in ipairs(Players:GetPlayers()) do watchPlayer(owner) end
-refresh()
-log('Weapon Lab v0.1 listo. Escanea primero; carga catálogo para asociar nombres.')
-scan()
-return state
+end))
+track(previewButton.Activated:Connect(previewReplacement))
+track(applyButton.Activated:Connect(applyReplacement))
+track(restoreButton.Activated:Connect(function()
+    restoreOriginals()
+    applyButton.Text = "2  ·  APLICAR"
+    footer.Text = "El cambio es local y se mantiene en nuevas copias del mismo sonido."
+    setStatus("Sonidos originales restaurados", COLORS.secondary)
+end))
 
+track(player.CharacterAdded:Connect(function()
+    if runtime.liveEnabled then
+        setStatus("Reapareciste · esperando el arma nueva", COLORS.secondary)
+    end
+end))
+
+setStatus("Listo · equipa el arma", COLORS.secondary)
+
+return runtime

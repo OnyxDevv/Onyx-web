@@ -38,6 +38,46 @@ function Core.waitForCondition(predicate, timeout, clock, waitStep)
     return predicate() == true
 end
 
+function Core.toCanonicalRawUrl(value)
+    local url = trim(value)
+    local owner, repository, branch, path = url:match(
+        "^https://github%.com/([^/]+)/([^/]+)/raw/refs/heads/([^/]+)/(.+)$"
+    )
+    if owner then
+        return string.format(
+            "https://raw.githubusercontent.com/%s/%s/refs/heads/%s/%s",
+            owner,
+            repository,
+            branch,
+            path
+        )
+    end
+    return url
+end
+
+function Core.isAudioPayload(statusCode, body)
+    local status = tonumber(statusCode)
+    if not status or status < 200 or status >= 300 or type(body) ~= "string" or #body < 64 then
+        return false
+    end
+    if string.sub(body, 1, 3) == "ID3" then
+        return true
+    end
+    local first, second = string.byte(body, 1, 2)
+    return first == 0xFF and second ~= nil and second >= 0xE0
+end
+
+function Core.resolveLocalAssetLoader(environmentTable)
+    environmentTable = environmentTable or {}
+    if type(environmentTable.getcustomasset) == "function" then
+        return environmentTable.getcustomasset, "getcustomasset"
+    end
+    if type(environmentTable.getsynasset) == "function" then
+        return environmentTable.getsynasset, "getsynasset"
+    end
+    return nil, nil
+end
+
 
 local POSITIVE_NAME_HINTS = {
     gun = 28,
@@ -177,6 +217,19 @@ end
 
 local playerGui = player:WaitForChild("PlayerGui")
 local environment = (getgenv and getgenv()) or _G
+local CUSTOM_SOUND_URL = Core.toCanonicalRawUrl(
+    "https://github.com/OnyxDevv/Onyx-web/raw/refs/heads/main/sounds/anime-magic-sound-effect%20(1).mp3"
+)
+local LOCAL_AUDIO_FOLDER = "XeroHub/Sounds"
+local LOCAL_AUDIO_PATH = LOCAL_AUDIO_FOLDER .. "/anime_magic_057d16da.mp3"
+local localAssetLoader, localAssetLoaderName = Core.resolveLocalAssetLoader({
+    getcustomasset = getcustomasset,
+    getsynasset = getsynasset or (syn and syn.getcustomasset),
+})
+local httpRequest = (syn and syn.request)
+    or (http and http.request)
+    or http_request
+    or request
 local previousRuntime = environment.__ILUNX_SOUNDLAB_RUNTIME
 if previousRuntime and previousRuntime.cleanup then
     pcall(previousRuntime.cleanup)
@@ -195,7 +248,8 @@ local runtime = {
     selectedIndex = 0,
     captureToken = 0,
     target = nil,
-    replacementId = nil,
+    localAssetId = nil,
+    localAssetUrl = nil,
     liveEnabled = false,
 }
 
@@ -218,27 +272,37 @@ end
 
 local gui
 local previewSound
+local customShotSound
 
 local function restoreOriginals()
     runtime.liveEnabled = false
     disconnectList(runtime.liveConnections)
 
-    for sound, originalId in pairs(runtime.originals) do
+    for sound, originalState in pairs(runtime.originals) do
         if sound and sound.Parent then
             runtime.applying[sound] = true
             pcall(function()
-                sound.SoundId = originalId
+                sound.Volume = originalState.volume
             end)
             runtime.applying[sound] = nil
         end
         runtime.originals[sound] = nil
     end
 
-    for sound, connection in pairs(runtime.soundWatchers) do
-        pcall(function()
-            connection:Disconnect()
-        end)
+    for sound, bundle in pairs(runtime.soundWatchers) do
+        for _, connection in pairs(bundle) do
+            pcall(function()
+                connection:Disconnect()
+            end)
+        end
         runtime.soundWatchers[sound] = nil
+    end
+
+    if customShotSound then
+        pcall(function()
+            customShotSound:Destroy()
+        end)
+        customShotSound = nil
     end
 end
 
@@ -557,7 +621,7 @@ local nextButton = makeButton(navigation, "SIGUIENTE  ›", false)
 nextButton.Position = UDim2.new(0.68, 0, 0, 0)
 nextButton.Size = UDim2.new(0.32, 0, 1, 0)
 
-local fieldTitle = makeLabel(body, "NUEVO ASSET ID", 9, COLORS.secondary, Enum.Font.GothamMedium)
+local fieldTitle = makeLabel(body, "MP3 LOCAL · GITHUB RAW", 9, COLORS.secondary, Enum.Font.GothamMedium)
 fieldTitle.Position = UDim2.fromOffset(2, 258)
 fieldTitle.Size = UDim2.new(1, -4, 0, 18)
 
@@ -567,11 +631,12 @@ replacementBox.Size = UDim2.new(1, 0, 0, 42)
 replacementBox.BackgroundColor3 = COLORS.card
 replacementBox.BorderSizePixel = 0
 replacementBox.ClearTextOnFocus = false
-replacementBox.PlaceholderText = "Ejemplo: 9123456789"
+replacementBox.PlaceholderText = "URL raw del archivo .mp3"
 replacementBox.PlaceholderColor3 = COLORS.muted
-replacementBox.Text = ""
+replacementBox.Text = CUSTOM_SOUND_URL
+replacementBox.TextEditable = false
 replacementBox.TextColor3 = COLORS.text
-replacementBox.TextSize = 12
+replacementBox.TextSize = 10
 replacementBox.Font = Enum.Font.Code
 replacementBox.TextXAlignment = Enum.TextXAlignment.Left
 replacementBox.Parent = body
@@ -589,10 +654,10 @@ actionRow.Size = UDim2.new(1, 0, 0, 42)
 actionRow.BackgroundTransparency = 1
 actionRow.Parent = body
 
-local previewButton = makeButton(actionRow, "PROBAR SONIDO", false)
+local previewButton = makeButton(actionRow, "DESCARGAR Y PROBAR", false)
 previewButton.Size = UDim2.new(0.42, -5, 1, 0)
 
-local applyButton = makeButton(actionRow, "2  ·  APLICAR", true)
+local applyButton = makeButton(actionRow, "2  ·  ACTIVAR", true)
 applyButton.Position = UDim2.new(0.42, 5, 0, 0)
 applyButton.Size = UDim2.new(0.58, -5, 1, 0)
 
@@ -602,7 +667,7 @@ restoreButton.Size = UDim2.new(1, 0, 0, 38)
 
 local footer = makeLabel(
     body,
-    "El cambio es local y se mantiene en nuevas copias del mismo sonido.",
+    "El MP3 se descarga una vez y queda guardado en la carpeta de XeroHub.",
     9,
     COLORS.muted,
     Enum.Font.Gotham
@@ -615,6 +680,72 @@ local function setStatus(text, color)
     statusLabel.Text = tostring(text)
     statusLabel.TextColor3 = color or COLORS.secondary
     statusDot.BackgroundColor3 = color or COLORS.muted
+end
+
+local function downloadAndLoadLocalAsset(sourceUrl)
+    if not localAssetLoader then
+        return nil, "Tu executor no incluye getcustomasset ni getsynasset."
+    end
+    if type(writefile) ~= "function" then
+        return nil, "Tu executor no permite guardar archivos con writefile."
+    end
+
+    local localPath = LOCAL_AUDIO_PATH
+    if type(makefolder) == "function" then
+        pcall(makefolder, "XeroHub")
+        pcall(makefolder, LOCAL_AUDIO_FOLDER)
+    else
+        localPath = "XeroHub_anime_magic_057d16da.mp3"
+    end
+
+    local body = nil
+    if type(isfile) == "function" and type(readfile) == "function" and isfile(localPath) then
+        local okRead, cached = pcall(readfile, localPath)
+        if okRead and Core.isAudioPayload(200, cached) then
+            body = cached
+        end
+    end
+
+    if not body then
+        local statusCode = 0
+        if httpRequest then
+            local okRequest, response = pcall(httpRequest, {
+                Url = Core.toCanonicalRawUrl(sourceUrl),
+                Method = "GET",
+                Headers = {
+                    ["User-Agent"] = "XeroHub-SoundLab",
+                },
+            })
+            if okRequest and type(response) == "table" then
+                statusCode = tonumber(response.StatusCode or response.Status) or 0
+                body = response.Body or response.body
+            end
+        else
+            local okHttpGet, responseBody = pcall(function()
+                return game:HttpGet(Core.toCanonicalRawUrl(sourceUrl))
+            end)
+            if okHttpGet then
+                statusCode = 200
+                body = responseBody
+            end
+        end
+
+        if not Core.isAudioPayload(statusCode, body) then
+            return nil, "GitHub no devolvió un MP3 válido (HTTP " .. tostring(statusCode) .. ")."
+        end
+
+        local okWrite, writeError = pcall(writefile, localPath, body)
+        if not okWrite then
+            return nil, "No se pudo guardar el MP3: " .. tostring(writeError)
+        end
+    end
+
+    local okAsset, assetId = pcall(localAssetLoader, localPath)
+    if not okAsset or type(assetId) ~= "string" or assetId == "" then
+        return nil, tostring(localAssetLoaderName) .. " no pudo registrar el MP3 local."
+    end
+
+    return assetId, localPath
 end
 
 local function safeFullName(instance)
@@ -872,46 +1003,62 @@ end
 
 local applyToSound
 
-local function watchSound(sound)
-    if runtime.soundWatchers[sound] or not sound:IsA("Sound") then
+local function playCustomShot(sourceSound)
+    if not runtime.liveEnabled or not customShotSound or not customShotSound.Parent then
         return
     end
 
-    local connection = sound:GetPropertyChangedSignal("SoundId"):Connect(function()
-        if runtime.liveEnabled and not runtime.applying[sound] then
-            applyToSound(sound)
+    local originalState = runtime.originals[sourceSound]
+    pcall(function()
+        customShotSound:Stop()
+        customShotSound.TimePosition = 0
+        customShotSound.Volume = originalState and math.max(originalState.volume, 0.35) or 1
+        customShotSound:Play()
+    end)
+end
+
+local function bindTargetSound(sound)
+    if runtime.soundWatchers[sound] then
+        return true
+    end
+
+    runtime.originals[sound] = {
+        volume = sound.Volume,
+    }
+
+    local bundle = {}
+    bundle.played = sound.Played:Connect(function()
+        playCustomShot(sound)
+    end)
+    bundle.volume = sound:GetPropertyChangedSignal("Volume"):Connect(function()
+        if runtime.liveEnabled and not runtime.applying[sound] and sound.Parent and sound.Volume ~= 0 then
+            runtime.applying[sound] = true
+            sound.Volume = 0
+            runtime.applying[sound] = nil
         end
     end)
-    runtime.soundWatchers[sound] = connection
+    runtime.soundWatchers[sound] = bundle
+
+    runtime.applying[sound] = true
+    local ok = pcall(function()
+        sound.Volume = 0
+    end)
+    runtime.applying[sound] = nil
+    return ok
 end
 
 applyToSound = function(sound)
-    if not runtime.liveEnabled or not runtime.target or not runtime.replacementId then
+    if not runtime.liveEnabled or not runtime.target or not runtime.localAssetId then
         return false
     end
     if not sound or not sound.Parent or not sound:IsA("Sound") then
         return false
     end
 
-    watchSound(sound)
     if not Core.matchesTarget(metadataForMatch(sound), runtime.target) then
         return false
     end
-
-    if runtime.originals[sound] == nil then
-        runtime.originals[sound] = sound.SoundId
-    end
-
-    if sound.SoundId ~= runtime.replacementId then
-        runtime.applying[sound] = true
-        local ok = pcall(function()
-            sound.SoundId = runtime.replacementId
-        end)
-        runtime.applying[sound] = nil
-        return ok
-    end
-
-    return true
+    return bindTargetSound(sound)
 end
 
 local function scanLikelySounds(callback)
@@ -948,12 +1095,6 @@ local function applyReplacement()
         return
     end
 
-    local replacementId = Core.normalizeAssetId(replacementBox.Text)
-    if not replacementId then
-        setStatus("Asset ID inválido", COLORS.error)
-        return
-    end
-
     runtime.loadToken = (runtime.loadToken or 0) + 1
     local token = runtime.loadToken
     if previewSound then
@@ -963,53 +1104,54 @@ local function applyReplacement()
         previewSound = nil
     end
 
-    local preloadSound = Instance.new("Sound")
-    preloadSound.Name = "XeroHub_AssetCheck"
-    preloadSound.SoundId = replacementId
-    preloadSound.Volume = 0
-    preloadSound.Parent = SoundService
-    previewSound = preloadSound
-
-    setStatus("Cargando y verificando el asset…", COLORS.warning)
-    applyButton.Text = "VERIFICANDO AUDIO…"
+    setStatus("Descargando y preparando el MP3…", COLORS.warning)
+    applyButton.Text = "PREPARANDO MP3…"
 
     task.spawn(function()
-        local loaded = Core.waitForCondition(function()
-            return runtime.alive and preloadSound.Parent ~= nil and preloadSound.IsLoaded
-        end, 8, os.clock, task.wait)
+        local localAssetId, result = downloadAndLoadLocalAsset(replacementBox.Text)
 
         if not runtime.alive or runtime.loadToken ~= token then
-            if preloadSound.Parent then
-                preloadSound:Destroy()
-            end
             return
         end
 
-        if not loaded then
-            if preloadSound.Parent then
-                preloadSound:Destroy()
-            end
-            if previewSound == preloadSound then
-                previewSound = nil
-            end
-            applyButton.Text = "2  ·  APLICAR"
-            footer.Text = "Roblox no autorizó o no terminó de procesar este audio para la experiencia."
-            setStatus("El asset no cargó · prueba otro ID público", COLORS.error)
+        if not localAssetId then
+            applyButton.Text = "2  ·  ACTIVAR"
+            footer.Text = tostring(result)
+            setStatus("No se pudo preparar el MP3 local", COLORS.error)
             return
-        end
-
-        preloadSound:Destroy()
-        if previewSound == preloadSound then
-            previewSound = nil
         end
 
         restoreOriginals()
+        runtime.localAssetId = localAssetId
+        runtime.localAssetUrl = replacementBox.Text
+
+        customShotSound = Instance.new("Sound")
+        customShotSound.Name = "XeroHub_CustomGunshot"
+        customShotSound.SoundId = localAssetId
+        customShotSound.Volume = 1
+        customShotSound.Parent = SoundService
+
+        local loaded = Core.waitForCondition(function()
+            return runtime.alive and customShotSound ~= nil
+                and customShotSound.Parent ~= nil and customShotSound.IsLoaded
+        end, 6, os.clock, task.wait)
+
+        if not runtime.alive or runtime.loadToken ~= token then
+            return
+        end
+        if not loaded then
+            restoreOriginals()
+            applyButton.Text = "2  ·  ACTIVAR"
+            footer.Text = tostring(localAssetLoaderName) .. " devolvió una ruta, pero Roblox no cargó el archivo."
+            setStatus("El executor no pudo cargar el MP3 local", COLORS.error)
+            return
+        end
+
         runtime.target = {
             originalId = candidate.soundId,
             name = candidate.name,
             scope = candidate.scope,
         }
-        runtime.replacementId = replacementId
         runtime.liveEnabled = true
 
         local changed = 0
@@ -1020,31 +1162,22 @@ local function applyReplacement()
         scanLikelySounds(function(sound)
             if sound ~= candidate.instance and applyToSound(sound) then
                 changed = changed + 1
-            else
-                watchSound(sound)
             end
         end)
 
         track(game.DescendantAdded:Connect(function(descendant)
             if runtime.liveEnabled and descendant:IsA("Sound") then
-                watchSound(descendant)
                 applyToSound(descendant)
             end
         end), runtime.liveConnections)
 
-        setStatus("Cambio activo · dispara para comprobar", COLORS.success)
-        applyButton.Text = "APLICADO  ·  SEGUIMIENTO ACTIVO"
-        footer.Text = "Asset cargado · instancias cambiadas: " .. tostring(changed) .. "."
+        setStatus("Overlay local activo · dispara ahora", COLORS.success)
+        applyButton.Text = "ACTIVO  ·  MP3 LOCAL"
+        footer.Text = "Gunshot silenciado: " .. tostring(changed) .. " · loader: " .. tostring(localAssetLoaderName) .. "."
     end)
 end
 
 local function previewReplacement()
-    local replacementId = Core.normalizeAssetId(replacementBox.Text)
-    if not replacementId then
-        setStatus("Asset ID inválido", COLORS.error)
-        return
-    end
-
     runtime.loadToken = (runtime.loadToken or 0) + 1
     local token = runtime.loadToken
     if previewSound then
@@ -1053,20 +1186,32 @@ local function previewReplacement()
         end)
     end
 
-    previewSound = Instance.new("Sound")
-    local sound = previewSound
-    sound.Name = "XeroHub_SoundPreview"
-    sound.SoundId = replacementId
-    sound.Volume = 1
-    sound.Parent = SoundService
-
-    setStatus("Cargando asset para la vista previa…", COLORS.warning)
-    previewButton.Text = "CARGANDO…"
+    setStatus("Descargando MP3 desde GitHub…", COLORS.warning)
+    previewButton.Text = "DESCARGANDO…"
 
     task.spawn(function()
+        local localAssetId, result = downloadAndLoadLocalAsset(replacementBox.Text)
+
+        if not runtime.alive or runtime.loadToken ~= token then
+            return
+        end
+        if not localAssetId then
+            previewButton.Text = "DESCARGAR Y PROBAR"
+            footer.Text = tostring(result)
+            setStatus("No se pudo preparar el MP3 local", COLORS.error)
+            return
+        end
+
+        previewSound = Instance.new("Sound")
+        local sound = previewSound
+        sound.Name = "XeroHub_SoundPreview"
+        sound.SoundId = localAssetId
+        sound.Volume = 1
+        sound.Parent = SoundService
+
         local loaded = Core.waitForCondition(function()
             return runtime.alive and sound.Parent ~= nil and sound.IsLoaded
-        end, 8, os.clock, task.wait)
+        end, 6, os.clock, task.wait)
 
         if not runtime.alive or runtime.loadToken ~= token then
             if sound.Parent then
@@ -1075,7 +1220,7 @@ local function previewReplacement()
             return
         end
 
-        previewButton.Text = "PROBAR SONIDO"
+        previewButton.Text = "DESCARGAR Y PROBAR"
         if not loaded then
             if sound.Parent then
                 sound:Destroy()
@@ -1083,8 +1228,8 @@ local function previewReplacement()
             if previewSound == sound then
                 previewSound = nil
             end
-            footer.Text = "El audio puede estar restringido, moderándose o sin permiso para este juego."
-            setStatus("El asset no cargó · usa otro ID público", COLORS.error)
+            footer.Text = tostring(localAssetLoaderName) .. " no logró cargar el MP3 guardado."
+            setStatus("El executor no admite este MP3 local", COLORS.error)
             return
         end
 
@@ -1093,11 +1238,11 @@ local function previewReplacement()
         task.wait(0.1)
 
         if sound.IsPlaying then
-            footer.Text = "Asset cargado correctamente: " .. replacementId
-            setStatus("Vista previa reproduciéndose", COLORS.success)
+            footer.Text = "MP3 descargado, guardado y cargado con " .. tostring(localAssetLoaderName) .. "."
+            setStatus("MP3 local reproduciéndose", COLORS.success)
         else
-            footer.Text = "El asset cargó, pero Roblox no inició su reproducción."
-            setStatus("No se pudo iniciar el audio", COLORS.error)
+            footer.Text = "El archivo cargó, pero el executor no inició el Sound."
+            setStatus("No se pudo reproducir el MP3 local", COLORS.error)
         end
 
         task.delay(12, function()
@@ -1128,8 +1273,8 @@ track(previewButton.Activated:Connect(previewReplacement))
 track(applyButton.Activated:Connect(applyReplacement))
 track(restoreButton.Activated:Connect(function()
     restoreOriginals()
-    applyButton.Text = "2  ·  APLICAR"
-    footer.Text = "El cambio es local y se mantiene en nuevas copias del mismo sonido."
+    applyButton.Text = "2  ·  ACTIVAR"
+    footer.Text = "El MP3 queda almacenado localmente para no descargarlo cada vez."
     setStatus("Sonidos originales restaurados", COLORS.secondary)
 end))
 
@@ -1139,6 +1284,11 @@ track(player.CharacterAdded:Connect(function()
     end
 end))
 
-setStatus("Listo · equipa el arma", COLORS.secondary)
+if localAssetLoader then
+    setStatus("Listo · loader local: " .. tostring(localAssetLoaderName), COLORS.success)
+else
+    footer.Text = "Este executor no expone getcustomasset ni getsynasset."
+    setStatus("Executor sin soporte para audio local", COLORS.error)
+end
 
 return runtime

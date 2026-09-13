@@ -1,5 +1,5 @@
--- iLunXHub | Sound Lab
--- Creador: AlexDev
+-- XeroHub | Sound Lab
+-- Creador: Kev
 -- Laboratorio local para identificar y sustituir el sonido de disparo.
 
 local Core = {}
@@ -19,6 +19,23 @@ function Core.normalizeAssetId(value)
     end
 
     return "rbxassetid://" .. digits
+end
+
+function Core.waitForCondition(predicate, timeout, clock, waitStep)
+    local readClock = clock or os.clock
+    local pause = waitStep or function(seconds)
+        task.wait(seconds)
+    end
+    local deadline = readClock() + math.max(0, tonumber(timeout) or 0)
+
+    while readClock() < deadline do
+        if predicate() then
+            return true
+        end
+        pause(0.05)
+    end
+
+    return predicate() == true
 end
 
 
@@ -232,6 +249,7 @@ function runtime.cleanup()
 
     runtime.alive = false
     runtime.captureToken = runtime.captureToken + 1
+    runtime.loadToken = (runtime.loadToken or 0) + 1
     disconnectList(runtime.captureConnections)
     restoreOriginals()
     disconnectList(runtime.connections)
@@ -408,15 +426,15 @@ mark.BorderSizePixel = 0
 mark.Parent = header
 addCorner(mark, 10)
 
-local markText = makeLabel(mark, "iX", 13, COLORS.darkText, Enum.Font.GothamBold)
+local markText = makeLabel(mark, "X", 15, COLORS.darkText, Enum.Font.GothamBold)
 markText.Size = UDim2.fromScale(1, 1)
 markText.TextXAlignment = Enum.TextXAlignment.Center
 
-local title = makeLabel(header, "iLunXHub", 17, COLORS.text, Enum.Font.GothamBold)
+local title = makeLabel(header, "XeroHub", 17, COLORS.text, Enum.Font.GothamBold)
 title.Position = UDim2.fromOffset(64, 14)
 title.Size = UDim2.new(1, -118, 0, 23)
 
-local subtitle = makeLabel(header, "SOUND LAB  ·  ALEXDEV", 9, COLORS.secondary, Enum.Font.GothamMedium)
+local subtitle = makeLabel(header, "SOUND LAB  ·  KEV", 9, COLORS.secondary, Enum.Font.GothamMedium)
 subtitle.Position = UDim2.fromOffset(64, 36)
 subtitle.Size = UDim2.new(1, -118, 0, 17)
 
@@ -936,38 +954,88 @@ local function applyReplacement()
         return
     end
 
-    restoreOriginals()
-    runtime.target = {
-        originalId = candidate.soundId,
-        name = candidate.name,
-        scope = candidate.scope,
-    }
-    runtime.replacementId = replacementId
-    runtime.liveEnabled = true
-
-    local changed = 0
-    if candidate.instance and candidate.instance.Parent and applyToSound(candidate.instance) then
-        changed = changed + 1
+    runtime.loadToken = (runtime.loadToken or 0) + 1
+    local token = runtime.loadToken
+    if previewSound then
+        pcall(function()
+            previewSound:Destroy()
+        end)
+        previewSound = nil
     end
 
-    scanLikelySounds(function(sound)
-        if sound ~= candidate.instance and applyToSound(sound) then
+    local preloadSound = Instance.new("Sound")
+    preloadSound.Name = "XeroHub_AssetCheck"
+    preloadSound.SoundId = replacementId
+    preloadSound.Volume = 0
+    preloadSound.Parent = SoundService
+    previewSound = preloadSound
+
+    setStatus("Cargando y verificando el asset…", COLORS.warning)
+    applyButton.Text = "VERIFICANDO AUDIO…"
+
+    task.spawn(function()
+        local loaded = Core.waitForCondition(function()
+            return runtime.alive and preloadSound.Parent ~= nil and preloadSound.IsLoaded
+        end, 8, os.clock, task.wait)
+
+        if not runtime.alive or runtime.loadToken ~= token then
+            if preloadSound.Parent then
+                preloadSound:Destroy()
+            end
+            return
+        end
+
+        if not loaded then
+            if preloadSound.Parent then
+                preloadSound:Destroy()
+            end
+            if previewSound == preloadSound then
+                previewSound = nil
+            end
+            applyButton.Text = "2  ·  APLICAR"
+            footer.Text = "Roblox no autorizó o no terminó de procesar este audio para la experiencia."
+            setStatus("El asset no cargó · prueba otro ID público", COLORS.error)
+            return
+        end
+
+        preloadSound:Destroy()
+        if previewSound == preloadSound then
+            previewSound = nil
+        end
+
+        restoreOriginals()
+        runtime.target = {
+            originalId = candidate.soundId,
+            name = candidate.name,
+            scope = candidate.scope,
+        }
+        runtime.replacementId = replacementId
+        runtime.liveEnabled = true
+
+        local changed = 0
+        if candidate.instance and candidate.instance.Parent and applyToSound(candidate.instance) then
             changed = changed + 1
-        else
-            watchSound(sound)
         end
+
+        scanLikelySounds(function(sound)
+            if sound ~= candidate.instance and applyToSound(sound) then
+                changed = changed + 1
+            else
+                watchSound(sound)
+            end
+        end)
+
+        track(game.DescendantAdded:Connect(function(descendant)
+            if runtime.liveEnabled and descendant:IsA("Sound") then
+                watchSound(descendant)
+                applyToSound(descendant)
+            end
+        end), runtime.liveConnections)
+
+        setStatus("Cambio activo · dispara para comprobar", COLORS.success)
+        applyButton.Text = "APLICADO  ·  SEGUIMIENTO ACTIVO"
+        footer.Text = "Asset cargado · instancias cambiadas: " .. tostring(changed) .. "."
     end)
-
-    track(game.DescendantAdded:Connect(function(descendant)
-        if runtime.liveEnabled and descendant:IsA("Sound") then
-            watchSound(descendant)
-            applyToSound(descendant)
-        end
-    end), runtime.liveConnections)
-
-    setStatus("Cambio activo · dispara para comprobar", COLORS.success)
-    applyButton.Text = "APLICADO  ·  SEGUIMIENTO ACTIVO"
-    footer.Text = "Instancias cambiadas ahora: " .. tostring(changed) .. " · también vigila sonidos nuevos."
 end
 
 local function previewReplacement()
@@ -977,6 +1045,8 @@ local function previewReplacement()
         return
     end
 
+    runtime.loadToken = (runtime.loadToken or 0) + 1
+    local token = runtime.loadToken
     if previewSound then
         pcall(function()
             previewSound:Destroy()
@@ -984,26 +1054,60 @@ local function previewReplacement()
     end
 
     previewSound = Instance.new("Sound")
-    previewSound.Name = "iLunXHub_SoundPreview"
-    previewSound.SoundId = replacementId
-    previewSound.Volume = 1
-    previewSound.Parent = SoundService
+    local sound = previewSound
+    sound.Name = "XeroHub_SoundPreview"
+    sound.SoundId = replacementId
+    sound.Volume = 1
+    sound.Parent = SoundService
 
-    local ok = pcall(function()
-        SoundService:PlayLocalSound(previewSound)
-    end)
-    if not ok then
-        pcall(function()
-            previewSound:Play()
-        end)
-    end
+    setStatus("Cargando asset para la vista previa…", COLORS.warning)
+    previewButton.Text = "CARGANDO…"
 
-    setStatus("Reproduciendo vista previa", COLORS.success)
-    task.delay(12, function()
-        if previewSound and previewSound.Parent then
-            previewSound:Destroy()
-            previewSound = nil
+    task.spawn(function()
+        local loaded = Core.waitForCondition(function()
+            return runtime.alive and sound.Parent ~= nil and sound.IsLoaded
+        end, 8, os.clock, task.wait)
+
+        if not runtime.alive or runtime.loadToken ~= token then
+            if sound.Parent then
+                sound:Destroy()
+            end
+            return
         end
+
+        previewButton.Text = "PROBAR SONIDO"
+        if not loaded then
+            if sound.Parent then
+                sound:Destroy()
+            end
+            if previewSound == sound then
+                previewSound = nil
+            end
+            footer.Text = "El audio puede estar restringido, moderándose o sin permiso para este juego."
+            setStatus("El asset no cargó · usa otro ID público", COLORS.error)
+            return
+        end
+
+        sound.TimePosition = 0
+        sound:Play()
+        task.wait(0.1)
+
+        if sound.IsPlaying then
+            footer.Text = "Asset cargado correctamente: " .. replacementId
+            setStatus("Vista previa reproduciéndose", COLORS.success)
+        else
+            footer.Text = "El asset cargó, pero Roblox no inició su reproducción."
+            setStatus("No se pudo iniciar el audio", COLORS.error)
+        end
+
+        task.delay(12, function()
+            if sound.Parent then
+                sound:Destroy()
+            end
+            if previewSound == sound then
+                previewSound = nil
+            end
+        end)
     end)
 end
 

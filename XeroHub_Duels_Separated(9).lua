@@ -11379,6 +11379,14 @@ local mState = {
     enemySnapshot = {},
     enemySnapshotCount = 0,
     enemySnapshotReady = false,
+    enemySnapshotUntil = 0,
+    -- XERO_PERF_SILENT_SHORTLIST: buffers reutilizables; no crean tablas cada 0.03 s.
+    -- Primero evaluamos los enemigos cuyo HRP está más cerca del centro/FOV. Si ninguno
+    -- de los prioritarios tiene línea de visión, continuamos con el resto para no perder targets.
+    SILENT_AIM_SHORTLIST_MAX = 4,
+    saCandidates = {},
+    saCandidateScores = {},
+    saCandidateCount = 0,
     equippedTool = nil,
     toolChar = nil,
     toolAddedConnection = nil,
@@ -11490,10 +11498,11 @@ runtime.Track(player.CharacterAdded:Connect(function(char)
 end))
 runtime.BindEquippedToolCache(player.Character)
 
--- Snapshot reutilizado sólo dentro del Heartbeat ACTUAL. Nunca conserva posiciones
--- entre frames: comparte validación Character/Humanoid/HRP/isEnemy entre módulos.
+-- Snapshot compartido con TTL corto (~30 ms): Heartbeat, RenderStepped, ESP, AutoShoot
+-- y SilentAim reutilizan Character/Humanoid/HRP/isEnemy sin conservar datos mucho tiempo.
 function runtime.GetEnemySnapshot()
-    if mState.enemySnapshotReady then
+    local now = os.clock()
+    if mState.enemySnapshotReady and now < mState.enemySnapshotUntil then
         return mState.enemySnapshot, mState.enemySnapshotCount
     end
 
@@ -11533,6 +11542,8 @@ function runtime.GetEnemySnapshot()
     end
     mState.enemySnapshotCount = count
     mState.enemySnapshotReady = true
+    -- Compartido entre Heartbeat/RenderStepped/SilentAim: máximo ~1 reconstrucción cada 30 ms.
+    mState.enemySnapshotUntil = now + 0.03
     return snapshot, count
 end
 
@@ -11708,7 +11719,6 @@ runtime.Track(RunService.Heartbeat:Connect(function(deltaTime)
         return
     end
 
-    mState.enemySnapshotReady = false
     local camera = workspace.CurrentCamera -- 🔥 FIX: Siempre la cámara actual
     timerLobby = timerLobby + deltaTime
     if timerLobby >= 1 then
@@ -12094,46 +12104,92 @@ runtime.Track(RunService.Heartbeat:Connect(function(deltaTime)
                         mState.igSA[1] = char
 
                         local enemies, enemyCount = runtime.GetEnemySnapshot()
-                        for i = 1, enemyCount do 
+
+                        -- XERO_PERF_SILENT_SHORTLIST:
+                        -- Fase barata: sólo HRP + distancia/FOV. Ordenamos referencias en buffers
+                        -- reutilizables y dejamos CollectTargetParts/WorldToViewportPoint por parte/
+                        -- raycasts para los candidatos con mayor probabilidad de ganar.
+                        local candidates = mState.saCandidates
+                        local candidateScores = mState.saCandidateScores
+                        local previousCandidateCount = mState.saCandidateCount or 0
+                        local candidateCount = 0
+
+                        for i = 1, enemyCount do
                             local enemy = enemies[i]
-                            local enemyChar = enemy.Character
                             local enemyHrp = enemy.HRP
                             if enemy.Alive and enemy.Enemy and enemyHrp then
                                 local enemyDelta = enemyHrp.Position - myPos
-                                if enemyDelta:Dot(enemyDelta) <= 640000 then
+                                local physicalDistSq = enemyDelta:Dot(enemyDelta)
+                                if physicalDistSq <= 640000 then
+                                    local cheapScore = physicalDistSq
                                     if silentAimFovEnabled then
                                         local hrpPos2D, onScreen = camera:WorldToViewportPoint(enemyHrp.Position)
+                                        if not onScreen then continue end
                                         local dx, dy = hrpPos2D.X - centerX, hrpPos2D.Y - centerY
-                                        if not onScreen or (dx * dx + dy * dy) > broadFovSq then continue end
+                                        cheapScore = dx * dx + dy * dy
+                                        if cheapScore > broadFovSq then continue end
                                     end
 
-                                    local targetParts = runtime.CollectTargetParts(enemyChar, "SilentAim")
-                                    mState.igSA[2] = enemyChar 
-                                    mState.pSA.FilterDescendantsInstances = mState.igSA
-                                    
-                                    if targetParts then
-                                        for j = 1, #targetParts do
-                                            local part = targetParts[j]
-                                            local pasaFiltro = false
-                                            local candidateDistance = math.huge
-                                            
-                                            if silentAimFovEnabled then
-                                                local hrpPos2D, onScreen = camera:WorldToViewportPoint(part.Position)
-                                                if onScreen then
-                                                    local dx, dy = hrpPos2D.X - centerX, hrpPos2D.Y - centerY 
-                                                    candidateDistance = dx * dx + dy * dy
-                                                    if candidateDistance <= fovSq and candidateDistance < shortestDistToCenter then pasaFiltro = true end
+                                    -- Inserción ordenada sin table.sort ni tablas temporales.
+                                    candidateCount = candidateCount + 1
+                                    local insertAt = candidateCount
+                                    while insertAt > 1 and cheapScore < candidateScores[insertAt - 1] do
+                                        candidates[insertAt] = candidates[insertAt - 1]
+                                        candidateScores[insertAt] = candidateScores[insertAt - 1]
+                                        insertAt = insertAt - 1
+                                    end
+                                    candidates[insertAt] = enemy
+                                    candidateScores[insertAt] = cheapScore
+                                end
+                            end
+                        end
+
+                        for i = candidateCount + 1, previousCandidateCount do
+                            candidates[i] = nil
+                            candidateScores[i] = nil
+                        end
+                        mState.saCandidateCount = candidateCount
+
+                        -- Procesamos como máximo los 4 prioritarios si ya encontramos un target.
+                        -- Si todos están tapados/no válidos, seguimos con el resto hasta encontrar uno.
+                        for candidateIndex = 1, candidateCount do
+                            if candidateIndex > mState.SILENT_AIM_SHORTLIST_MAX and closestTargetPart then break end
+
+                            local enemy = candidates[candidateIndex]
+                            local enemyChar = enemy and enemy.Character
+                            if enemyChar then
+                                local targetParts = runtime.CollectTargetParts(enemyChar, "SilentAim")
+                                mState.igSA[2] = enemyChar
+                                mState.pSA.FilterDescendantsInstances = mState.igSA
+
+                                if targetParts then
+                                    for j = 1, #targetParts do
+                                        local part = targetParts[j]
+                                        local pasaFiltro = false
+                                        local candidateDistance = math.huge
+
+                                        if silentAimFovEnabled then
+                                            local partPos2D, onScreen = camera:WorldToViewportPoint(part.Position)
+                                            if onScreen then
+                                                local dx, dy = partPos2D.X - centerX, partPos2D.Y - centerY
+                                                candidateDistance = dx * dx + dy * dy
+                                                if candidateDistance <= fovSq and candidateDistance < shortestDistToCenter then
+                                                    pasaFiltro = true
                                                 end
+                                            end
+                                        else
+                                            local partDelta = part.Position - myPos
+                                            candidateDistance = partDelta:Dot(partDelta)
+                                            if candidateDistance < shortestDistanceFisica then pasaFiltro = true end
+                                        end
+
+                                        if pasaFiltro and not ws_Raycast(workspace, headPos, part.Position - headPos, mState.pSA) then
+                                            if silentAimFovEnabled then
+                                                shortestDistToCenter = candidateDistance
                                             else
-                                                local partDelta = part.Position - myPos
-                                                candidateDistance = partDelta:Dot(partDelta)
-                                                if candidateDistance < shortestDistanceFisica then pasaFiltro = true end
+                                                shortestDistanceFisica = candidateDistance
                                             end
-                                            
-                                            if pasaFiltro and not ws_Raycast(workspace, headPos, part.Position - headPos, mState.pSA) then
-                                                if silentAimFovEnabled then shortestDistToCenter = candidateDistance else shortestDistanceFisica = candidateDistance end
-                                                closestTargetPart = part
-                                            end
+                                            closestTargetPart = part
                                         end
                                     end
                                 end
@@ -14988,25 +15044,29 @@ function runtime.RenderESP2D(deltaTime)
     local myRoot = myCore and myCore.HRP
     local myPos = myRoot and myRoot.Position or camera.CFrame.Position
 
-    for i = 1, #listaJugadores do
-        local p = listaJugadores[i]
-        if p ~= player then
-            local char = p.Character
-            local core = char and getCharCore(char) or nil
-            local hrp = core and core.HRP
-            local hum = core and core.Humanoid
-            local valid = false
-            local rootScreen, onScreen
+    -- XERO_PERF_ESP_SHARED_SNAPSHOT:
+    -- Heartbeat, ESP, AutoShoot y SilentAim comparten Character/Humanoid/HRP/isEnemy.
+    -- RenderESP2D ya no vuelve a recorrer listaJugadores + getCharCore + isEnemy por separado.
+    local enemies, enemyCount = runtime.GetEnemySnapshot()
+    for i = 1, enemyCount do
+        local enemy = enemies[i]
+        local p = enemy.Player
+        local char = enemy.Character
+        local core = enemy.Core
+        local hrp = enemy.HRP
+        local hum = enemy.Humanoid
+        local valid = false
+        local rootScreen, onScreen
 
-            if hrp and hum and hum.Health > 0 and isEnemy(p) and not enemigoEnLobby(char, hrp, core) then
-                local delta = myPos - hrp.Position
-                if delta:Dot(delta) <= MAX_ESP_DISTANCE_SQ then
-                    rootScreen, onScreen = camera:WorldToViewportPoint(hrp.Position)
-                    valid = onScreen and rootScreen.Z > 0
-                end
+        if enemy.Alive and enemy.Enemy and hrp and hum and not runtime.SnapshotEntryInSafeZone(enemy) then
+            local delta = myPos - hrp.Position
+            if delta:Dot(delta) <= MAX_ESP_DISTANCE_SQ then
+                rootScreen, onScreen = camera:WorldToViewportPoint(hrp.Position)
+                valid = onScreen and rootScreen.Z > 0
             end
+        end
 
-            local tLine = tracerLines[p]
+        local tLine = tracerLines[p]
             if espLinesEnabled and valid then
                 if not tLine then
                     tLine = runtime.TrackDrawing(Drawing.new("Line"))
@@ -15092,9 +15152,8 @@ function runtime.RenderESP2D(deltaTime)
                 else
                     runtime.HideESP2DEntry(entry)
                 end
-            elseif entry then
-                runtime.HideESP2DEntry(entry)
-            end
+        elseif entry then
+            runtime.HideESP2DEntry(entry)
         end
     end
 end

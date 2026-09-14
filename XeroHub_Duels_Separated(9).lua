@@ -1085,7 +1085,7 @@ end
 local WindUI
 -- UI separada: puedes ofuscar este archivo sin mezclar las ~1k líneas visuales.
 -- Orden de carga: archivo local XeroHub_UI.lua -> URL RAW oficial de XeroHub.
-local NOX_UI_URL = ((getgenv and getgenv()) or _G).NOX_UI_URL or "https://raw.githubusercontent.com/OnyxDevv/Onyx-web/refs/heads/main/main%20(3).lua"
+local NOX_UI_URL = ((getgenv and getgenv()) or _G).NOX_UI_URL or "https://raw.githubusercontent.com/OnyxDevv/Onyx-web/refs/heads/main/main2.lua"
 local ok, result = pcall(function()
     local source
     if isfile and readfile and isfile("XeroHub_UI.lua") then

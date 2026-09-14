@@ -14852,23 +14852,12 @@ UIElements.TogEspLines = Tabs.Vis:Toggle({
 -- ==========================================
 -- DIBUJADO EN PANTALLA 2D (FOV, Tracers, Box y Vida) - UN SOLO RENDER
 -- ==========================================
--- FOV XeroHub: aro principal + contorno oscuro para mantener contraste
--- sobre mapas claros u oscuros sin volverlo visualmente pesado.
-local FOVCircleBack = runtime.TrackDrawing(Drawing.new("Circle"))
-FOVCircleBack.Filled = false
-FOVCircleBack.Color = Color3.fromRGB(0, 0, 0)
-FOVCircleBack.Visible = false
-FOVCircleBack.Thickness = 5
-FOVCircleBack.Transparency = 0.55
-FOVCircleBack.NumSides = 96
-
 local FOVCircle = runtime.TrackDrawing(Drawing.new("Circle"))
 FOVCircle.Filled = false
 FOVCircle.Color = Color3.fromRGB(255, 255, 255)
 FOVCircle.Visible = false
-FOVCircle.Thickness = 2.6
-FOVCircle.Transparency = 1
-FOVCircle.NumSides = 96
+FOVCircle.Thickness = 1.7
+FOVCircle.NumSides = 64
 
 local tracerLines = {}
 local tracersLimpios = true
@@ -14947,7 +14936,6 @@ function runtime.RenderESP2D(deltaTime)
     local wantsESP2D = espEnabled and (espSettings.Box or espSettings.HealthBar)
     if not fovVisiblePreference and not espLinesEnabled and not wantsESP2D then
         if FOVCircle.Visible then FOVCircle.Visible = false end
-        if FOVCircleBack.Visible then FOVCircleBack.Visible = false end
         hideTracersOnce()
         runtime.HideAllESP2D()
         return
@@ -14961,19 +14949,12 @@ function runtime.RenderESP2D(deltaTime)
     end
 
     if fovVisiblePreference then
-        -- El aro trasero actúa como outline y hace que el FOV no desaparezca
-        -- visualmente sobre paredes blancas, cielos o zonas muy iluminadas.
-        FOVCircleBack.Position = centroVector
-        FOVCircleBack.Radius = fovRadius
-        FOVCircleBack.Visible = true
-
         FOVCircle.Position = centroVector
         FOVCircle.Radius = fovRadius
         FOVCircle.Visible = true
         FOVCircle.Color = aimHookState.Target and fovTargetColor or fovIdleColor
-    else
-        if FOVCircle.Visible then FOVCircle.Visible = false end
-        if FOVCircleBack.Visible then FOVCircleBack.Visible = false end
+    elseif FOVCircle.Visible then
+        FOVCircle.Visible = false
     end
 
     if not espEnabled or enLobby then
@@ -14988,29 +14969,25 @@ function runtime.RenderESP2D(deltaTime)
     local myRoot = myCore and myCore.HRP
     local myPos = myRoot and myRoot.Position or camera.CFrame.Position
 
-    -- XERO_PERF_ESP_SHARED_SNAPSHOT:
-    -- Heartbeat, ESP, AutoShoot y SilentAim comparten Character/Humanoid/HRP/isEnemy.
-    -- RenderESP2D ya no vuelve a recorrer listaJugadores + getCharCore + isEnemy por separado.
-    local enemies, enemyCount = runtime.GetEnemySnapshot()
-    for i = 1, enemyCount do
-        local enemy = enemies[i]
-        local p = enemy.Player
-        local char = enemy.Character
-        local core = enemy.Core
-        local hrp = enemy.HRP
-        local hum = enemy.Humanoid
-        local valid = false
-        local rootScreen, onScreen
+    for i = 1, #listaJugadores do
+        local p = listaJugadores[i]
+        if p ~= player then
+            local char = p.Character
+            local core = char and getCharCore(char) or nil
+            local hrp = core and core.HRP
+            local hum = core and core.Humanoid
+            local valid = false
+            local rootScreen, onScreen
 
-        if enemy.Alive and enemy.Enemy and hrp and hum and not runtime.SnapshotEntryInSafeZone(enemy) then
-            local delta = myPos - hrp.Position
-            if delta:Dot(delta) <= MAX_ESP_DISTANCE_SQ then
-                rootScreen, onScreen = camera:WorldToViewportPoint(hrp.Position)
-                valid = onScreen and rootScreen.Z > 0
+            if hrp and hum and hum.Health > 0 and isEnemy(p) and not enemigoEnLobby(char, hrp, core) then
+                local delta = myPos - hrp.Position
+                if delta:Dot(delta) <= MAX_ESP_DISTANCE_SQ then
+                    rootScreen, onScreen = camera:WorldToViewportPoint(hrp.Position)
+                    valid = onScreen and rootScreen.Z > 0
+                end
             end
-        end
 
-        local tLine = tracerLines[p]
+            local tLine = tracerLines[p]
             if espLinesEnabled and valid then
                 if not tLine then
                     tLine = runtime.TrackDrawing(Drawing.new("Line"))
@@ -15096,8 +15073,9 @@ function runtime.RenderESP2D(deltaTime)
                 else
                     runtime.HideESP2DEntry(entry)
                 end
-        elseif entry then
-            runtime.HideESP2DEntry(entry)
+            elseif entry then
+                runtime.HideESP2DEntry(entry)
+            end
         end
     end
 end
@@ -15126,7 +15104,6 @@ function runtime.UpdateESP2DRenderConnection()
     end
     tracerAccumulator = 0
     if FOVCircle.Visible then FOVCircle.Visible = false end
-    if FOVCircleBack.Visible then FOVCircleBack.Visible = false end
     hideTracersOnce()
     runtime.HideAllESP2D()
 end

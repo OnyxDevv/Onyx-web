@@ -1051,6 +1051,42 @@ local killSoundState = {
 }
 runtime.KillSoundChanger = killSoundState
 
+-- Registro central de Sounds: gunshot y death sound comparten el mismo inventario.
+-- El escaneo grande ocurre una sola vez; después DescendantAdded mantiene el registro.
+runtime.SoundRegistry = setmetatable({}, {__mode = "k"})
+runtime.SoundRegistryPrimed = false
+
+local function registerSoundInstance(object)
+    if object and object:IsA("Sound") then
+        runtime.SoundRegistry[object] = true
+        return true
+    end
+    return false
+end
+
+local function PrimeSoundRegistry()
+    if runtime.SoundRegistryPrimed then return end
+    runtime.SoundRegistryPrimed = true
+
+    local seenRoots = setmetatable({}, {__mode = "k"})
+    -- Workspace ya incluye Character y CurrentCamera; no recorremos esos árboles dos veces.
+    local roots = {
+        workspace,
+        player:FindFirstChildOfClass("Backpack"),
+        SoundService,
+    }
+    for i = 1, #roots do
+        local root = roots[i]
+        if root and not seenRoots[root] then
+            seenRoots[root] = true
+            registerSoundInstance(root)
+            for _, object in ipairs(root:GetDescendants()) do
+                registerSoundInstance(object)
+            end
+        end
+    end
+end
+
 local KILL_GUN_SOUND_ID = "296102734"
 local DEFAULT_DEATH_SOUND = "rbxasset://sounds/uuhhh.mp3"
 local KILL_FALLBACK_ATTACK_WINDOW = 1.25
@@ -1324,27 +1360,11 @@ local function watchCandidateSound(sound)
 end
 
 local function scanGunshots()
+    PrimeSoundRegistry()
     local changed = 0
-    local seen = setmetatable({}, {__mode = "k"})
-    local roots = {
-        workspace,
-        player.Character,
-        player:FindFirstChildOfClass("Backpack"),
-        workspace.CurrentCamera,
-        SoundService,
-    }
-    for _, root in ipairs(roots) do
-        if root then
-            if root:IsA("Sound") and not seen[root] then
-                seen[root] = true
-                if bindGunshot(root) then changed = changed + 1 end
-            end
-            for _, object in ipairs(root:GetDescendants()) do
-                if object:IsA("Sound") and not seen[object] then
-                    seen[object] = true
-                    if bindGunshot(object) then changed = changed + 1 end
-                end
-            end
+    for sound in pairs(runtime.SoundRegistry) do
+        if sound and sound.Parent and bindGunshot(sound) then
+            changed = changed + 1
         end
     end
     return changed
@@ -2154,27 +2174,11 @@ local function watchCandidateKillSound(sound)
 end
 
 local function scanKillSounds()
+    PrimeSoundRegistry()
     local changed = 0
-    local seen = setmetatable({}, {__mode = "k"})
-    local roots = {
-        workspace,
-        player.Character,
-        player:FindFirstChildOfClass("Backpack"),
-        workspace.CurrentCamera,
-        SoundService,
-    }
-    for _, root in ipairs(roots) do
-        if root then
-            if root:IsA("Sound") and not seen[root] then
-                seen[root] = true
-                if bindKillSound(root) then changed = changed + 1 end
-            end
-            for _, object in ipairs(root:GetDescendants()) do
-                if object:IsA("Sound") and not seen[object] then
-                    seen[object] = true
-                    if bindKillSound(object) then changed = changed + 1 end
-                end
-            end
+    for sound in pairs(runtime.SoundRegistry) do
+        if sound and sound.Parent and bindKillSound(sound) then
+            changed = changed + 1
         end
     end
     return changed
@@ -2731,7 +2735,7 @@ killSoundToggle = Tabs.Sonidos:Toggle({
 UIElements.TogKillSound = killSoundToggle
 
 local function onRelevantSoundAdded(object)
-    if not object:IsA("Sound") then return end
+    if not registerSoundInstance(object) then return end
     if soundState.Enabled or soundState.MuteGunshot then watchCandidateSound(object) end
     if killSoundState.Enabled then watchCandidateKillSound(object) end
 end
@@ -3644,45 +3648,50 @@ function runtime.SetTargetSelection(mode, value)
     end
 end
 
-function runtime.CollectTargetParts(char, mode, out, seen)
-    table.clear(out)
-    if not char then return out end
+function runtime.CollectTargetParts(char, mode)
+    if not char then return nil end
 
     local modeCache = runtime.TargetPartCache[mode]
     local version = runtime.TargetSelectionVersion[mode] or 1
     local cached = modeCache and modeCache[char]
     if cached and cached.Version == version then
-        local valid = true
-        for i = 1, #cached.Parts do
-            local part = cached.Parts[i]
-            if not part or part.Parent ~= char then valid = false break end
-            out[i] = part
+        local parts = cached.Parts
+        local valid = parts and #parts > 0
+        if valid then
+            for i = 1, #parts do
+                local part = parts[i]
+                if not part or part.Parent ~= char then
+                    valid = false
+                    break
+                end
+            end
         end
-        if valid and #out > 0 then return out end
-        table.clear(out)
+        if valid then return parts end
         modeCache[char] = nil
     end
 
+    -- Cache miss sólo ocurre al cambiar selección o cuando Duels reconstruye el rig.
+    -- Creamos la tabla una vez y después AutoShoot/SilentAim la leen directamente,
+    -- evitando copiar las mismas referencias ~33 veces por segundo.
+    local parts = {}
+    local seen = {}
     local partNames = runtime.TargetPartNameCache[mode] or runtime.RebuildTargetPartNameCache(mode)
-    table.clear(seen)
     for i = 1, #partNames do
         local part = ffc(char, partNames[i])
         if part and part:IsA("BasePart") and not seen[part] then
             seen[part] = true
-            out[#out + 1] = part
+            parts[#parts + 1] = part
         end
     end
-    if #out == 0 then
+    if #parts == 0 then
         local fallback = ffc(char, "Head") or ffc(char, "HumanoidRootPart")
-        if fallback then out[1] = fallback end
+        if fallback then parts[1] = fallback end
     end
 
-    if modeCache and #out > 0 then
-        local parts = table.create and table.create(#out) or {}
-        for i = 1, #out do parts[i] = out[i] end
+    if modeCache and #parts > 0 then
         modeCache[char] = {Version = version, Parts = parts}
     end
-    return out
+    return parts
 end
 
 function runtime.EnsureBodySelector()
@@ -11263,18 +11272,37 @@ local mState = {
     pAS = RaycastParams.new(),
     pSA = RaycastParams.new(),
     igHB = {},
-    igAS = {}, scAS = {}, seenAS = {},
-    igSA = {}, scSA = {}, seenSA = {},
+    igAS = {},
+    igSA = {},
     hbBlockedColor = Color3_fromRGB(255, 50, 50),
     hbByChar = setmetatable({}, {__mode = "k"}),
     hbAdornment = setmetatable({}, {__mode = "k"}),
     charCore = setmetatable({}, {__mode = "k"}),
+    enemySnapshot = {},
+    enemySnapshotCount = 0,
+    enemySnapshotReady = false,
+    equippedTool = nil,
+    toolChar = nil,
+    toolAddedConnection = nil,
+    toolRemovedConnection = nil,
     vpX = -1, vpY = -1, centerX = 0, centerY = 0,
     maxEspDistanceSq = MAX_ESP_DISTANCE * MAX_ESP_DISTANCE,
 }
 mState.pHB.FilterType = Enum.RaycastFilterType.Exclude
 mState.pAS.FilterType = Enum.RaycastFilterType.Exclude
 mState.pSA.FilterType = Enum.RaycastFilterType.Exclude
+
+local function disconnectCharCoreSignals(core)
+    if not core then return end
+    local keys = {"ForceFieldAddedConnection", "ForceFieldRemovedConnection", "AncestryConnection"}
+    for i = 1, #keys do
+        local connection = core[keys[i]]
+        if connection then
+            pcall(function() connection:Disconnect() end)
+            core[keys[i]] = nil
+        end
+    end
+end
 
 local function getCharCore(char)
     if not char then return nil end
@@ -11285,28 +11313,136 @@ local function getCharCore(char)
         if not core.RightFoot or core.RightFoot.Parent ~= char then core.RightFoot = ffc(char, "RightFoot") or ffc(char, "RightLeg") end
         return core
     end
+
+    if core then disconnectCharCoreSignals(core) end
     core = {
         Humanoid = ffc(char, "Humanoid") or char:FindFirstChildOfClass("Humanoid"),
         HRP = ffc(char, "HumanoidRootPart"),
         Head = ffc(char, "Head"),
         LeftFoot = ffc(char, "LeftFoot") or ffc(char, "LeftLeg"),
         RightFoot = ffc(char, "RightFoot") or ffc(char, "RightLeg"),
+        HasForceField = char:FindFirstChildOfClass("ForceField") ~= nil,
     }
+
+    -- Enemy lobby cache event-driven: evita FindFirstChildOfClass("ForceField")
+    -- en ESP/Aimbot varias veces por frame.
+    core.ForceFieldAddedConnection = runtime.Track(char.ChildAdded:Connect(function(child)
+        if child:IsA("ForceField") then core.HasForceField = true end
+    end))
+    core.ForceFieldRemovedConnection = runtime.Track(char.ChildRemoved:Connect(function(child)
+        if child:IsA("ForceField") then
+            core.HasForceField = char:FindFirstChildOfClass("ForceField") ~= nil
+        end
+    end))
+    core.AncestryConnection = runtime.Track(char.AncestryChanged:Connect(function(_, parent)
+        if parent then return end
+        if mState.charCore[char] == core then mState.charCore[char] = nil end
+        disconnectCharCoreSignals(core)
+        task.defer(function()
+            if runtime.Alive then runtime.PruneConnections() end
+        end)
+    end))
+
     mState.charCore[char] = core
     return core
 end
 
-local function enemigoEnLobby(enemyChar, enemyHrp)
-    if enemyChar:FindFirstChildOfClass("ForceField") then return true end
-    local core = enemyHrp and nil or getCharCore(enemyChar)
+local function enemigoEnLobby(enemyChar, enemyHrp, knownCore)
+    if not enemyChar then return true end
+    local core = knownCore or getCharCore(enemyChar)
+    if core and core.HasForceField then return true end
     local eHrp = enemyHrp or (core and core.HRP)
     if eHrp then
-        for _, zona in ipairs(ZONAS_SEGURAS) do
+        for i = 1, #ZONAS_SEGURAS do
+            local zona = ZONAS_SEGURAS[i]
             local delta = eHrp.Position - zona.Centro
             if delta:Dot(delta) <= zona.RadioSq then return true end
         end
     end
     return false
+end
+
+-- Tool equipado cacheado por eventos. AutoShoot y SilentAim sólo leen una referencia.
+runtime.BindEquippedToolCache = function(char)
+    if mState.toolAddedConnection then
+        pcall(function() mState.toolAddedConnection:Disconnect() end)
+        mState.toolAddedConnection = nil
+    end
+    if mState.toolRemovedConnection then
+        pcall(function() mState.toolRemovedConnection:Disconnect() end)
+        mState.toolRemovedConnection = nil
+    end
+
+    mState.toolChar = char
+    mState.equippedTool = char and char:FindFirstChildOfClass("Tool") or nil
+    if char then
+        mState.toolAddedConnection = runtime.Track(char.ChildAdded:Connect(function(child)
+            if child:IsA("Tool") then mState.equippedTool = child end
+        end))
+        mState.toolRemovedConnection = runtime.Track(char.ChildRemoved:Connect(function(child)
+            if child == mState.equippedTool then
+                mState.equippedTool = char:FindFirstChildOfClass("Tool")
+            end
+        end))
+    end
+    runtime.PruneConnections()
+end
+runtime.Track(player.CharacterAdded:Connect(function(char)
+    runtime.BindEquippedToolCache(char)
+end))
+runtime.BindEquippedToolCache(player.Character)
+
+-- Snapshot reutilizado sólo dentro del Heartbeat ACTUAL. Nunca conserva posiciones
+-- entre frames: comparte validación Character/Humanoid/HRP/isEnemy entre módulos.
+local function getEnemySnapshot()
+    if mState.enemySnapshotReady then
+        return mState.enemySnapshot, mState.enemySnapshotCount
+    end
+
+    local snapshot = mState.enemySnapshot
+    local previousCount = mState.enemySnapshotCount
+    local count = 0
+    for i = 1, #listaJugadores do
+        local p = listaJugadores[i]
+        if p ~= player then
+            count = count + 1
+            local entry = snapshot[count]
+            if not entry then
+                entry = {}
+                snapshot[count] = entry
+            end
+
+            local char = p.Character
+            local core = char and getCharCore(char) or nil
+            local hrp = core and core.HRP or nil
+            local hum = core and core.Humanoid or nil
+            local alive = hrp ~= nil and hum ~= nil and hum.Health > 0
+
+            entry.Player = p
+            entry.Character = char
+            entry.Core = core
+            entry.HRP = hrp
+            entry.Humanoid = hum
+            entry.Head = core and core.Head or nil
+            entry.Alive = alive
+            entry.Enemy = alive and isEnemy(p) or false
+            entry.SafeZone = nil
+        end
+    end
+
+    for i = count + 1, previousCount do
+        snapshot[i] = nil
+    end
+    mState.enemySnapshotCount = count
+    mState.enemySnapshotReady = true
+    return snapshot, count
+end
+
+local function snapshotEntryInSafeZone(entry)
+    if entry.SafeZone == nil then
+        entry.SafeZone = entry.Alive and enemigoEnLobby(entry.Character, entry.HRP, entry.Core) or true
+    end
+    return entry.SafeZone
 end
 
 
@@ -11328,6 +11464,7 @@ runtime.Track(RunService.Heartbeat:Connect(function(deltaTime)
         return
     end
 
+    mState.enemySnapshotReady = false
     local camera = workspace.CurrentCamera -- 🔥 FIX: Siempre la cámara actual
     timerLobby = timerLobby + deltaTime
     if timerLobby >= 1 then
@@ -11345,19 +11482,22 @@ runtime.Track(RunService.Heartbeat:Connect(function(deltaTime)
             mState.tHB = 0
             if not enLobby then
                 local myChar = player.Character
-                local myHead = myChar and myChar:FindFirstChild("Head")
+                local myCore = myChar and getCharCore(myChar) or nil
+                local myHead = myCore and myCore.Head
                 local origin = camera.CFrame.Position 
                 local targetSize = Vector3_new(hitboxSize, hitboxSize, hitboxSize)
                 mState.igHB[1] = myChar
                 
-                for i = 1, #listaJugadores do
-                    local v = listaJugadores[i]
-                    local targetChar = v ~= player and v.Character or nil
-                    local targetCore = targetChar and getCharCore(targetChar) or nil
-                    local hrp = targetCore and targetCore.HRP
-                    local targetHum = targetCore and targetCore.Humanoid
+                local enemies, enemyCount = getEnemySnapshot()
+                for i = 1, enemyCount do
+                    local enemy = enemies[i]
+                    local v = enemy.Player
+                    local targetChar = enemy.Character
+                    local targetCore = enemy.Core
+                    local hrp = enemy.HRP
+                    local targetHum = enemy.Humanoid
                     
-                    if hrp and targetHum and targetHum.Health > 0 and isEnemy(v) then
+                    if enemy.Alive and enemy.Enemy then
                         -- 1. BUSCAMOS O CREAMOS EL BLOQUE FALSO
                         local fakeHitbox = mState.hbByChar[targetChar]
                         if not (fakeHitbox and fakeHitbox.Parent == targetChar) then
@@ -11511,14 +11651,15 @@ runtime.Track(RunService.Heartbeat:Connect(function(deltaTime)
                     )
                 end
 
-                for i = 1, #listaJugadores do
-                    local p = listaJugadores[i]
-                    if p ~= player then
-                        local char = p.Character
-                        local core = char and getCharCore(char) or nil
-                        local targetHum = core and core.Humanoid
-                        local targetHead = core and core.Head
-                        if myPos and targetHum and targetHum.Health > 0 and targetHead and isEnemy(p) and not enemigoEnLobby(char, core.HRP) then
+                local enemies, enemyCount = getEnemySnapshot()
+                for i = 1, enemyCount do
+                    local enemy = enemies[i]
+                    local p = enemy.Player
+                    local char = enemy.Character
+                    local core = enemy.Core
+                    local targetHum = enemy.Humanoid
+                    local targetHead = enemy.Head
+                    if myPos and enemy.Alive and targetHead and enemy.Enemy and not snapshotEntryInSafeZone(enemy) then
                             local delta = targetHead.Position - myPos
                             local distSq = delta:Dot(delta)
                             
@@ -11619,7 +11760,6 @@ runtime.Track(RunService.Heartbeat:Connect(function(deltaTime)
                                 end
                             else hideESP(p) end
                         else hideESP(p) end
-                    end
                 end
             end
         end
@@ -11642,7 +11782,8 @@ runtime.Track(RunService.Heartbeat:Connect(function(deltaTime)
                 local localCore = char and getCharCore(char) or nil
                 local hrp = localCore and localCore.HRP
                 if hrp then
-                    local arma = char:FindFirstChildOfClass("Tool")
+                    local arma = (mState.toolChar == char) and mState.equippedTool or char:FindFirstChildOfClass("Tool")
+                    if arma and arma.Parent ~= char then arma = nil end
                     if arma and arma:FindFirstChild("Handle") then
                         local esGun = esLaPistola(arma)
                         if (esGun and autoShootEnabled) or (not esGun and autoShootCuchilloEnabled) then
@@ -11655,26 +11796,27 @@ runtime.Track(RunService.Heartbeat:Connect(function(deltaTime)
 
                             -- Seleccionar el visible más cercano no requiere crear N tablas,
                             -- ordenar N candidatos y reciclarlos: basta conservar el mejor.
-                            for i = 1, #listaJugadores do
-                                local p = listaJugadores[i]
-                                local enemyChar = p ~= player and p.Character or nil
-                                if enemyChar and isEnemy(p) then
-                                    local enemyCore = getCharCore(enemyChar)
-                                    local enemyHrp = enemyCore and enemyCore.HRP
-                                    local enemyHum = enemyCore and enemyCore.Humanoid
-                                    local enemyDelta = enemyHrp and (enemyHrp.Position - myPos) or nil
-                                    if enemyHum and enemyHum.Health > 0 and enemyDelta and enemyDelta:Dot(enemyDelta) <= 640000 then
-                                        runtime.CollectTargetParts(enemyChar, "AutoShoot", mState.scAS, mState.seenAS)
-                                        for j = 1, #mState.scAS do
-                                            local part = mState.scAS[j]
-                                            local partDelta = part.Position - myPos
-                                            local distSq = partDelta:Dot(partDelta)
-                                            if distSq < closestTargetDistSq then
-                                                mState.igAS[2] = enemyChar
-                                                mState.pAS.FilterDescendantsInstances = mState.igAS
-                                                if not ws_Raycast(workspace, headPos, part.Position - headPos, mState.pAS) then
-                                                    closestTargetDistSq = distSq
-                                                    closestTargetPart = part
+                            local enemies, enemyCount = getEnemySnapshot()
+                            for i = 1, enemyCount do
+                                local enemy = enemies[i]
+                                local enemyChar = enemy.Character
+                                local enemyHrp = enemy.HRP
+                                if enemy.Alive and enemy.Enemy and enemyHrp then
+                                    local enemyDelta = enemyHrp.Position - myPos
+                                    if enemyDelta:Dot(enemyDelta) <= 640000 then
+                                        local targetParts = runtime.CollectTargetParts(enemyChar, "AutoShoot")
+                                        if targetParts then
+                                            for j = 1, #targetParts do
+                                                local part = targetParts[j]
+                                                local partDelta = part.Position - myPos
+                                                local distSq = partDelta:Dot(partDelta)
+                                                if distSq < closestTargetDistSq then
+                                                    mState.igAS[2] = enemyChar
+                                                    mState.pAS.FilterDescendantsInstances = mState.igAS
+                                                    if not ws_Raycast(workspace, headPos, part.Position - headPos, mState.pAS) then
+                                                        closestTargetDistSq = distSq
+                                                        closestTargetPart = part
+                                                    end
                                                 end
                                             end
                                         end
@@ -11715,7 +11857,8 @@ runtime.Track(RunService.Heartbeat:Connect(function(deltaTime)
                 local localCore = char and getCharCore(char) or nil
                 local hrp = localCore and localCore.HRP
                 if hrp then
-                    local arma = char:FindFirstChildOfClass("Tool")
+                    local arma = (mState.toolChar == char) and mState.equippedTool or char:FindFirstChildOfClass("Tool")
+                    if arma and arma.Parent ~= char then arma = nil end
                     local allowedWeapon = false
                     if arma then
                         local esGun = esLaPistola(arma)
@@ -11742,48 +11885,47 @@ runtime.Track(RunService.Heartbeat:Connect(function(deltaTime)
                         
                         mState.igSA[1] = char
 
-                        for i = 1, #listaJugadores do 
-                            local p = listaJugadores[i]
-                            local enemyChar = p ~= player and p.Character or nil
-                            if enemyChar and isEnemy(p) then
-                                local enemyCore = getCharCore(enemyChar)
-                                local enemyHum = enemyCore and enemyCore.Humanoid
-                                local enemyHrp = enemyCore and enemyCore.HRP
-                                local enemyDelta = enemyHrp and (enemyHrp.Position - myPos) or nil
-                                if enemyHum and enemyHum.Health > 0 and enemyDelta and enemyDelta:Dot(enemyDelta) <= 640000 then
+                        local enemies, enemyCount = getEnemySnapshot()
+                        for i = 1, enemyCount do 
+                            local enemy = enemies[i]
+                            local enemyChar = enemy.Character
+                            local enemyHrp = enemy.HRP
+                            if enemy.Alive and enemy.Enemy and enemyHrp then
+                                local enemyDelta = enemyHrp.Position - myPos
+                                if enemyDelta:Dot(enemyDelta) <= 640000 then
                                     if silentAimFovEnabled then
                                         local hrpPos2D, onScreen = camera:WorldToViewportPoint(enemyHrp.Position)
                                         local dx, dy = hrpPos2D.X - centerX, hrpPos2D.Y - centerY
                                         if not onScreen or (dx * dx + dy * dy) > broadFovSq then continue end
                                     end
 
-                                    runtime.CollectTargetParts(enemyChar, "SilentAim", mState.scSA, mState.seenSA)
-
+                                    local targetParts = runtime.CollectTargetParts(enemyChar, "SilentAim")
                                     mState.igSA[2] = enemyChar 
                                     mState.pSA.FilterDescendantsInstances = mState.igSA
                                     
-                                    for j = 1, #mState.scSA do
-                                        local part = mState.scSA[j]
-                                        local pasaFiltro = false
-                                        local candidateDistance = math.huge
-                                        
-                                        if silentAimFovEnabled then
-                                            local hrpPos2D, onScreen = camera:WorldToViewportPoint(part.Position)
-                                            if onScreen then
-                                                -- Cambiamos pos2D por hrpPos2D
-                                                local dx, dy = hrpPos2D.X - centerX, hrpPos2D.Y - centerY 
-                                                candidateDistance = dx * dx + dy * dy
-                                                if candidateDistance <= fovSq and candidateDistance < shortestDistToCenter then pasaFiltro = true end
+                                    if targetParts then
+                                        for j = 1, #targetParts do
+                                            local part = targetParts[j]
+                                            local pasaFiltro = false
+                                            local candidateDistance = math.huge
+                                            
+                                            if silentAimFovEnabled then
+                                                local hrpPos2D, onScreen = camera:WorldToViewportPoint(part.Position)
+                                                if onScreen then
+                                                    local dx, dy = hrpPos2D.X - centerX, hrpPos2D.Y - centerY 
+                                                    candidateDistance = dx * dx + dy * dy
+                                                    if candidateDistance <= fovSq and candidateDistance < shortestDistToCenter then pasaFiltro = true end
+                                                end
+                                            else
+                                                local partDelta = part.Position - myPos
+                                                candidateDistance = partDelta:Dot(partDelta)
+                                                if candidateDistance < shortestDistanceFisica then pasaFiltro = true end
                                             end
-                                        else
-                                            local partDelta = part.Position - myPos
-                                            candidateDistance = partDelta:Dot(partDelta)
-                                            if candidateDistance < shortestDistanceFisica then pasaFiltro = true end
-                                        end
-                                        
-                                        if pasaFiltro and not ws_Raycast(workspace, headPos, part.Position - headPos, mState.pSA) then
-                                            if silentAimFovEnabled then shortestDistToCenter = candidateDistance else shortestDistanceFisica = candidateDistance end
-                                            closestTargetPart = part
+                                            
+                                            if pasaFiltro and not ws_Raycast(workspace, headPos, part.Position - headPos, mState.pSA) then
+                                                if silentAimFovEnabled then shortestDistToCenter = candidateDistance else shortestDistanceFisica = candidateDistance end
+                                                closestTargetPart = part
+                                            end
                                         end
                                     end
                                 end
@@ -11929,7 +12071,10 @@ UIElements.TogShowFOV = Tabs.Aim:Toggle({
     Title = "Mostrar Círculo FOV",
     Desc = "Dibuja un círculo en pantalla para saber dónde funciona tu Silent Aim.",
     Value = false,
-    Callback = function(Value) fovVisiblePreference = Value end,
+    Callback = function(Value)
+        fovVisiblePreference = Value
+        if runtime.UpdateESP2DRenderConnection then runtime.UpdateESP2DRenderConnection() end
+    end,
 })
 
 Tabs.Aim:Section({Title = "Campo de visión"})
@@ -14327,30 +14472,39 @@ function processText(v, myName, myDisp)
     end
 end
 local visualConnections = {} -- 🚀 Nueva tabla para guardar eventos
+local visualInitialScanDone = false
 
 function updateSystem()
     local myName = player.Name 
     local myDisp = player.DisplayName
     local visualActive = hideNameEnabled or fakeNameEnabled or rainbowEnabled or creatorTagEnabled
 
-    -- El escaneo amplio sólo tiene sentido al ACTIVAR/modificar una capa visual.
-    -- Al apagar todo restauramos el caché directamente, sin volver a recorrer UI/avatares.
+    -- Un GetDescendants completo sólo en la transición apagado -> activo.
+    -- Cambiar fake name/rainbow/tag mientras ya está activo reprocesa únicamente
+    -- los textos conocidos; DescendantAdded se encarga de los nuevos.
     if visualActive then
-        task.spawn(function() 
-        for _, p in ipairs(listaJugadores) do
-            if p.Character then
-                for _, v in pairs(p.Character:GetDescendants()) do
-                    if v:IsA("TextLabel") or v:IsA("TextBox") then processText(v, myName, myDisp) end
+        if not visualInitialScanDone then
+            visualInitialScanDone = true
+            task.spawn(function() 
+                for _, p in ipairs(listaJugadores) do
+                    if p.Character then
+                        for _, v in pairs(p.Character:GetDescendants()) do
+                            if v:IsA("TextLabel") or v:IsA("TextBox") then processText(v, myName, myDisp) end
+                        end
+                    end
                 end
+                local pGui = player:FindFirstChild("PlayerGui")
+                if pGui then
+                    for _, v in pairs(pGui:GetDescendants()) do
+                        if v:IsA("TextLabel") or v:IsA("TextBox") then processText(v, myName, myDisp) end
+                    end
+                end
+            end)
+        else
+            for v in pairs(originalData) do
+                if v and v.Parent then processText(v, myName, myDisp) end
             end
         end
-        local pGui = player:FindFirstChild("PlayerGui")
-        if pGui then
-            for _, v in pairs(pGui:GetDescendants()) do
-                if v:IsA("TextLabel") or v:IsA("TextBox") then processText(v, myName, myDisp) end
-            end
-        end
-        end)
     end
 
     if visualActive then
@@ -14397,6 +14551,7 @@ function updateSystem()
         end 
     else
         isWorkspaceLooping = false
+        visualInitialScanDone = false
         
         for _, conn in ipairs(visualConnections) do conn:Disconnect() end
         visualConnections = {}
@@ -14449,8 +14604,8 @@ UIElements.TogEsp = Tabs.Vis:Toggle({
     Title = "ESP de jugadores", 
     Desc = "Activa las capas visuales configuradas para enemigos.",
     Callback = function(s) 
-        espEnabled = s 
-  
+        espEnabled = s
+        if runtime.UpdateESP2DRenderConnection then runtime.UpdateESP2DRenderConnection() end
     end
 })
 
@@ -14464,19 +14619,28 @@ UIElements.TogEspBox = Tabs.Vis:Toggle({
     Title = "ESP Box 2D",
     Desc = "Caja anclada al enemigo",
     Value = false,
-    Callback = function(s) espSettings.Box = s end,
+    Callback = function(s)
+        espSettings.Box = s
+        if runtime.UpdateESP2DRenderConnection then runtime.UpdateESP2DRenderConnection() end
+    end,
 })
 UIElements.TogEspHealth = Tabs.Vis:Toggle({
     Title = "Barra de vida",
     Desc = "Muestra la vida.",
     Value = false,
-    Callback = function(s) espSettings.HealthBar = s end,
+    Callback = function(s)
+        espSettings.HealthBar = s
+        if runtime.UpdateESP2DRenderConnection then runtime.UpdateESP2DRenderConnection() end
+    end,
 })
 
 UIElements.TogEspLines = Tabs.Vis:Toggle({
     Title = "Mostrar Líneas", 
     Desc = "Dibuja una línea desde el centro de tu pantalla hasta cada enemigo.",
-    Callback = function(s) espLinesEnabled = s end
+    Callback = function(s)
+        espLinesEnabled = s
+        if runtime.UpdateESP2DRenderConnection then runtime.UpdateESP2DRenderConnection() end
+    end
 })
 
 -- ==========================================
@@ -14555,7 +14719,7 @@ local function hideTracersOnce()
     tracersLimpios = true
 end
 
-runtime.Track(RunService.RenderStepped:Connect(function(deltaTime)
+local function renderESP2D(deltaTime)
     tracerAccumulator = tracerAccumulator + deltaTime
     if tracerAccumulator < TRACER_INTERVAL then return end
     tracerAccumulator = tracerAccumulator - TRACER_INTERVAL
@@ -14607,7 +14771,7 @@ runtime.Track(RunService.RenderStepped:Connect(function(deltaTime)
             local valid = false
             local rootScreen, onScreen
 
-            if hrp and hum and hum.Health > 0 and isEnemy(p) and not enemigoEnLobby(char, hrp) then
+            if hrp and hum and hum.Health > 0 and isEnemy(p) and not enemigoEnLobby(char, hrp, core) then
                 local delta = myPos - hrp.Position
                 if delta:Dot(delta) <= MAX_ESP_DISTANCE_SQ then
                     rootScreen, onScreen = camera:WorldToViewportPoint(hrp.Position)
@@ -14706,7 +14870,36 @@ runtime.Track(RunService.RenderStepped:Connect(function(deltaTime)
             end
         end
     end
-end))
+end
+
+runtime.ESP2DRenderConnection = nil
+function runtime.UpdateESP2DRenderConnection()
+    local wantsESP2D = fovVisiblePreference
+        or (espEnabled and (espLinesEnabled or espSettings.Box or espSettings.HealthBar))
+    local connection = runtime.ESP2DRenderConnection
+
+    if wantsESP2D then
+        local connected = false
+        if connection then
+            pcall(function() connected = connection.Connected == true end)
+        end
+        if not connected then
+            runtime.ESP2DRenderConnection = runtime.Track(RunService.RenderStepped:Connect(renderESP2D))
+        end
+        return
+    end
+
+    if connection then
+        pcall(function() connection:Disconnect() end)
+        runtime.ESP2DRenderConnection = nil
+        runtime.PruneConnections()
+    end
+    tracerAccumulator = 0
+    if FOVCircle.Visible then FOVCircle.Visible = false end
+    hideTracersOnce()
+    runtime.HideAllESP2D()
+end
+runtime.UpdateESP2DRenderConnection()
 
 runtime.Track(Players.PlayerRemoving:Connect(function(p)
     if tracerLines[p] then
@@ -17128,6 +17321,7 @@ Tabs.Config:Button({ Title = " Cargar Configuración", Callback = function()
                 if decoded.Toggles["Mostrar Distancia"] ~= nil then espSettings.Distance = decoded.Toggles["Mostrar Distancia"] secureLoadToggle(UIElements.TogEspDs, espSettings.Distance) end
                 if decoded.Toggles["Ocultar mi Nombre (Local)"] ~= nil then hideNameEnabled = decoded.Toggles["Ocultar mi Nombre (Local)"] secureLoadToggle(UIElements.TogHideName, hideNameEnabled) end
                 if decoded.Toggles["FPS Boost"] ~= nil then fpsBoostEnabled = decoded.Toggles["FPS Boost"] secureLoadToggle(UIElements.ToggleFPS, fpsBoostEnabled) end
+                if runtime.UpdateESP2DRenderConnection then runtime.UpdateESP2DRenderConnection() end
             end
             
             -- Sliders

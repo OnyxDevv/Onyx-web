@@ -15275,9 +15275,9 @@ local offsetDistance = 5000 -- Distancia estable: evita el error de precisión q
 local ghostEnabled = false
 
 -- XERO_WALK_SPEED_SLIDER_BEGIN
--- Velocidad de locomoción sin modificar Humanoid.WalkSpeed.
--- Usa MoveDirection + velocidad horizontal del HRP para conservar animaciones,
--- colisiones y estados normales del Humanoid. En 16 no existe ningún loop activo.
+-- Velocidad visual/locomoción sin modificar Humanoid.WalkSpeed ni la cadencia base.
+-- El Humanoid sigue caminando de forma nativa; sólo añadimos desplazamiento horizontal
+-- equivalente a la diferencia entre la velocidad objetivo del slider y su WalkSpeed real.
 local walkSpeedValue = 16
 local walkSpeedConnection = nil
 
@@ -15296,17 +15296,20 @@ local function ensureWalkSpeedLoop()
     end
     if walkSpeedConnection and walkSpeedConnection.Connected then return end
 
-    walkSpeedConnection = runtime.Track(RunService.Heartbeat:Connect(function()
+    walkSpeedConnection = runtime.Track(RunService.Heartbeat:Connect(function(deltaTime)
         if not runtime.Alive or walkSpeedValue <= 16 then return end
         if ghostEnabled then return end
 
         local char = player.Character
-        local hum = char and char:FindFirstChildOfClass("Humanoid")
-        local hrp = char and char:FindFirstChild("HumanoidRootPart")
+        local core = char and getCharCore(char) or nil
+        local hum = core and core.Humanoid
+        local hrp = core and core.HRP
         if not hum or not hrp or hum.Health <= 0 then return end
 
-        -- Respeta freezes de ronda y sólo acelera locomoción terrestre real.
-        if hum.WalkSpeed <= 0 then return end
+        -- El juego conserva control completo de estas propiedades/estados.
+        -- Sólo leemos WalkSpeed para saber cuánto desplazamiento EXTRA falta.
+        local nativeSpeed = tonumber(hum.WalkSpeed) or 0
+        if nativeSpeed <= 0 then return end -- freeze de ronda / movimiento bloqueado
         if hum.Sit or hum.FloorMaterial == Enum.Material.Air then return end
 
         local moveDirection = hum.MoveDirection
@@ -15314,30 +15317,34 @@ local function ensureWalkSpeedLoop()
         local magnitude = horizontal.Magnitude
         if magnitude <= 0.001 then return end
 
-        horizontal = horizontal / magnitude
-        local desired = horizontal * walkSpeedValue
-        local velocity = hrp.AssemblyLinearVelocity
+        local extraSpeed = walkSpeedValue - hum.WalkSpeed
+        if extraSpeed <= 0 then return end
 
-        -- Conserva Y para no tocar saltos/gravedad; sólo sustituye locomoción X/Z.
-        if math.abs(velocity.X - desired.X) > 0.05 or math.abs(velocity.Z - desired.Z) > 0.05 then
-            hrp.AssemblyLinearVelocity = Vector3_new(desired.X, velocity.Y, desired.Z)
-        end
+        horizontal = horizontal / magnitude
+        local dt = tonumber(deltaTime) or 0
+        if dt <= 0 then return end
+        -- Evita un salto enorme tras un freeze/hitch excepcional sin afectar FPS normales.
+        if dt > 0.10 then dt = 0.10 end
+
+        -- No escribimos WalkSpeed ni AssemblyLinearVelocity: la animación/pasos siguen
+        -- siendo los del movimiento nativo y este bloque sólo suma distancia X/Z.
+        hrp.CFrame = hrp.CFrame + (horizontal * extraSpeed * dt)
     end))
 end
 
 Tabs.Mov:Section({Title = "Velocidad"})
 UIElements.SliderWalkSpeed = Tabs.Mov:Slider({
     Title = "Velocidad",
-    Desc = "Aumenta la velocidad de movimiento sin cambiar WalkSpeed.",
+    Desc = "Aumenta el desplazamiento sin cambiar WalkSpeed ni las animaciones base.",
     Step = 1,
-    Value = {Min = 16, Max = 60, Default = 16},
+    Value = {Min = 16, Max = 150, Default = 16},
     Callback = function(Value)
-        walkSpeedValue = math.clamp(tonumber(Value) or 16, 16, 60)
+        walkSpeedValue = math.clamp(tonumber(Value) or 16, 16, 150)
         ensureWalkSpeedLoop()
     end,
 })
 
--- Al reaparecer vuelve a velocidad normal y no arrastra impulso/config de otra ronda.
+-- Cada Character empieza limpio para no arrastrar el boost entre rondas/respawns.
 runtime.Track(player.CharacterAdded:Connect(function()
     walkSpeedValue = 16
     stopWalkSpeedLoop()

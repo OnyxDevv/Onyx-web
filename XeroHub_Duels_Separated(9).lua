@@ -4262,6 +4262,8 @@ runtime.Appearance = {
     AccessoryGuardConnections = {},
     AccessoryGuardMutating = {},
     AccessoryGuardPending = false,
+    AccessoryGuardDirty = false,
+    AccessoryCloneRefreshPending = false,
     AccessoryGuardCharacter = nil,
     EditorDisplayToKey = {},
     EditorControls = {},
@@ -5109,22 +5111,39 @@ function runtime.GetAppearanceTemplate(key)
     return template
 end
 
+local function isAppearanceBodyAttachment(char, attachment)
+    return attachment
+        and attachment:IsA("Attachment")
+        and attachment.Parent
+        and attachment.Parent:IsA("BasePart")
+        and attachment.Parent.Parent == char
+end
+
 local function findAppearanceAttachment(char, name)
     local cache = runtime.Appearance.AttachmentCache[char]
     if not cache then
         cache = {}
         runtime.Appearance.AttachmentCache[char] = cache
         for _, d in ipairs(char:GetDescendants()) do
-            if d:IsA("Attachment") and d.Parent and d.Parent:IsA("BasePart") then
+            -- CRÍTICO: nunca cachear el Attachment DEL PROPIO limited. Durante un
+            -- respawn temprano el Accessory ya puede ser hijo del Character antes de
+            -- que Roblox agregue el Attachment corporal; antes eso permitía soldar
+            -- Handle -> Handle y el limited quedaba invisible/desprendido.
+            if isAppearanceBodyAttachment(char, d) then
                 cache[d.Name] = cache[d.Name] or d
             end
         end
     end
+
     local found = cache[name]
-    if found and found.Parent then return found end
-    -- Fallback por si el juego reemplazó una pieza/attachment después del snapshot.
+    if found and found.Name == name and isAppearanceBodyAttachment(char, found) then
+        return found
+    end
+    cache[name] = nil
+
+    -- Fallback por si Duels reemplazó una pieza/attachment después del snapshot.
     for _, d in ipairs(char:GetDescendants()) do
-        if d:IsA("Attachment") and d.Name == name and d.Parent and d.Parent:IsA("BasePart") then
+        if d.Name == name and isAppearanceBodyAttachment(char, d) then
             cache[name] = d
             return d
         end
@@ -5392,14 +5411,22 @@ function runtime.EnsureAppearanceAccessoryKey(key, char)
     end
 
     if current and current.Parent == char then
-        if runtime.ApplyAppearanceOffsetToInstance(key, current, true) then
-            return true
+        -- No basta con que exista cualquier Weld. Un self-weld o un weld apuntando a
+        -- una pieza corporal vieja puede hacer que ApplyAppearanceOffset parezca OK
+        -- aunque el limited esté visualmente perdido. Validamos primero la topología.
+        if runtime.IsAppearanceAccessoryReady(key, char) then
+            return runtime.ApplyAppearanceOffsetToInstance(key, current, true)
         end
 
         runtime.Appearance.AttachmentCache[char] = nil
+        runtime.Appearance.AccessoryWeld[current] = nil
+        runtime.Appearance.AccessoryBaseWeld[current] = nil
         if manualAttachAppearanceAccessory(char, current) then
             runtime.Appearance.AccessoryWeld[current] = nil
-            return runtime.ApplyAppearanceOffsetToInstance(key, current, true)
+            runtime.Appearance.AccessoryBaseWeld[current] = nil
+            return runtime.IsAppearanceAccessoryReady(key, char)
+                and runtime.ApplyAppearanceOffsetToInstance(key, current, true)
+                or false
         end
         return false
     end
@@ -5536,6 +5563,14 @@ function runtime.IsAppearanceAccessoryReady(key, char)
     local weld = runtime.FindAppearanceWeld(accessory)
     if not handle or not handle:IsA("BasePart") or not weld or not weld.Parent then return false end
     if weld.Part0 ~= handle or not weld.Part1 or not weld.Part1:IsDescendantOf(char) then return false end
+
+    -- AccessoryWeld válido = Handle -> una pieza corporal ACTUAL del Character.
+    -- Esto rechaza tanto el antiguo self-weld Handle -> Handle como referencias a
+    -- Heads/Torsos que Duels ya reemplazó durante el respawn.
+    if weld.Part1 == handle or weld.Part1.Parent ~= char
+        or char:FindFirstChild(weld.Part1.Name) ~= weld.Part1 then
+        return false
+    end
     return true
 end
 
@@ -7646,6 +7681,8 @@ function runtime.ClearAppearanceAccessoryGuard()
         list[i] = nil
     end
     runtime.Appearance.AccessoryGuardPending = false
+    runtime.Appearance.AccessoryGuardDirty = false
+    runtime.Appearance.AccessoryCloneRefreshPending = false
     runtime.Appearance.AccessoryGuardCharacter = nil
 end
 
@@ -7654,28 +7691,15 @@ function runtime.BindAppearanceAccessoryGuard(char, generation)
     if not char or not char.Parent then return end
     runtime.Appearance.AccessoryGuardCharacter = char
 
-    local function queueEnsure()
-        if runtime.Appearance.AccessoryGuardPending then return end
-        runtime.Appearance.AccessoryGuardPending = true
+    local queueEnsure
+
+    -- El clon tiene SU propia cola. Nunca vuelve a mantener ocupado el guard de
+    -- limiteds mientras espera state.Applying / handoff del overlay.
+    local function queueCloneRefresh()
+        if runtime.Appearance.AccessoryCloneRefreshPending then return end
+        runtime.Appearance.AccessoryCloneRefreshPending = true
 
         task.spawn(function()
-            -- LIMITEDS primero: son una capa independiente del overlay. Antes este guard
-            -- podía esperar hasta 2.5 s a cloneState.Applying y por eso el limited a veces
-            -- aparecía tarde aun cuando su attachment ya estaba disponible.
-            if not runtime.Alive or char ~= player.Character or not char.Parent then
-                runtime.Appearance.AccessoryGuardPending = false
-                return
-            end
-            if generation and generation ~= runtime.Appearance.RespawnGeneration then
-                runtime.Appearance.AccessoryGuardPending = false
-                return
-            end
-
-            runtime.FastEnsureAppearanceAccessories(char, generation, 0.45)
-            runtime.EnforceBodyAppearance(char)
-            runtime.ApplyHairRemoval(char)
-
-            -- Sólo la sincronización DEL CLON espera a que termine un handoff.
             local deadline = os.clock() + 2.5
             while runtime.Alive
                 and char == player.Character
@@ -7688,21 +7712,82 @@ function runtime.BindAppearanceAccessoryGuard(char, generation)
                 RunService.Heartbeat:Wait()
             end
 
-            runtime.Appearance.AccessoryGuardPending = false
+            runtime.Appearance.AccessoryCloneRefreshPending = false
             if not runtime.Alive or char ~= player.Character or not char.Parent then return end
             if generation and generation ~= runtime.Appearance.RespawnGeneration then return end
 
             local cloneState = runtime.Appearance.AvatarClone
             if cloneState and cloneState.Applying then
-                task.delay(0.12, queueEnsure)
+                task.delay(0.12, queueCloneRefresh)
                 return
             end
+
+            -- SEGUNDA VALIDACIÓN CRÍTICA: un limited pudo ser eliminado/re-soldado
+            -- mientras el clon estaba aplicándose. No ocultamos el avatar base hasta
+            -- comprobar de nuevo que todos los limiteds activos están realmente unidos.
+            local ready = runtime.FastEnsureAppearanceAccessories(char, generation, 0.35)
+            runtime.EnforceBodyAppearance(char)
+            runtime.ApplyHairRemoval(char)
 
             if cloneState and cloneState.Active and cloneState.Overlay and cloneState.Overlay.Parent then
                 runtime.AvatarCloneHideBase(char)
                 runtime.UpdateAvatarCloneLayers()
                 runtime.AvatarCloneBuildNativeTransparencyMap(char, cloneState.Overlay)
             end
+
+            if not ready then
+                task.delay(0.05, function()
+                    if runtime.Alive and char == player.Character and char.Parent then
+                        queueEnsure()
+                    end
+                end)
+            end
+        end)
+    end
+
+    queueEnsure = function()
+        if runtime.Appearance.AccessoryGuardPending then
+            -- Antes este evento se PERDÍA. Ahora queda marcado y fuerza otra pasada
+            -- apenas termine la que ya está ejecutándose.
+            runtime.Appearance.AccessoryGuardDirty = true
+            return
+        end
+
+        runtime.Appearance.AccessoryGuardPending = true
+        runtime.Appearance.AccessoryGuardDirty = false
+
+        task.spawn(function()
+            if not runtime.Alive or char ~= player.Character or not char.Parent then
+                runtime.Appearance.AccessoryGuardPending = false
+                return
+            end
+            if generation and generation ~= runtime.Appearance.RespawnGeneration then
+                runtime.Appearance.AccessoryGuardPending = false
+                return
+            end
+
+            local ready = runtime.FastEnsureAppearanceAccessories(char, generation, 0.45)
+            runtime.EnforceBodyAppearance(char)
+            runtime.ApplyHairRemoval(char)
+
+            -- Liberamos el pending ANTES de mirar Dirty. Si entra un evento justo aquí,
+            -- iniciará su propia pasada; si entró antes, Dirty ya quedó en true.
+            runtime.Appearance.AccessoryGuardPending = false
+            local rerun = runtime.Appearance.AccessoryGuardDirty
+            runtime.Appearance.AccessoryGuardDirty = false
+
+            if not runtime.Alive or char ~= player.Character or not char.Parent then return end
+            if generation and generation ~= runtime.Appearance.RespawnGeneration then return end
+
+            if rerun or not ready then
+                task.delay(0.03, function()
+                    if runtime.Alive and char == player.Character and char.Parent then
+                        queueEnsure()
+                    end
+                end)
+            end
+
+            queueCloneRefresh()
         end)
     end
 
@@ -7712,26 +7797,60 @@ function runtime.BindAppearanceAccessoryGuard(char, generation)
         if not key or runtime.Appearance.AccessoryGuardMutating[key] then return end
         if runtime.Appearance.Enabled[key] then
             runtime.Appearance.ActiveAccessories[key] = nil
+            runtime.Appearance.AccessoryWeld[child] = nil
+            queueEnsure()
+        end
+    end))
+
+    -- Si Roblox/DUELS rompe sólo el AccessoryWeld sin quitar el Accessory completo,
+    -- ChildRemoved no se dispara para el limited. Vigilamos también esa topología.
+    table_insert(runtime.Appearance.AccessoryGuardConnections, char.DescendantRemoving:Connect(function(obj)
+        if not hasEnabledAppearanceAccessory() then return end
+
+        local acc = obj:IsA("Accoutrement") and obj or obj:FindFirstAncestorWhichIsA("Accoutrement")
+        if acc then
+            local key = acc:GetAttribute("iLunXAppearanceKey")
+            if key and runtime.Appearance.Enabled[key] and not runtime.Appearance.AccessoryGuardMutating[key] then
+                if obj:IsA("Weld") or obj:IsA("WeldConstraint") or obj:IsA("Motor6D")
+                    or obj:IsA("Attachment") or obj:IsA("BasePart") then
+                    runtime.Appearance.AccessoryWeld[acc] = nil
+                    runtime.Appearance.AccessoryBaseWeld[acc] = nil
+                    queueEnsure()
+                end
+            end
+            return
+        end
+
+        -- Un body part/attachment destino también puede ser reemplazado sin quitar el
+        -- limited. La pasada posterior detectará que Weld.Part1 ya no es la pieza actual.
+        if obj:IsA("Attachment")
+            or (obj:IsA("BasePart") and (obj.Name == "Head"
+                or obj.Name == "UpperTorso" or obj.Name == "Torso"
+                or obj.Name == "RightUpperLeg" or obj.Name == "LeftUpperLeg")) then
+            runtime.Appearance.AttachmentCache[char] = nil
             queueEnsure()
         end
     end))
 
     -- Algunos juegos insertan Head/attachments por etapas. En cuanto aparece un
-    -- attachment nuevo hacemos una única comprobación en el siguiente frame.
+    -- attachment corporal nuevo hacemos una comprobación coalescida.
     table_insert(runtime.Appearance.AccessoryGuardConnections, char.DescendantAdded:Connect(function(obj)
         if obj:IsA("Attachment") and hasEnabledAppearanceAccessory() then
-            -- Actualización incremental: evita reconstruir GetDescendants() de TODO el
-            -- Character cada vez que aparece un attachment durante el respawn.
             local cache = runtime.Appearance.AttachmentCache[char]
-            if cache and obj.Parent and obj.Parent:IsA("BasePart") then
+            -- Sólo attachments de body parts directos del Character. Nunca el attachment
+            -- interno de un limited recién parentado (eso causaba self-welds aleatorios).
+            if cache and isAppearanceBodyAttachment(char, obj) then
                 cache[obj.Name] = obj
             end
             queueEnsure()
         elseif obj:IsA("BasePart")
             and (obj.Name == "Head"
+                or obj.Name == "UpperTorso"
+                or obj.Name == "Torso"
                 or obj.Name == "RightUpperLeg"
                 or obj.Name == "RightLowerLeg"
                 or obj.Name == "RightFoot") then
+            runtime.Appearance.AttachmentCache[char] = nil
             queueEnsure()
         end
     end))

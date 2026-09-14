@@ -15276,73 +15276,57 @@ local offsetDistance = 5000 -- Distancia estable: evita el error de precisión q
 local ghostEnabled = false
 
 -- XERO_WALK_SPEED_SLIDER_BEGIN
--- V3: boost físico horizontal con LinearVelocity. No cambia Humanoid.WalkSpeed,
--- no teletransporta por CFrame y se desmonta por completo al desactivar/respawn.
+-- V3.1: boost físico horizontal compatible usando BodyVelocity.
+-- No cambia Humanoid.WalkSpeed ni teletransporta el HumanoidRootPart por CFrame.
 local walkSpeedValue = 16
 local walkSpeedConnection = nil
-local walkSpeedAttachment = nil
-local walkSpeedVelocity = nil
+local walkSpeedBodyVelocity = nil
 local walkSpeedRoot = nil
 local walkSpeedCurrentExtra = 0
-local WALK_SPEED_ACCEL = 110
-local WALK_SPEED_DECEL = 180
+local WALK_SPEED_ACCEL = 100
+local WALK_SPEED_DECEL = 160
 
-local function DestroyWalkSpeedActuator()
-    local velocity = walkSpeedVelocity
-    local attachment = walkSpeedAttachment
-    walkSpeedVelocity = nil
-    walkSpeedAttachment = nil
+local function destroyWalkSpeedActuator()
+    local actuator = walkSpeedBodyVelocity
+    walkSpeedBodyVelocity = nil
     walkSpeedRoot = nil
-
-    if velocity then pcall(function() velocity:Destroy() end) end
-    if attachment then pcall(function() attachment:Destroy() end) end
+    if actuator then
+        pcall(function() actuator:Destroy() end)
+    end
 end
 
 local function disableWalkSpeedActuator(resetRamp)
-    if walkSpeedVelocity then
+    if walkSpeedBodyVelocity then
         pcall(function()
-            walkSpeedVelocity.PlaneVelocity = Vector2_new(0, 0)
-            walkSpeedVelocity.Enabled = false
+            walkSpeedBodyVelocity.MaxForce = Vector3_new(0, 0, 0)
+            walkSpeedBodyVelocity.Velocity = Vector3_new(0, 0, 0)
         end)
     end
     if resetRamp then walkSpeedCurrentExtra = 0 end
 end
 
 local function ensureWalkSpeedActuator(hrp)
-    if walkSpeedVelocity and walkSpeedAttachment and walkSpeedRoot == hrp
-        and walkSpeedVelocity.Parent == hrp and walkSpeedAttachment.Parent == hrp then
-        return walkSpeedVelocity
+    if walkSpeedBodyVelocity and walkSpeedRoot == hrp and walkSpeedBodyVelocity.Parent == hrp then
+        return walkSpeedBodyVelocity
     end
 
-    DestroyWalkSpeedActuator()
+    destroyWalkSpeedActuator()
     if not hrp or not hrp.Parent then return nil end
 
-    -- Limpia restos de una ejecución anterior si el executor cortó el script sin Cleanup.
-    local staleVelocity = hrp:FindFirstChild("XeroSpeedVelocity")
-    if staleVelocity then pcall(function() staleVelocity:Destroy() end) end
-    local staleAttachment = hrp:FindFirstChild("XeroSpeedAttachment")
-    if staleAttachment then pcall(function() staleAttachment:Destroy() end) end
+    -- Limpia restos de una ejecución anterior.
+    local stale = hrp:FindFirstChild("XeroSpeedBodyVelocity")
+    if stale then pcall(function() stale:Destroy() end) end
 
-    local attachment = Instance.new("Attachment")
-    attachment.Name = "XeroSpeedAttachment"
-    attachment.Parent = hrp
+    local actuator = Instance.new("BodyVelocity")
+    actuator.Name = "XeroSpeedBodyVelocity"
+    actuator.P = 4000
+    actuator.MaxForce = Vector3_new(0, 0, 0)
+    actuator.Velocity = Vector3_new(0, 0, 0)
+    actuator.Parent = hrp
 
-    local velocity = Instance.new("LinearVelocity")
-    velocity.Name = "XeroSpeedVelocity"
-    velocity.Attachment0 = attachment
-    velocity.RelativeTo = Enum.ActuatorRelativeTo.World
-    velocity.VelocityConstraintMode = Enum.VelocityConstraintMode.Plane
-    velocity.PrimaryTangentAxis = Vector3_new(1, 0, 0)
-    velocity.SecondaryTangentAxis = Vector3_new(0, 0, 1)
-    velocity.PlaneVelocity = Vector2_new(0, 0)
-    velocity.ForceLimitsEnabled = false
-    velocity.Enabled = false
-    velocity.Parent = hrp
-
-    walkSpeedAttachment = attachment
-    walkSpeedVelocity = velocity
+    walkSpeedBodyVelocity = actuator
     walkSpeedRoot = hrp
-    return velocity
+    return actuator
 end
 
 local function stopWalkSpeedLoop()
@@ -15352,7 +15336,7 @@ local function stopWalkSpeedLoop()
         runtime.PruneConnections()
     end
     walkSpeedCurrentExtra = 0
-    DestroyWalkSpeedActuator()
+    destroyWalkSpeedActuator()
 end
 
 local function approachSpeed(current, target, maxDelta)
@@ -15389,7 +15373,7 @@ local function ensureWalkSpeedLoop()
             return
         end
 
-        -- WalkSpeed sólo se LEE. El juego conserva sus propiedades y estados normales.
+        -- WalkSpeed sólo se lee; no se modifica ninguna propiedad de locomoción del Humanoid.
         local nativeSpeed = tonumber(hum.WalkSpeed) or 0
         if nativeSpeed <= 0 or hum.Sit or hum.FloorMaterial == Enum.Material.Air then
             disableWalkSpeedActuator(true)
@@ -15419,15 +15403,16 @@ local function ensureWalkSpeedLoop()
 
         horizontal = horizontal / magnitude
         local targetHorizontalSpeed = nativeSpeed + walkSpeedCurrentExtra
-        local velocity = ensureWalkSpeedActuator(hrp)
-        if not velocity then return end
+        local actuator = ensureWalkSpeedActuator(hrp)
+        if not actuator then return end
 
-        -- Plane mode sólo controla X/Z; gravedad/salto siguen totalmente libres en Y.
-        velocity.PlaneVelocity = Vector2_new(
+        -- MaxForce.Y = 0: BodyVelocity sólo empuja X/Z y deja salto/gravedad intactos.
+        actuator.MaxForce = Vector3_new(100000, 0, 100000)
+        actuator.Velocity = Vector3_new(
             horizontal.X * targetHorizontalSpeed,
+            0,
             horizontal.Z * targetHorizontalSpeed
         )
-        velocity.Enabled = true
     end))
 end
 
@@ -15448,7 +15433,6 @@ runtime.WalkSpeedCleanup = function()
     stopWalkSpeedLoop()
 end
 
--- Cada Character empieza limpio para no arrastrar fuerzas entre rondas/respawns.
 runtime.Track(player.CharacterAdded:Connect(function()
     walkSpeedValue = 16
     stopWalkSpeedLoop()

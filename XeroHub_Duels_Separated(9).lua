@@ -5324,11 +5324,28 @@ function runtime.ApplyAppearanceAccessory(key, char)
 
     runtime.Appearance.ActiveAccessories[key] = accessory
 
+    -- XERO_SYNC_LIMITED_ATTACH:
+    -- Humanoid:AddAccessory puede parentar el Accessory antes de crear AccessoryWeld.
+    -- Si esperamos al defer, durante respawn existe una carrera donde el limited queda
+    -- creado pero todavía no visible. Intentamos cerrar el attach EN ESTE MISMO turno.
+    local attachedNow = runtime.ApplyAppearanceOffsetToInstance(key, accessory, true)
+    if not attachedNow then
+        runtime.Appearance.AttachmentCache[char] = nil
+        pcall(function() manualAttachAppearanceAccessory(char, accessory) end)
+        runtime.Appearance.AccessoryWeld[accessory] = nil
+        attachedNow = runtime.ApplyAppearanceOffsetToInstance(key, accessory, true)
+    end
+
+    -- Roblox todavía puede reemplazar attachments unos frames después. Esta segunda
+    -- pasada es barata y sólo actúa sobre ESTE accessory; no escanea todo el avatar.
     task.defer(function()
         if not runtime.Alive or accessory.Parent ~= char then return end
-        -- Si AddAccessory todavía no generó weld, ApplyAppearanceOffset intenta
-        -- adjuntarlo manualmente usando los attachments que ya hayan aparecido.
-        runtime.ApplyAppearanceOffsetToInstance(key, accessory, true)
+        if not runtime.ApplyAppearanceOffsetToInstance(key, accessory, true) then
+            runtime.Appearance.AttachmentCache[char] = nil
+            pcall(function() manualAttachAppearanceAccessory(char, accessory) end)
+            runtime.Appearance.AccessoryWeld[accessory] = nil
+            runtime.ApplyAppearanceOffsetToInstance(key, accessory, true)
+        end
         runtime.EnforceBodyAppearance(char)
     end)
     return true
@@ -5495,6 +5512,77 @@ function runtime.EnsureAppearanceAccessories(char)
     end
 
     runtime.EnforceBodyAppearance(char)
+end
+
+-- Comprueba que el limited no sólo exista, sino que ya tenga un weld válido hacia
+-- una pieza del Character actual. "Parent == char" por sí solo no significa visible.
+function runtime.IsAppearanceAccessoryReady(key, char)
+    char = char or player.Character
+    if not char then return false end
+
+    local accessory = runtime.Appearance.ActiveAccessories[key]
+    if not accessory or accessory.Parent ~= char then
+        for _, child in ipairs(char:GetChildren()) do
+            if child:IsA("Accoutrement") and child:GetAttribute("iLunXAppearanceKey") == key then
+                accessory = child
+                runtime.Appearance.ActiveAccessories[key] = child
+                break
+            end
+        end
+    end
+    if not accessory or accessory.Parent ~= char then return false end
+
+    local handle = accessory:FindFirstChild("Handle")
+    local weld = runtime.FindAppearanceWeld(accessory)
+    if not handle or not handle:IsA("BasePart") or not weld or not weld.Parent then return false end
+    if weld.Part0 ~= handle or not weld.Part1 or not weld.Part1:IsDescendantOf(char) then return false end
+    return true
+end
+
+-- XERO_LIMITED_RESPAWN_SETTLE:
+-- Micro-guardia dedicada a limiteds. NO espera el freeze de 4.5-7 s del clon; sólo
+-- trabaja durante la pequeña ventana en la que Roblox va agregando Head/attachments.
+-- Sale inmediatamente en cuanto todos los limiteds activos tienen weld válido.
+function runtime.FastEnsureAppearanceAccessories(char, generation, maxDuration)
+    char = char or player.Character
+    if not char or not char.Parent or not hasEnabledAppearanceAccessory() then return true end
+
+    local deadline = os.clock() + (tonumber(maxDuration) or 0.9)
+    local pass = 0
+
+    repeat
+        if not runtime.Alive or char ~= player.Character or not char.Parent then return false end
+        if generation and generation ~= runtime.Appearance.RespawnGeneration then return false end
+
+        pass += 1
+        local allReady = true
+        for _, key in ipairs(runtime.AppearanceOrder) do
+            local asset = runtime.AppearanceCatalog[key]
+            if asset and asset.Kind == "Accessory" and runtime.Appearance.Enabled[key] then
+                if not runtime.IsAppearanceAccessoryReady(key, char) then
+                    runtime.EnsureAppearanceAccessoryKey(key, char)
+                end
+                if not runtime.IsAppearanceAccessoryReady(key, char) then
+                    allReady = false
+                end
+            end
+        end
+
+        if allReady then
+            runtime.EnforceBodyAppearance(char)
+            return true
+        end
+
+        -- Dos frames inmediatos cubren la mayoría de respawns. Después bajamos
+        -- frecuencia para no convertir una condición rara en trabajo por frame.
+        if pass <= 2 then
+            RunService.Heartbeat:Wait()
+        else
+            task.wait(math.min(0.025 * pass, 0.10))
+        end
+    until os.clock() >= deadline
+
+    return false
 end
 
 -- ==========================================
@@ -7571,8 +7659,23 @@ function runtime.BindAppearanceAccessoryGuard(char, generation)
         runtime.Appearance.AccessoryGuardPending = true
 
         task.spawn(function()
-            -- Si el lobby limpia la apariencia justo durante un handoff del clon,
-            -- no perdemos el evento: esperamos a que termine y reponemos todo.
+            -- LIMITEDS primero: son una capa independiente del overlay. Antes este guard
+            -- podía esperar hasta 2.5 s a cloneState.Applying y por eso el limited a veces
+            -- aparecía tarde aun cuando su attachment ya estaba disponible.
+            if not runtime.Alive or char ~= player.Character or not char.Parent then
+                runtime.Appearance.AccessoryGuardPending = false
+                return
+            end
+            if generation and generation ~= runtime.Appearance.RespawnGeneration then
+                runtime.Appearance.AccessoryGuardPending = false
+                return
+            end
+
+            runtime.FastEnsureAppearanceAccessories(char, generation, 0.45)
+            runtime.EnforceBodyAppearance(char)
+            runtime.ApplyHairRemoval(char)
+
+            -- Sólo la sincronización DEL CLON espera a que termine un handoff.
             local deadline = os.clock() + 2.5
             while runtime.Alive
                 and char == player.Character
@@ -7594,9 +7697,6 @@ function runtime.BindAppearanceAccessoryGuard(char, generation)
                 task.delay(0.12, queueEnsure)
                 return
             end
-
-            runtime.Appearance.AttachmentCache[char] = nil
-            runtime.ReapplyAppearanceLayers(char)
 
             if cloneState and cloneState.Active and cloneState.Overlay and cloneState.Overlay.Parent then
                 runtime.AvatarCloneHideBase(char)
@@ -7620,7 +7720,12 @@ function runtime.BindAppearanceAccessoryGuard(char, generation)
     -- attachment nuevo hacemos una única comprobación en el siguiente frame.
     table_insert(runtime.Appearance.AccessoryGuardConnections, char.DescendantAdded:Connect(function(obj)
         if obj:IsA("Attachment") and hasEnabledAppearanceAccessory() then
-            runtime.Appearance.AttachmentCache[char] = nil
+            -- Actualización incremental: evita reconstruir GetDescendants() de TODO el
+            -- Character cada vez que aparece un attachment durante el respawn.
+            local cache = runtime.Appearance.AttachmentCache[char]
+            if cache and obj.Parent and obj.Parent:IsA("BasePart") then
+                cache[obj.Name] = obj
+            end
             queueEnsure()
         elseif obj:IsA("BasePart")
             and (obj.Name == "Head"
@@ -7869,6 +7974,7 @@ function runtime.FastRestoreAppearanceOnRespawn(char, generation)
     -- estabilizar el overlay del clon. Los reaplicamos en cuanto existen Head/attachments;
     -- el apply definitivo del clon podrá repetir esta pasada después como protección.
     runtime.ReapplyAppearanceLayers(char)
+    runtime.FastEnsureAppearanceAccessories(char, generation, 0.9)
 
     local cloneState = runtime.Appearance.AvatarClone
     if cloneState.Active
@@ -8151,6 +8257,9 @@ pcall(function()
 
         task.defer(function()
             if runtime.Alive and char.Parent and generation == runtime.Appearance.RespawnGeneration then
+                -- CharacterAppearanceLoaded puede reemplazar attachments aunque el limited
+                -- ya hubiera aparecido en CharacterAdded. Revalidamos sólo sus welds.
+                runtime.FastEnsureAppearanceAccessories(char, generation, 0.45)
                 local cloneState = runtime.Appearance.AvatarClone
                 if cloneState.Active
                     and cloneState.KeepOnRespawn

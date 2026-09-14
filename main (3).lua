@@ -2,7 +2,7 @@
     XeroHub UI / Obsidian 2.9 — polish + compact sliders + open-button ghost
     Creator: Kev
     Native Roblox interface. No WindUI runtime, icon downloads or render loops.
-    Compatible with the control API used by the supplied DUELS hub.
+    Compatible with the control API used by XeroHub game scripts.
     Usage: local UI = require(module); local Window = UI:CreateWindow({...})
     GuiButton input: https://create.roblox.com/docs/reference/engine/classes/GuiButton
 ]]
@@ -98,7 +98,7 @@ local function downloadBackgroundAsset()
     if okAsset and type(asset) == "string" and asset ~= "" then return asset end
     return nil
 end
-local Nox = { Version = "2.9.0", Brand = "XeroHub", Creator = "Kev", UIScale = 1 }
+local Nox = { Version = "2.9.0", Brand = "XeroHub", SupportsGameLabels = true, Creator = "Kev", UIScale = 1 }
 local C = {
     Window = Color3.fromRGB(9,9,9), Panel = Color3.fromRGB(14,14,14),
     Row = Color3.fromRGB(20,20,20), Field = Color3.fromRGB(11,11,11),
@@ -240,7 +240,7 @@ local function mark(parent, size, color)
 
     return holder
 end
-local function icon(parent, kind)
+local function icon(parent, kind, numberOverride)
     local h = new("Frame", {BackgroundTransparency=1, Size=UDim2.fromOffset(20,20)}, parent)
     if kind == "close" then line(h,3,9,14,1,45); line(h,3,9,14,1,-45)
     elseif kind == "menu" then for _,y in ipairs({5,10,15}) do line(h,3,y,14,1) end
@@ -251,7 +251,7 @@ local function icon(parent, kind)
     else
         local symbols = {Inicio="01",Aimbot="02",["Kill All"]="03",Visuales="04",Movimiento="05",
             AutoFarm="06",["Gráficos"]="07",Animaciones="08",Apariencia="09",["Generar Armas"]="10",["Configuración"]="11",["Créditos"]="12"}
-        label(h, symbols[kind] or "·", 10, C.Muted, {Font=Enum.Font.Code,TextXAlignment=Enum.TextXAlignment.Center})
+        label(h, numberOverride or symbols[kind] or "·", 10, C.Muted, {Font=Enum.Font.Code,TextXAlignment=Enum.TextXAlignment.Center})
     end
     return h
 end
@@ -930,7 +930,7 @@ function Nox:CreateWindow(options)
     if env.__NOX_UI and env.__NOX_UI.Destroy then pcall(function() env.__NOX_UI:Destroy() end) end
     local w={_connections={},_popupConnections={},_onDestroy={},_onOpen={},_onClose={},Tabs={},
         Groups={},Opened=true,Destroyed=false,Compact=false,ToggleKey=o.ToggleKey or Enum.KeyCode.RightShift,
-        Title=plain(o.Title or "XeroHub"),Author=o.Author or "by Kev",UIScale=1,_navOrder=0}
+        Title=plain(o.Title or "XeroHub"),_brandBaseTitle=plain(o.Title or "XeroHub"),Author=o.Author or "by Kev",UIScale=1,_navOrder=0}
     self.Window=w; env.__NOX_UI=w
     local gui=new("ScreenGui",{Name="XeroHubUI",ResetOnSpawn=false,IgnoreGuiInset=true,
         DisplayOrder=2147483000,ZIndexBehavior=Enum.ZIndexBehavior.Sibling},parent)
@@ -1037,11 +1037,13 @@ function Nox:CreateWindow(options)
         Position=UDim2.fromOffset(50,9),Size=UDim2.fromOffset(290,24)},top)
     -- El título y el contador se posicionan manualmente para mantenerlos juntos
     -- en cualquier ancho; un UIListLayout con AutomaticSize dejaba huecos raros.
-    local brand=label(titleCluster,"XERO | DUELS",16,C.Text,{Position=UDim2.fromOffset(0,0),
+    local brand=label(titleCluster,w._brandBaseTitle,16,C.Text,{Position=UDim2.fromOffset(0,0),
         Size=UDim2.fromOffset(120,22),Font=BOLD})
     local statusLabel=label(titleCluster,"-- activos",12,C.Muted,{Position=UDim2.fromOffset(126,0),
         Size=UDim2.fromOffset(96,22),Font=BOLD})
-    local subtitle=label(top,"X E R O  /  "..tostring(o.Subtitle or "DUELS"),8,C.Faint,{Position=UDim2.fromOffset(52,37),Size=UDim2.fromOffset(180,14)})
+    local inferredGameLabel=w._brandBaseTitle:match("|%s*(.-)%s*$")
+    local subtitleGame=tostring(o.Subtitle or inferredGameLabel or "XERO")
+    local subtitle=label(top,"X E R O  /  "..subtitleGame,8,C.Faint,{Position=UDim2.fromOffset(52,37),Size=UDim2.fromOffset(180,14)})
     local author=label(top,w.Author,11,C.Muted,{Position=UDim2.new(1,-248,0,27),Size=UDim2.fromOffset(104,20),TextXAlignment=Enum.TextXAlignment.Right})
     local controls=new("Frame",{BackgroundTransparency=1,Position=UDim2.new(1,-76,0,8),Size=UDim2.fromOffset(64,28)},top)
     -- Navegación siempre visible: ya no existe el botón hamburguesa/drawer.
@@ -1289,7 +1291,7 @@ function Nox:CreateWindow(options)
         local clusterWidth=math.max(82,clusterRight-clusterX-4)
         titleCluster.Position=UDim2.fromOffset(clusterX,phone and 10 or 10)
         titleCluster.Size=UDim2.fromOffset(clusterWidth,24)
-        brand.Text=(tiny and "XERO") or "XERO | DUELS"
+        brand.Text=(tiny and "XERO") or (w._brandBaseTitle or "XeroHub")
         brand.TextSize=phone and 13 or 15
         statusLabel.TextSize=phone and 10 or 11
 
@@ -1466,7 +1468,7 @@ function Nox:CreateWindow(options)
         round(navButton,8)
         local selectionBar=new("Frame",{Name="Selected",Position=UDim2.fromOffset(1,5),Size=UDim2.fromOffset(2,18),
             BackgroundColor3=C.Text,BackgroundTransparency=0,Visible=false,ZIndex=3},navButton); round(selectionBar,2)
-        local glyph=icon(navButton,title); glyph.Position=UDim2.fromOffset(6,4)
+        local glyph=icon(navButton,title,string.format("%02d",index)); glyph.Position=UDim2.fromOffset(6,4)
         local titleLabel=label(navButton,title,10,C.Muted,{Position=UDim2.fromOffset(26,0),Size=UDim2.new(1,-30,1,0),Font=MEDIUM,TextTruncate=Enum.TextTruncate.AtEnd})
         tab.Page,tab.Content,tab.Empty=page,list,empty; tab.NavButton,tab.NavTitle=navButton,titleLabel
         tab.Number=glyph:FindFirstChildOfClass("TextLabel"); tab.SelectionBar=selectionBar
@@ -1507,10 +1509,20 @@ function Nox:CreateWindow(options)
     function w:SetTitle(title)
         self.Title=plain(title)
         footer.Text=self.Title
+
         local active=self.Title:match("(%d+)%s+activos")
+        local baseTitle=self.Title:gsub("%s*[·|%-]?%s*%d+%s+activos%s*$","")
+        if baseTitle=="" then baseTitle="XeroHub" end
+        self._brandBaseTitle=baseTitle
+
         if active then
             statusLabel.Text=active.." activos"
-            if self._fit then self._fit(true) end
+        end
+
+        if self._fit then
+            self._fit(true)
+        else
+            brand.Text=self._brandBaseTitle
         end
         return self
     end

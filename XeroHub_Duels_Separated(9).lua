@@ -194,6 +194,119 @@ local runtime = {
 runtime.NextConnectionPruneAt = 96
 
 
+-- ==========================================
+-- XERO TEST PROFILER · bajo overhead
+-- Sólo toma tiempos cuando está activado. Estado en runtime para no gastar
+-- locals persistentes del chunk principal (importante al ofuscar con Moonveil).
+-- ==========================================
+runtime.Profiler = {
+    Enabled = false,
+    Samples = {},
+    Labels = {},
+    DisplayOrder = {"Heartbeat", "Hitbox", "ESP", "AutoShoot", "SilentAim", "ESP2D", "ClonePose", "CloneMask"},
+    DisplayNames = {
+        Heartbeat = "Master",
+        Hitbox = "Hitbox",
+        ESP = "ESP tags",
+        AutoShoot = "AutoShoot",
+        SilentAim = "SilentAim",
+        ESP2D = "ESP 2D",
+        ClonePose = "Clone pose",
+        CloneMask = "Clone mask",
+    },
+    RootSamples = {Heartbeat = true, ESP2D = true, ClonePose = true, CloneMask = true},
+    Gui = nil,
+    SummaryLabel = nil,
+    Connection = nil,
+    WindowElapsed = 0,
+    WindowSeconds = 0.75,
+}
+
+function runtime.ProfileReset()
+    table.clear(runtime.Profiler.Samples)
+    runtime.Profiler.WindowElapsed = 0
+end
+
+function runtime.ProfileAdd(name, elapsed)
+    if not runtime.Profiler.Enabled or not elapsed or elapsed < 0 then return end
+    local sample = runtime.Profiler.Samples[name]
+    if not sample then
+        sample = {Sum = 0, Peak = 0, Count = 0}
+        runtime.Profiler.Samples[name] = sample
+    end
+    sample.Sum = sample.Sum + elapsed
+    sample.Count = sample.Count + 1
+    if elapsed > sample.Peak then sample.Peak = elapsed end
+end
+
+function runtime.ProfileFlushUI(windowSeconds)
+    if not runtime.Profiler.Enabled then return end
+    local seconds = math.max(tonumber(windowSeconds) or runtime.Profiler.WindowSeconds, 0.001)
+    local totalRootSeconds = 0
+    local worstName, worstPeak = nil, 0
+
+    for i = 1, #runtime.Profiler.DisplayOrder do
+        local name = runtime.Profiler.DisplayOrder[i]
+        local sample = runtime.Profiler.Samples[name]
+        local label = runtime.Profiler.Labels[name]
+        local sum = sample and sample.Sum or 0
+        local count = sample and sample.Count or 0
+        local peak = sample and sample.Peak or 0
+        local avgMs = count > 0 and (sum / count) * 1000 or 0
+        local peakMs = peak * 1000
+        local hz = count / seconds
+
+        if runtime.Profiler.RootSamples[name] then totalRootSeconds = totalRootSeconds + sum end
+        if peak > worstPeak then
+            worstPeak = peak
+            worstName = name
+        end
+
+        if label then
+            label.Text = string.format("%.3f / %.3f ms · %.1f/s", avgMs, peakMs, hz)
+        end
+    end
+
+    if runtime.Profiler.SummaryLabel then
+        local measuredMsPerSecond = (totalRootSeconds / seconds) * 1000
+        local worstText = worstName and (runtime.Profiler.DisplayNames[worstName] or worstName) or "--"
+        runtime.Profiler.SummaryLabel.Text = string.format(
+            "CPU medido: %.2f ms/s   ·   pico: %s %.3f ms",
+            measuredMsPerSecond,
+            worstText,
+            worstPeak * 1000
+        )
+    end
+
+    table.clear(runtime.Profiler.Samples)
+end
+
+function runtime.SetProfilerEnabled(enabled)
+    enabled = enabled == true
+    if runtime.Profiler.Enabled == enabled then return end
+    runtime.Profiler.Enabled = enabled
+    runtime.ProfileReset()
+
+    if runtime.Profiler.Gui then runtime.Profiler.Gui.Visible = enabled end
+
+    if runtime.Profiler.Connection then
+        pcall(function() runtime.Profiler.Connection:Disconnect() end)
+        runtime.Profiler.Connection = nil
+        runtime.PruneConnections()
+    end
+
+    if not enabled then return end
+
+    runtime.Profiler.Connection = runtime.Track(RunService.Heartbeat:Connect(function(dt)
+        if not runtime.Profiler.Enabled then return end
+        runtime.Profiler.WindowElapsed = runtime.Profiler.WindowElapsed + dt
+        if runtime.Profiler.WindowElapsed >= runtime.Profiler.WindowSeconds then
+            local elapsed = runtime.Profiler.WindowElapsed
+            runtime.Profiler.WindowElapsed = 0
+            runtime.ProfileFlushUI(elapsed)
+        end
+    end))
+end
 
 function runtime.PruneConnections()
     local list = runtime.Connections
@@ -262,6 +375,13 @@ end
 function runtime.Cleanup()
     if not runtime.Alive then return end
     runtime.Alive = false
+    if runtime.Profiler then
+        runtime.Profiler.Enabled = false
+        if runtime.Profiler.Connection then
+            pcall(function() runtime.Profiler.Connection:Disconnect() end)
+            runtime.Profiler.Connection = nil
+        end
+    end
     if runtime.GraphicsCleanup then pcall(runtime.GraphicsCleanup) end
     if runtime.SoundCleanup then pcall(runtime.SoundCleanup) end
 
@@ -910,6 +1030,8 @@ function showBottomMessage(text, options)
 end
 
 
+
+
 local MainSection = Window:Section({ Title = "PRINCIPAL", Opened = true })
 local TrollSection = Window:Section({ Title = "PERSONAL", Opened = true })
 
@@ -966,6 +1088,12 @@ for _, tab in pairs(Tabs) do
         end
     end)
 end
+
+
+
+
+
+
 
 
 -- ==========================================
@@ -2967,6 +3095,107 @@ runtime.Track(RunService.RenderStepped:Connect(function(deltaTime)
         fpsFrames, statsElapsed = 0, 0
     end
 end))
+end
+
+-- Profiler de pruebas. Se mantiene oculto y sin conexión propia cuando está OFF.
+do
+    local panel = Instance.new("Frame")
+    panel.Name = "XeroProfiler"
+    panel.Size = UDim2.fromOffset(292, 246)
+    panel.AnchorPoint = Vector2.new(1, 0)
+    panel.Position = UDim2.new(1, -12, 0, 64)
+    panel.BackgroundColor3 = Color3.fromRGB(10, 10, 10)
+    panel.BackgroundTransparency = 0.035
+    panel.BorderSizePixel = 0
+    panel.Visible = false
+    panel.ZIndex = 120
+    panel.Parent = screenGui
+    Instance.new("UICorner", panel).CornerRadius = UDim.new(0, 12)
+
+    local stroke = Instance.new("UIStroke", panel)
+    stroke.Color = Color3.fromRGB(62, 62, 62)
+    stroke.Thickness = 1
+
+    local title = Instance.new("TextLabel", panel)
+    title.Size = UDim2.new(1, -20, 0, 20)
+    title.Position = UDim2.fromOffset(10, 7)
+    title.BackgroundTransparency = 1
+    title.Text = "XERO · PROFILER"
+    title.TextColor3 = Color3.fromRGB(242, 242, 242)
+    title.Font = Enum.Font.GothamBold
+    title.TextSize = 10
+    title.TextXAlignment = Enum.TextXAlignment.Left
+    title.ZIndex = 121
+
+    local hint = Instance.new("TextLabel", panel)
+    hint.Size = UDim2.new(1, -20, 0, 16)
+    hint.Position = UDim2.fromOffset(10, 25)
+    hint.BackgroundTransparency = 1
+    hint.Text = "PROM / PICO · llamadas por segundo"
+    hint.TextColor3 = Color3.fromRGB(125, 125, 125)
+    hint.Font = Enum.Font.Gotham
+    hint.TextSize = 8
+    hint.TextXAlignment = Enum.TextXAlignment.Left
+    hint.ZIndex = 121
+
+    for i = 1, #runtime.Profiler.DisplayOrder do
+        local name = runtime.Profiler.DisplayOrder[i]
+        local y = 43 + (i - 1) * 22
+
+        local keyLabel = Instance.new("TextLabel", panel)
+        keyLabel.Size = UDim2.fromOffset(76, 18)
+        keyLabel.Position = UDim2.fromOffset(10, y)
+        keyLabel.BackgroundTransparency = 1
+        keyLabel.Text = runtime.Profiler.DisplayNames[name] or name
+        keyLabel.TextColor3 = Color3.fromRGB(165, 165, 165)
+        keyLabel.Font = Enum.Font.GothamMedium
+        keyLabel.TextSize = 9
+        keyLabel.TextXAlignment = Enum.TextXAlignment.Left
+        keyLabel.ZIndex = 121
+
+        local valueLabel = Instance.new("TextLabel", panel)
+        valueLabel.Size = UDim2.new(1, -94, 0, 18)
+        valueLabel.Position = UDim2.fromOffset(86, y)
+        valueLabel.BackgroundTransparency = 1
+        valueLabel.Text = "0.000 / 0.000 ms · 0.0/s"
+        valueLabel.TextColor3 = Color3.fromRGB(235, 235, 235)
+        valueLabel.Font = Enum.Font.Code
+        valueLabel.TextSize = 9
+        valueLabel.TextXAlignment = Enum.TextXAlignment.Right
+        valueLabel.ZIndex = 121
+        runtime.Profiler.Labels[name] = valueLabel
+    end
+
+    local summary = Instance.new("TextLabel", panel)
+    summary.Size = UDim2.new(1, -20, 0, 18)
+    summary.Position = UDim2.new(0, 10, 1, -23)
+    summary.BackgroundTransparency = 1
+    summary.Text = "CPU medido: 0.00 ms/s"
+    summary.TextColor3 = Color3.fromRGB(205, 205, 205)
+    summary.Font = Enum.Font.GothamMedium
+    summary.TextSize = 8
+    summary.TextXAlignment = Enum.TextXAlignment.Left
+    summary.ZIndex = 121
+
+    runtime.Profiler.Gui = panel
+    runtime.Profiler.SummaryLabel = summary
+
+    Tabs.Inicio:Toggle({
+        Title = "Profiler XeroHub (pruebas)",
+        Desc = "Mide promedio/pico de cada módulo. Actívalo sólo para diagnosticar lag.",
+        Value = false,
+        Callback = function(Value)
+            runtime.SetProfilerEnabled(Value)
+        end,
+    })
+
+    Tabs.Inicio:Button({
+        Title = "Reiniciar métricas del profiler",
+        Desc = "Limpia la ventana actual de medición.",
+        Callback = function()
+            runtime.ProfileReset()
+        end,
+    })
 end
 
 local fpsBoostEnabled = false
@@ -6089,11 +6318,13 @@ function runtime.AvatarCloneBindNativeTransparency(char, overlay)
                     or state.Overlay ~= overlay or not overlay.Parent then
                     return
                 end
+                local profileStart = runtime.Profiler.Enabled and os.clock() or 0
                 runtime.AvatarCloneSyncNativeTransparency(char, overlay, dt, boundHumanoid)
                 -- CameraModule sólo reescribe LocalTransparencyModifier de BaseParts.
                 -- Texturas/efectos ya quedan protegidos por eventos y no necesitan un
                 -- recorrido completo cada frame.
                 runtime.AvatarCloneEnforceBaseHiddenParts(char)
+                if profileStart ~= 0 then runtime.ProfileAdd("CloneMask", os.clock() - profileStart) end
             end
         )
     end)
@@ -6822,6 +7053,7 @@ function runtime.AvatarCloneBuildMotorSync(char, overlay)
             return
         end
 
+        local profileStart = runtime.Profiler.Enabled and os.clock() or 0
 
         -- El root visual sigue exactamente nuestro movimiento global.
         -- XERO_PERF_CLONE_SYNC: las body parts del overlay están ancladas; sus
@@ -6887,6 +7119,7 @@ function runtime.AvatarCloneBuildMotorSync(char, overlay)
             runtime.AvatarCloneEnforceBaseHidden(char)
         end
 
+        if profileStart ~= 0 then runtime.ProfileAdd("ClonePose", os.clock() - profileStart) end
     end
 
     -- El juego puede terminar su pose tarde en móvil; RenderStepped toma la
@@ -11340,15 +11573,6 @@ local mState = {
     hbBlockedColor = Color3_fromRGB(255, 50, 50),
     hbByChar = setmetatable({}, {__mode = "k"}),
     hbAdornment = setmetatable({}, {__mode = "k"}),
-    -- XERO_SPIKE_GUARD: trabajo costoso de Instance creation/destruction se reparte
-    -- entre Heartbeats; el efecto se neutraliza inmediatamente al limpiar.
-    hbLegacyScanned = setmetatable({}, {__mode = "k"}),
-    hbCreateQueue = {},
-    hbCreatePending = setmetatable({}, {__mode = "k"}),
-    hbCleanupQueue = {},
-    hbCleanupPending = setmetatable({}, {__mode = "k"}),
-    hbSpikeWorkerRunning = false,
-    autoShootHeavyDue = false,
     charCore = setmetatable({}, {__mode = "k"}),
     enemySnapshot = {},
     enemySnapshotCount = 0,
@@ -11522,153 +11746,9 @@ end
 local enLobby = false
 local timerLobby = 0
 
--- ==========================================
--- XERO_SPIKE_GUARD · amortización de picos de Hitbox
--- ==========================================
--- Sólo escaneamos basura legacy una vez por Character. Antes, un enemigo inválido
--- sin hitbox cacheada podía provocar GetChildren() cada 0.15 s.
-function runtime.GetCachedHitbox(char)
-    if not char then return nil end
-    local cached = mState.hbByChar[char]
-    if cached and cached.Parent == char then return cached end
-    mState.hbByChar[char] = nil
-
-    if mState.hbLegacyScanned[char] then return nil end
-    mState.hbLegacyScanned[char] = true
-    for _, child in ipairs(char:GetChildren()) do
-        if child:GetAttribute("EsAstraHitbox") then
-            mState.hbByChar[char] = child
-            return child
-        end
-    end
-    return nil
-end
-
-function runtime.QueueHitboxDestroy(hitbox)
-    if not hitbox or mState.hbCleanupPending[hitbox] then return end
-    mState.hbCleanupPending[hitbox] = true
-
-    -- La hitbox deja de afectar gameplay AHORA; Destroy puede esperar otro frame.
-    pcall(function()
-        local box = mState.hbAdornment[hitbox] or hitbox:FindFirstChild("AstraHitboxBox")
-        if box then box.Visible = false end
-        if hitbox:IsA("BasePart") then
-            hitbox.CanTouch = false
-            hitbox.CanQuery = false
-            hitbox.CanCollide = false
-            hitbox.Transparency = 1
-        end
-    end)
-    mState.hbCleanupQueue[#mState.hbCleanupQueue + 1] = hitbox
-    runtime.EnsureHitboxSpikeWorker()
-end
-
-function runtime.QueueHitboxCreate(targetPlayer, char, hrp)
-    if not targetPlayer or not char or not hrp or mState.hbCreatePending[char] then return end
-    if runtime.GetCachedHitbox(char) then return end
-    mState.hbCreatePending[char] = true
-    mState.hbCreateQueue[#mState.hbCreateQueue + 1] = {Player = targetPlayer, Character = char, HRP = hrp}
-    runtime.EnsureHitboxSpikeWorker()
-end
-
-function runtime.CreateQueuedHitbox(entry)
-    if not entry or not hitboxEnabled or enLobby then return nil end
-    local targetPlayer = entry.Player
-    local char = entry.Character
-    local hrp = entry.HRP
-    if not targetPlayer or targetPlayer.Character ~= char or not char or not char.Parent
-        or not hrp or hrp.Parent ~= char then return nil end
-
-    local core = getCharCore(char)
-    local humanoid = core and core.Humanoid
-    if not humanoid or humanoid.Health <= 0 or not isEnemy(targetPlayer) then return nil end
-
-    local existing = runtime.GetCachedHitbox(char)
-    if existing then return existing end
-
-    local targetSize = Vector3_new(hitboxSize, hitboxSize, hitboxSize)
-    local fakeHitbox = Instance.new("Part")
-    fakeHitbox.Name = "Torso"
-    fakeHitbox:SetAttribute("EsAstraHitbox", true)
-    fakeHitbox.Shape = Enum.PartType.Block
-    fakeHitbox.Size = targetSize
-    fakeHitbox.CFrame = hrp.CFrame
-    fakeHitbox.Massless = true
-    fakeHitbox.CanCollide = false
-    fakeHitbox.Anchored = false
-    fakeHitbox.Transparency = 1
-    fakeHitbox.Parent = char
-
-    local weld = Instance.new("WeldConstraint")
-    weld.Part0 = hrp
-    weld.Part1 = fakeHitbox
-    weld.Parent = fakeHitbox
-
-    local box = Instance.new("BoxHandleAdornment")
-    box.Name = "AstraHitboxBox"
-    box.Adornee = fakeHitbox
-    box.AlwaysOnTop = true
-    box.ZIndex = 5
-    box.Size = targetSize
-    box.Color3 = mState.hbBlockedColor
-    box.Transparency = hitboxInvisible and 1 or (hitboxTransparency or 0.6)
-    box.Visible = not hitboxInvisible
-    box.Parent = fakeHitbox
-
-    mState.hbByChar[char] = fakeHitbox
-    mState.hbAdornment[fakeHitbox] = box
-    return fakeHitbox
-end
-
-function runtime.EnsureHitboxSpikeWorker()
-    if mState.hbSpikeWorkerRunning then return end
-    mState.hbSpikeWorkerRunning = true
-
-    task.spawn(function()
-        while runtime.Alive and (#mState.hbCleanupQueue > 0 or #mState.hbCreateQueue > 0) do
-            RunService.Heartbeat:Wait()
-            if not runtime.Alive then break end
-
-            -- Destrucción: el efecto ya fue neutralizado al encolar. Máximo 2 Instances/frame.
-            for _ = 1, 2 do
-                local index = #mState.hbCleanupQueue
-                if index == 0 then break end
-                local hitbox = mState.hbCleanupQueue[index]
-                mState.hbCleanupQueue[index] = nil
-                mState.hbCleanupPending[hitbox] = nil
-                mState.hbAdornment[hitbox] = nil
-                if hitbox and hitbox.Parent then pcall(function() hitbox:Destroy() end) end
-            end
-
-            -- Creación: una por frame y nunca pegada a un tick pesado de AutoShoot.
-            if #mState.hbCreateQueue > 0 and not mState.autoShootHeavyDue
-                and not ((autoShootEnabled or autoShootCuchilloEnabled) and mState.tAS >= 0.12) then
-                local index = #mState.hbCreateQueue
-                local entry = mState.hbCreateQueue[index]
-                mState.hbCreateQueue[index] = nil
-                if entry and entry.Character then mState.hbCreatePending[entry.Character] = nil end
-                runtime.CreateQueuedHitbox(entry)
-            end
-
-        end
-
-        -- Las entradas que no llegaron a procesarse no deben bloquear una futura ronda.
-        for i = 1, #mState.hbCreateQueue do
-            local entry = mState.hbCreateQueue[i]
-            if entry and entry.Character then mState.hbCreatePending[entry.Character] = nil end
-        end
-        table.clear(mState.hbCreateQueue)
-        table.clear(mState.hbCleanupQueue)
-        mState.hbSpikeWorkerRunning = false
-
-        -- Si entró trabajo justo al salir del while, arranca otro worker.
-        if runtime.Alive and (#mState.hbCleanupQueue > 0 or #mState.hbCreateQueue > 0) then
-            runtime.EnsureHitboxSpikeWorker()
-        end
-    end)
-end
-
 runtime.Track(RunService.Heartbeat:Connect(function(deltaTime)
+    local profileHeartbeatStart = runtime.Profiler.Enabled and os.clock() or 0
+    local profileStart = 0
     -- XERO_PERF_IDLE_HEARTBEAT: con las cuatro familias apagadas no hacemos
     -- cámara, lobby, jugadores ni raycasts. Si alguna quedó activa, permitimos
     -- un último frame para ejecutar su limpieza normal.
@@ -11679,6 +11759,9 @@ runtime.Track(RunService.Heartbeat:Connect(function(deltaTime)
     if not masterFeatureActive and not masterNeedsCleanup then
         mState.tHB, mState.tESP, mState.tAS, mState.tSA = 0, 0, 0, 0
         timerLobby = 1 -- al volver a activar, refresca lobby inmediatamente
+        if profileHeartbeatStart ~= 0 then
+            runtime.ProfileAdd("Heartbeat", os.clock() - profileHeartbeatStart)
+        end
         return
     end
 
@@ -11690,19 +11773,14 @@ runtime.Track(RunService.Heartbeat:Connect(function(deltaTime)
         pcall(function() enLobby = estaEnLobby() end)
     end
 
-    -- AutoShoot tiene prioridad cuando ambas tareas de 0.15 s caen en el mismo frame.
-    -- Hitbox conserva su timer vencido y corre en el Heartbeat siguiente (~1 frame).
-    mState.autoShootHeavyDue = not enLobby
-        and (autoShootEnabled or autoShootCuchilloEnabled)
-        and (mState.tAS + deltaTime >= 0.15)
-
     -- ==========================================
     -- 1. HITBOX (0.15s) - FIX VISUAL + WELD
     -- ==========================================
+    profileStart = (profileHeartbeatStart ~= 0 and (hitboxEnabled or mState.hbAct)) and os.clock() or 0
     if hitboxEnabled then
         mState.hbAct = true
         mState.tHB = mState.tHB + deltaTime
-        if mState.tHB >= 0.15 and not mState.autoShootHeavyDue then
+        if mState.tHB >= 0.15 then
             mState.tHB = 0
             if not enLobby then
                 local myChar = player.Character
@@ -11722,12 +11800,45 @@ runtime.Track(RunService.Heartbeat:Connect(function(deltaTime)
                     local targetHum = enemy.Humanoid
                     
                     if enemy.Alive and enemy.Enemy then
-                        -- 1. Reutiliza el bloque existente. Crear 3-6 Instances de golpe
-                        -- era uno de los picos al empezar ronda; ahora se crea 1 enemigo/frame.
-                        local fakeHitbox = runtime.GetCachedHitbox(targetChar)
+                        -- 1. BUSCAMOS O CREAMOS EL BLOQUE FALSO
+                        local fakeHitbox = mState.hbByChar[targetChar]
+                        if not (fakeHitbox and fakeHitbox.Parent == targetChar) then
+                            fakeHitbox = nil
+                            for _, child in ipairs(targetChar:GetChildren()) do
+                                if child:GetAttribute("EsAstraHitbox") then
+                                    fakeHitbox = child
+                                    break
+                                end
+                            end
+                            mState.hbByChar[targetChar] = fakeHitbox
+                        end
+
                         if not fakeHitbox then
-                            runtime.QueueHitboxCreate(v, targetChar, hrp)
-                            continue
+                            fakeHitbox = Instance.new("Part")
+                            fakeHitbox.Name = "Torso" -- 🔥 EL TRUCO: El juego lo acepta como cuerpo válido y el cuchillo NO rebota
+                            fakeHitbox:SetAttribute("EsAstraHitbox", true)
+                            fakeHitbox.Shape = Enum.PartType.Block
+                            fakeHitbox.Size = targetSize
+                            fakeHitbox.CFrame = hrp.CFrame 
+                            fakeHitbox.Massless = true
+                            fakeHitbox.CanCollide = false
+                            fakeHitbox.Anchored = false
+                            fakeHitbox.Transparency = 1 
+                            fakeHitbox.Parent = targetChar 
+                            
+                            local weld = Instance.new("WeldConstraint")
+                            weld.Part0 = hrp
+                            weld.Part1 = fakeHitbox
+                            weld.Parent = fakeHitbox
+                            
+                            local box = Instance.new("BoxHandleAdornment") 
+                            box.Name = "AstraHitboxBox" 
+                            box.Adornee = fakeHitbox 
+                            box.AlwaysOnTop = true 
+                            box.ZIndex = 5 
+                            box.Parent = fakeHitbox
+                            mState.hbByChar[targetChar] = fakeHitbox
+                            mState.hbAdornment[fakeHitbox] = box
                         end
                         
                         -- 2. ACTUALIZAMOS TAMAÑO FÍSICO
@@ -11764,20 +11875,30 @@ runtime.Track(RunService.Heartbeat:Connect(function(deltaTime)
                             if box.Visible ~= not hitboxInvisible then box.Visible = not hitboxInvisible end
                         end -- 🔥 AQUÍ ESTÁ EL END QUE FALTABA
                     elseif targetChar then
-                        -- Neutraliza instantáneo y reparte Destroy entre frames.
-                        local cachedHitbox = runtime.GetCachedHitbox(targetChar)
-                        if cachedHitbox then runtime.QueueHitboxDestroy(cachedHitbox) end
+                        -- Limpieza automática con caché; el escaneo queda sólo como fallback legacy.
+                        local cachedHitbox = mState.hbByChar[targetChar]
+                        if cachedHitbox and cachedHitbox.Parent then cachedHitbox:Destroy() end
                         mState.hbByChar[targetChar] = nil
+                        if not cachedHitbox then
+                            for _, child in ipairs(targetChar:GetChildren()) do
+                                if child:GetAttribute("EsAstraHitbox") then child:Destroy() end
+                            end
+                        end
                     end
                 end
             else
-                -- LOBBY: desactiva todas inmediatamente; Destroy queda amortizado.
+                -- 🔥 LIMPIEZA LOBBY: BORRAMOS LAS HITBOXES QUE QUEDARON PEGADAS
                 for i = 1, #listaJugadores do
                     local v = listaJugadores[i]
                     if v ~= player and v.Character then
-                        local cachedHitbox = runtime.GetCachedHitbox(v.Character)
-                        if cachedHitbox then runtime.QueueHitboxDestroy(cachedHitbox) end
+                        local cachedHitbox = mState.hbByChar[v.Character]
+                        if cachedHitbox and cachedHitbox.Parent then cachedHitbox:Destroy() end
                         mState.hbByChar[v.Character] = nil
+                        if not cachedHitbox then
+                            for _, child in ipairs(v.Character:GetChildren()) do
+                                if child:GetAttribute("EsAstraHitbox") then child:Destroy() end
+                            end
+                        end
                     end
                 end
             end
@@ -11785,13 +11906,18 @@ runtime.Track(RunService.Heartbeat:Connect(function(deltaTime)
     elseif mState.hbAct then
         mState.hbAct = false
         mState.tHB = 0
-        -- LIMPIEZA: el efecto se apaga ya; las destrucciones se reparten.
+        -- LIMPIEZA: Destruimos los bloques falsos cuando se apaga el Hitbox
         for i = 1, #listaJugadores do
             local v = listaJugadores[i]
             if v ~= player and v.Character then
-                local cachedHitbox = runtime.GetCachedHitbox(v.Character)
-                if cachedHitbox then runtime.QueueHitboxDestroy(cachedHitbox) end
+                local cachedHitbox = mState.hbByChar[v.Character]
+                if cachedHitbox and cachedHitbox.Parent then cachedHitbox:Destroy() end
                 mState.hbByChar[v.Character] = nil
+                if not cachedHitbox then
+                    for _, child in ipairs(v.Character:GetChildren()) do
+                        if child:GetAttribute("EsAstraHitbox") then child:Destroy() end
+                    end
+                end
                 
                 -- Limpieza por si quedó basura del script anterior
                 local hrp = v.Character:FindFirstChild("HumanoidRootPart")
@@ -11804,10 +11930,12 @@ runtime.Track(RunService.Heartbeat:Connect(function(deltaTime)
         end
     end
 
+    if profileStart ~= 0 then runtime.ProfileAdd("Hitbox", os.clock() - profileStart) end
 
     -- ==========================================
     -- 2. ESP (0.25s): 4 actualizaciones/s son suficientes para etiquetas.
     -- ==========================================
+    profileStart = (profileHeartbeatStart ~= 0 and (espEnabled or mState.espAct)) and os.clock() or 0
     if espEnabled then
         mState.espAct = true
         mState.tESP = mState.tESP + deltaTime
@@ -11946,10 +12074,12 @@ runtime.Track(RunService.Heartbeat:Connect(function(deltaTime)
         for i = 1, #listaJugadores do hideESP(listaJugadores[i]) end
     end
 
+    if profileStart ~= 0 then runtime.ProfileAdd("ESP", os.clock() - profileStart) end
 
     -- ==========================================
     -- 3. AUTO SHOOT (0.15s)
     -- ==========================================
+    profileStart = (profileHeartbeatStart ~= 0 and (autoShootEnabled or autoShootCuchilloEnabled or mState.asAct)) and os.clock() or 0
     if autoShootEnabled or autoShootCuchilloEnabled then
         mState.asAct = true
         mState.tAS = mState.tAS + deltaTime
@@ -12022,10 +12152,12 @@ runtime.Track(RunService.Heartbeat:Connect(function(deltaTime)
         aimHookState.Target = nil
     end
 
+    if profileStart ~= 0 then runtime.ProfileAdd("AutoShoot", os.clock() - profileStart) end
 
     -- ==========================================
     -- 4. SILENT AIM (0.03s · ~33 Hz)
     -- ==========================================
+    profileStart = (profileHeartbeatStart ~= 0 and (silentAimPistolaEnabled or silentAimCuchilloEnabled or mState.saAct)) and os.clock() or 0
     if silentAimPistolaEnabled or silentAimCuchilloEnabled then
         mState.saAct = true
         mState.tSA = mState.tSA + deltaTime
@@ -12121,6 +12253,8 @@ runtime.Track(RunService.Heartbeat:Connect(function(deltaTime)
         mState.tSA = 0
         if not autoShootEnabled and not autoShootCuchilloEnabled then aimHookState.Target = nil end
     end
+    if profileStart ~= 0 then runtime.ProfileAdd("SilentAim", os.clock() - profileStart) end
+    if profileHeartbeatStart ~= 0 then runtime.ProfileAdd("Heartbeat", os.clock() - profileHeartbeatStart) end
 end))
 
 -- ================= INTERFAZ =================
@@ -12263,6 +12397,8 @@ UIElements.SliFOVSize = Tabs.Aim:Slider({
     Value = {Min = 10, Max = 800, Default = 120}, 
     Callback = function(v) fovRadius = v end
 })
+
+
 
 
 -- ==========================================
@@ -14897,8 +15033,10 @@ local function hideTracersOnce()
 end
 
 function runtime.RenderESP2D(deltaTime)
+    local profileStart = runtime.Profiler.Enabled and os.clock() or 0
     tracerAccumulator = tracerAccumulator + deltaTime
     if tracerAccumulator < TRACER_INTERVAL then
+        if profileStart ~= 0 then runtime.ProfileAdd("ESP2D", os.clock() - profileStart) end
         return
     end
     tracerAccumulator = tracerAccumulator - TRACER_INTERVAL
@@ -14909,6 +15047,7 @@ function runtime.RenderESP2D(deltaTime)
         if FOVCircle.Visible then FOVCircle.Visible = false end
         hideTracersOnce()
         runtime.HideAllESP2D()
+        if profileStart ~= 0 then runtime.ProfileAdd("ESP2D", os.clock() - profileStart) end
         return
     end
 
@@ -14931,6 +15070,7 @@ function runtime.RenderESP2D(deltaTime)
     if not espEnabled or enLobby then
         hideTracersOnce()
         runtime.HideAllESP2D()
+        if profileStart ~= 0 then runtime.ProfileAdd("ESP2D", os.clock() - profileStart) end
         return
     end
 
@@ -15049,6 +15189,7 @@ function runtime.RenderESP2D(deltaTime)
             end
         end
     end
+    if profileStart ~= 0 then runtime.ProfileAdd("ESP2D", os.clock() - profileStart) end
 end
 
 runtime.ESP2DRenderConnection = nil
@@ -15110,6 +15251,12 @@ task.spawn(function()
     local PlayerModule = require(player:WaitForChild("PlayerScripts"):WaitForChild("PlayerModule"))
     Controls = PlayerModule:GetControls()
 end)
+
+
+
+
+
+
 
 
 -- ==========================================
@@ -15386,6 +15533,8 @@ runtime.Track(player.CharacterAdded:Connect(function()
 end))
 
 
+
+
 -- ==========================================
 -- BOTONES FLOTANTES: AUTO SHOOT Y SILENT AIM
 -- ==========================================
@@ -15450,6 +15599,9 @@ UIElements.ToggleSaBtn = Tabs.Aim:Toggle({
         saBtn.Visible = state
     end
 })
+
+
+
 
 
 UIElements.SliderGhostSpeed = Tabs.Mov:Slider({
@@ -16329,6 +16481,8 @@ Tabs.Graficos:Slider({
         end
     end
 })
+
+
 
 
 -- ============================================================

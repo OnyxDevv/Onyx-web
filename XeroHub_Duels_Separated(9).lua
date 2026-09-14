@@ -16098,6 +16098,27 @@ local cyberState = {
 local CYBER_SCAN_BUDGET = 0.0030
 local CYBER_SCAN_CHECK_EVERY = 72
 
+-- Sólo superficies duras/man-made pasan a metal. Materiales orgánicos o que ya
+-- tienen identidad visual propia se conservan para no convertir el mapa en una
+-- masa oscura/reflejante.
+local CYBER_METALIZABLE = {
+    [Enum.Material.Plastic] = true,
+    [Enum.Material.SmoothPlastic] = true,
+    [Enum.Material.Concrete] = true,
+    [Enum.Material.Brick] = true,
+    [Enum.Material.Cobblestone] = true,
+    [Enum.Material.Slate] = true,
+    [Enum.Material.Pavement] = true,
+    [Enum.Material.Asphalt] = true,
+    [Enum.Material.Wood] = false,
+    [Enum.Material.WoodPlanks] = false,
+    [Enum.Material.Grass] = false,
+    [Enum.Material.Ground] = false,
+    [Enum.Material.Fabric] = false,
+    [Enum.Material.Sand] = false,
+    [Enum.Material.LeafyGrass] = false,
+}
+
 local function cyberIsCharacterPart(object)
     local model = object and object:FindFirstAncestorOfClass("Model")
     if not model then return false end
@@ -16129,16 +16150,21 @@ local function cyberApplyPart(object)
         Reflectance = object.Reflectance,
     }
 
-    -- Conservamos Neon/Glass para que luces y ventanas sigan teniendo identidad.
-    -- El resto del mapa adopta metal sin tocar Color/TextureID/SurfaceAppearance.
+    -- Neon y Glass conservan identidad. Sólo superficies duras/man-made se
+    -- metalizan; madera/pasto/tela/etc. mantienen su material y reciben apenas
+    -- un toque especular para integrarse con el preset.
     if object.Material == Enum.Material.Neon then
-        object.Reflectance = math.max(object.Reflectance, 0.04)
+        object.Reflectance = math.max(object.Reflectance, 0.03)
     elseif object.Material == Enum.Material.Glass then
-        object.Reflectance = math.max(object.Reflectance, 0.10)
-    elseif object.Material ~= Enum.Material.ForceField then
+        object.Reflectance = math.max(object.Reflectance, 0.08)
+    elseif object.Material == Enum.Material.Metal or object.Material == Enum.Material.DiamondPlate then
+        object.Reflectance = math.max(object.Reflectance, 0.13)
+    elseif CYBER_METALIZABLE[object.Material] == true then
         object.MaterialVariant = ""
         object.Material = Enum.Material.Metal
-        object.Reflectance = math.max(object.Reflectance, 0.16)
+        object.Reflectance = math.max(object.Reflectance, 0.12)
+    elseif object.Material ~= Enum.Material.ForceField then
+        object.Reflectance = math.max(object.Reflectance, 0.025)
     end
 end
 
@@ -16198,20 +16224,20 @@ UIElements.TogCyberpunk = modes.toggle("Cyberpunk RTX", {
             -- Misma familia visual de Tokyowami, pero ajustada para un look nocturno,
             -- metálico y contrastado. modes.capture() ya guardó Lighting/Terrain.
             local bloom = addEffect("BloomEffect", {
-                Intensity = 0.38,
-                Threshold = 0.72,
-                Size = 52,
+                Intensity = 0.34,
+                Threshold = 0.78,
+                Size = 46,
             })
             bloom.Name = "XeroCyber_Bloom"
 
-            local blur = addEffect("BlurEffect", {Size = 1})
+            local blur = addEffect("BlurEffect", {Size = 0})
             blur.Name = "XeroCyber_Blur"
 
             local cc = addEffect("ColorCorrectionEffect", {
-                Brightness = -0.015,
-                Contrast = 0.24,
-                Saturation = 0.16,
-                TintColor = Color3.fromRGB(205, 225, 255),
+                Brightness = 0.035,
+                Contrast = 0.17,
+                Saturation = 0.12,
+                TintColor = Color3.fromRGB(218, 232, 255),
             })
             cc.Name = "XeroCyber_Color"
 
@@ -16222,12 +16248,12 @@ UIElements.TogCyberpunk = modes.toggle("Cyberpunk RTX", {
             rays.Name = "XeroCyber_Rays"
 
             local atmosphere = addEffect("Atmosphere", {
-                Color = Color3.fromRGB(105, 155, 255),
-                Decay = Color3.fromRGB(72, 16, 105),
-                Density = 0.22,
-                Offset = 0.15,
-                Glare = 0.12,
-                Haze = 1.35,
+                Color = Color3.fromRGB(128, 170, 255),
+                Decay = Color3.fromRGB(88, 34, 122),
+                Density = 0.14,
+                Offset = 0.18,
+                Glare = 0.08,
+                Haze = 0.72,
             })
             atmosphere.Name = "XeroCyber_Atmosphere"
 
@@ -16245,27 +16271,27 @@ UIElements.TogCyberpunk = modes.toggle("Cyberpunk RTX", {
             })
             sky.Name = "XeroCyber_TokyoSky"
 
-            Lighting.Brightness = 2.55
-            Lighting.ClockTime = 20.35
+            Lighting.Brightness = 3.35
+            Lighting.ClockTime = 21.15
             Lighting.GlobalShadows = true
-            Lighting.ShadowSoftness = 0.06
-            Lighting.ExposureCompensation = 0.16
+            Lighting.ShadowSoftness = 0.12
+            Lighting.ExposureCompensation = 0.34
             Lighting.EnvironmentSpecularScale = 1
-            Lighting.EnvironmentDiffuseScale = 0.58
-            Lighting.Ambient = Color3.fromRGB(13, 15, 28)
-            Lighting.OutdoorAmbient = Color3.fromRGB(25, 38, 66)
-            Lighting.ColorShift_Top = Color3.fromRGB(54, 145, 255)
-            Lighting.ColorShift_Bottom = Color3.fromRGB(255, 32, 154)
-            Lighting.FogColor = Color3.fromRGB(18, 12, 31)
-            Lighting.FogStart = 0
-            Lighting.FogEnd = 1700
+            Lighting.EnvironmentDiffuseScale = 0.76
+            Lighting.Ambient = Color3.fromRGB(52, 58, 82)
+            Lighting.OutdoorAmbient = Color3.fromRGB(88, 105, 145)
+            Lighting.ColorShift_Top = Color3.fromRGB(76, 158, 255)
+            Lighting.ColorShift_Bottom = Color3.fromRGB(178, 48, 150)
+            Lighting.FogColor = Color3.fromRGB(30, 34, 54)
+            Lighting.FogStart = 120
+            Lighting.FogEnd = 3000
 
             if Terrain then
                 Terrain.WaterWaveSize = 0.08
                 Terrain.WaterWaveSpeed = 10
-                Terrain.WaterReflectance = 1
-                Terrain.WaterTransparency = 0.32
-                Terrain.WaterColor = Color3.fromRGB(8, 24, 42)
+                Terrain.WaterReflectance = 0.92
+                Terrain.WaterTransparency = 0.48
+                Terrain.WaterColor = Color3.fromRGB(18, 42, 68)
             end
 
             cyberDisconnect()

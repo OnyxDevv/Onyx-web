@@ -4462,6 +4462,8 @@ runtime.Appearance = {
         NativeEffectPairs = {},
         NativeTransparencyBindName = nil,
         NativeCameraTransparencyLast = nil,
+        NativeAppliedTransparencyLast = nil,
+        NativeLayerSignatureLast = nil,
         AnimationConnection = nil,
         RenderAnimationConnection = nil,
         BaseDescendantConnection = nil,
@@ -6153,6 +6155,8 @@ function runtime.AvatarCloneBuildNativeTransparencyMap(char, overlay)
     local state = runtime.Appearance.AvatarClone
     table.clear(state.NativeTransparencyPairs)
     table.clear(state.NativeEffectPairs)
+    state.NativeAppliedTransparencyLast = nil
+    state.NativeLayerSignatureLast = nil
 
     if not char or not char.Parent or not overlay or not overlay.Parent then return false end
 
@@ -6206,12 +6210,15 @@ function runtime.AvatarCloneNativeLayerHidden(pair)
     return false
 end
 
-function runtime.AvatarCloneSyncNativeTransparency(char, overlay, dt)
+function runtime.AvatarCloneSyncNativeTransparency(char, overlay, dt, boundHumanoid)
     local state = runtime.Appearance.AvatarClone
     if state.Overlay ~= overlay or not overlay or not overlay.Parent or not char or not char.Parent then return end
 
     local currentCamera = workspace.CurrentCamera
-    local humanoid = char:FindFirstChildOfClass("Humanoid")
+    local humanoid = boundHumanoid
+    if not humanoid or humanoid.Parent ~= char then
+        humanoid = char:FindFirstChildOfClass("Humanoid")
+    end
     local subject = currentCamera and currentCamera.CameraSubject
     local cameraOwnsCharacter = currentCamera and humanoid and (
         subject == humanoid
@@ -6224,10 +6231,14 @@ function runtime.AvatarCloneSyncNativeTransparency(char, overlay, dt)
     -- XeroHub lo mantiene en 1 para esconderlo debajo del overlay.
     local transparency = 0
     if cameraOwnsCharacter and currentCamera then
-        local distance = (currentCamera.Focus.Position - currentCamera.CFrame.Position).Magnitude
-        transparency = (distance < 2) and (1 - (distance - 0.5) / 1.5) or 0
-        if transparency < 0.5 then
-            transparency = 0
+        -- XERO_PERF_CLONE_MASK_DISTANCE_SQ: evitamos sqrt en tercera persona.
+        -- Sólo necesitamos la distancia exacta dentro del radio de 2 studs.
+        local cameraDelta = currentCamera.Focus.Position - currentCamera.CFrame.Position
+        local distanceSq = cameraDelta:Dot(cameraDelta)
+        if distanceSq < 4 then
+            local distance = math.sqrt(distanceSq)
+            transparency = 1 - (distance - 0.5) / 1.5
+            if transparency < 0.5 then transparency = 0 end
         end
 
         local last = state.NativeCameraTransparencyLast
@@ -6241,27 +6252,42 @@ function runtime.AvatarCloneSyncNativeTransparency(char, overlay, dt)
 
     state.NativeCameraTransparencyLast = transparency
 
-    for i = 1, #state.NativeTransparencyPairs do
-        local pair = state.NativeTransparencyPairs[i]
-        local clonePart = pair.ClonePart
-        if clonePart and clonePart.Parent then
-            local layerLTM = runtime.AvatarCloneNativeLayerHidden(pair) and 1
-                or math.clamp(tonumber(pair.BaseLTM) or 0, 0, 1)
-            local desired = math.max(transparency, layerLTM)
-            if clonePart.LocalTransparencyModifier ~= desired then
-                clonePart.LocalTransparencyModifier = desired
+    -- XERO_PERF_CLONE_MASK_SKIP_UNCHANGED:
+    -- En tercera persona el fade suele quedarse en 0 durante cientos de frames.
+    -- No recorremos todas las partes/efectos del overlay si ni el fade ni las capas
+    -- Headless/Korblox/HideHair cambiaron desde el último frame aplicado.
+    local layerSignature = (runtime.Appearance.Enabled.Headless and 1 or 0)
+        + (runtime.Appearance.Enabled.Korblox and 2 or 0)
+        + (runtime.Appearance.Enabled.HideHair and 4 or 0)
+    local visualStateChanged = state.NativeAppliedTransparencyLast ~= transparency
+        or state.NativeLayerSignatureLast ~= layerSignature
+
+    if visualStateChanged then
+        state.NativeAppliedTransparencyLast = transparency
+        state.NativeLayerSignatureLast = layerSignature
+
+        for i = 1, #state.NativeTransparencyPairs do
+            local pair = state.NativeTransparencyPairs[i]
+            local clonePart = pair.ClonePart
+            if clonePart and clonePart.Parent then
+                local layerLTM = runtime.AvatarCloneNativeLayerHidden(pair) and 1
+                    or math.clamp(tonumber(pair.BaseLTM) or 0, 0, 1)
+                local desired = math.max(transparency, layerLTM)
+                if clonePart.LocalTransparencyModifier ~= desired then
+                    clonePart.LocalTransparencyModifier = desired
+                end
             end
         end
-    end
 
-    for i = 1, #state.NativeEffectPairs do
-        local pair = state.NativeEffectPairs[i]
-        local effect = pair.Effect
-        if effect and effect.Parent then
-            local hiddenByLayer = runtime.Appearance.Enabled.HideHair
-                and pair.Accessory and isHairAccessory(pair.Accessory)
-            local desired = pair.BaseEnabled == true and transparency < 0.95 and not hiddenByLayer
-            if effect.Enabled ~= desired then effect.Enabled = desired end
+        for i = 1, #state.NativeEffectPairs do
+            local pair = state.NativeEffectPairs[i]
+            local effect = pair.Effect
+            if effect and effect.Parent then
+                local hiddenByLayer = runtime.Appearance.Enabled.HideHair
+                    and pair.Accessory and isHairAccessory(pair.Accessory)
+                local desired = pair.BaseEnabled == true and transparency < 0.95 and not hiddenByLayer
+                if effect.Enabled ~= desired then effect.Enabled = desired end
+            end
         end
     end
 end
@@ -6281,6 +6307,8 @@ function runtime.AvatarCloneBindNativeTransparency(char, overlay)
     state.NativeTransparencyBindName = bindName
     state.NativeCameraTransparencyLast = nil
 
+    local boundHumanoid = char:FindFirstChildOfClass("Humanoid")
+
     local ok = pcall(function()
         RunService:BindToRenderStep(
             bindName,
@@ -6291,11 +6319,11 @@ function runtime.AvatarCloneBindNativeTransparency(char, overlay)
                     return
                 end
                 local profileStart = runtime.Profiler.Enabled and os.clock() or 0
-                runtime.AvatarCloneSyncNativeTransparency(char, overlay, dt)
-                -- CameraModule ya terminó de escribir LTM. Reafirmamos el avatar base
-                -- aquí, reutilizando ESTE render callback en vez de duplicar el trabajo
-                -- dentro del sincronizador de pose.
-                runtime.AvatarCloneEnforceBaseHidden(char)
+                runtime.AvatarCloneSyncNativeTransparency(char, overlay, dt, boundHumanoid)
+                -- CameraModule sólo reescribe LocalTransparencyModifier de BaseParts.
+                -- Texturas/efectos ya quedan protegidos por eventos y no necesitan un
+                -- recorrido completo cada frame.
+                runtime.AvatarCloneEnforceBaseHiddenParts(char)
                 if profileStart ~= 0 then runtime.ProfileAdd("CloneMask", os.clock() - profileStart) end
             end
         )
@@ -6306,7 +6334,7 @@ function runtime.AvatarCloneBindNativeTransparency(char, overlay)
         return false
     end
 
-    runtime.AvatarCloneSyncNativeTransparency(char, overlay, 0)
+    runtime.AvatarCloneSyncNativeTransparency(char, overlay, 0, boundHumanoid)
     return true
 end
 
@@ -6661,6 +6689,8 @@ function runtime.AvatarCloneDisconnectAnimation()
     table.clear(state.NativeTransparencyPairs)
     table.clear(state.NativeEffectPairs)
     state.NativeCameraTransparencyLast = nil
+    state.NativeAppliedTransparencyLast = nil
+    state.NativeLayerSignatureLast = nil
     if state.AnimationConnection then
         pcall(function() state.AnimationConnection:Disconnect() end)
         state.AnimationConnection = nil
@@ -6713,16 +6743,13 @@ function runtime.AvatarCloneDestroyOverlay(restoreBase)
     end
 end
 
-function runtime.AvatarCloneEnforceBaseHidden(char)
+function runtime.AvatarCloneEnforceBaseHiddenParts(char)
     local state = runtime.Appearance.AvatarClone
     char = char or state.BaseCharacter or player.Character
     if not char or state.BaseCharacter ~= char then return end
 
     local cache = state.BaseVisualCache
     local korblox = runtime.Appearance.Enabled.Korblox == true
-
-    -- Hot path: no pairs(BaseVisualCache), no FindFirstAncestorWhichIsA y no pcall
-    -- por objeto. Las armas se liberan por eventos en AvatarCloneBindToolVisualGuard.
     local parts = state.BaseHiddenParts
     local i = 1
     while i <= #parts do
@@ -6737,9 +6764,20 @@ function runtime.AvatarCloneEnforceBaseHidden(char)
             i += 1
         end
     end
+end
 
+function runtime.AvatarCloneEnforceBaseHidden(char)
+    local state = runtime.Appearance.AvatarClone
+    char = char or state.BaseCharacter or player.Character
+    if not char or state.BaseCharacter ~= char then return end
+
+    -- Camino completo usado fuera del bind Camera+1/fallback. El hot path nativo
+    -- llama sólo AvatarCloneEnforceBaseHiddenParts().
+    runtime.AvatarCloneEnforceBaseHiddenParts(char)
+
+    local cache = state.BaseVisualCache
     local textures = state.BaseHiddenTextures
-    i = 1
+    local i = 1
     while i <= #textures do
         local object = textures[i]
         if not object or not object.Parent or not cache[object] then
@@ -6915,6 +6953,17 @@ function runtime.AvatarCloneBuildMotorSync(char, overlay)
         return nil, nil
     end
 
+    -- XERO_PERF_CLONE_LIVE_MOTOR_FASTPATH_V2:
+    -- Animator ya calcula Motor6D.Transform. Lo indexamos una sola vez al hacer el
+    -- bind del clon y evitamos reconstruir la pose con varias inversas/ToObjectSpace
+    -- por joint en cada RenderStepped.
+    local liveMotorMap = {}
+    for _, object in ipairs(char:GetDescendants()) do
+        if object:IsA("Motor6D") and object.Part0 and object.Part1 then
+            liveMotorMap[object.Part0.Name .. ">" .. object.Part1.Name] = object
+        end
+    end
+
     for _, spec in ipairs(jointSpecs) do
         local parentName = spec[1]
         local childName = spec[2]
@@ -6925,6 +6974,10 @@ function runtime.AvatarCloneBuildMotorSync(char, overlay)
         local cloneChild = cloneParts[childName]
         local driverParent = driverParts[parentName]
         local driverChild = driverParts[childName]
+        local liveMotor = liveMotorMap[parentName .. ">" .. childName]
+        if liveMotor and (liveMotor.Part0 ~= realParent or liveMotor.Part1 ~= realChild) then
+            liveMotor = nil
+        end
 
         if realParent and realChild and cloneParent and cloneChild then
             -- Pivotes del CLON: estos preservan exactamente sus proporciones.
@@ -6947,6 +7000,7 @@ function runtime.AvatarCloneBuildMotorSync(char, overlay)
                     RealChild = realChild,
                     CloneParent = cloneParent,
                     CloneChild = cloneChild,
+                    LiveMotor = liveMotor,
 
                     CloneC0 = cloneA0.CFrame,
                     CloneC1 = cloneA1.CFrame,
@@ -7027,7 +7081,11 @@ function runtime.AvatarCloneBuildMotorSync(char, overlay)
                         cloneChild.CFrame = cloneParent.CFrame * pair.InitialCloneRelative * delta
                     else
                         local poseTransform
-                        if pair.RealC0 and pair.RealC1 then
+                        local liveMotor = pair.LiveMotor
+                        if liveMotor and liveMotor.Parent
+                            and liveMotor.Part0 == realParent and liveMotor.Part1 == realChild then
+                            poseTransform = liveMotor.Transform
+                        elseif pair.RealC0 and pair.RealC1 then
                             local parentJointWorld = realParent.CFrame * pair.RealC0
                             local childJointWorld = realChild.CFrame * pair.RealC1
                             poseTransform = parentJointWorld:ToObjectSpace(childJointWorld)
@@ -7051,7 +7109,9 @@ function runtime.AvatarCloneBuildMotorSync(char, overlay)
         -- Re-alinearla AQUÍ, después de actualizar todos los CFrame del clon, evita
         -- que quede un frame atrás al caminar/correr si su RenderStepped separado
         -- se ejecutó antes que esta marioneta visual.
-        runtime.SyncFaceClassicVisual(overlay)
+        if runtime.Appearance.FaceClassicVisuals[overlay] then
+            runtime.SyncFaceClassicVisual(overlay)
+        end
 
         -- En condiciones normales la invisibilidad base se reafirma en el bind
         -- Camera+1 de transparencia. Sólo usamos este fallback si ese bind falló.
@@ -7795,15 +7855,19 @@ function runtime.BeginAvatarCloneRespawnMask(char, generation)
         end)
 
         rebuildRespawnPoseCache()
+        local poseSafetyElapsed = 0
 
-        state.RespawnMaskConnection = RunService.RenderStepped:Connect(function()
+        state.RespawnMaskConnection = RunService.RenderStepped:Connect(function(deltaTime)
             if not valid() or state.Overlay ~= overlay or not overlay.Parent then
                 return
             end
 
-            -- Normalmente esto es falso. Sólo reconstruye el caché cuando Duels
-            -- realmente tocó la topología del rig durante el countdown.
-            if not poseCacheDirty then
+            -- XERO_PERF_RESPAWN_PERIODIC_SAFETY:
+            -- DescendantAdded/Removing marca dirty de inmediato. Esta pasada completa
+            -- queda sólo como red de seguridad cada 0.5 s, no 50-60 veces por segundo.
+            poseSafetyElapsed = poseSafetyElapsed + (tonumber(deltaTime) or 0)
+            if not poseCacheDirty and poseSafetyElapsed >= 0.5 then
+                poseSafetyElapsed = 0
                 for i = 1, #posePairs do
                     local pair = posePairs[i]
                     local motor = pair.LiveMotor
@@ -7822,6 +7886,7 @@ function runtime.BeginAvatarCloneRespawnMask(char, generation)
 
             if poseCacheDirty then
                 rebuildRespawnPoseCache()
+                poseSafetyElapsed = 0
             end
 
             if root and root.Parent then
@@ -7861,7 +7926,9 @@ function runtime.BeginAvatarCloneRespawnMask(char, generation)
 
             -- La máscara de respawn usa otro loop de pose. La Face clásica también
             -- debe tomar el Head ya actualizado de ESTE frame para no quedarse atrás.
-            runtime.SyncFaceClassicVisual(overlay)
+            if runtime.Appearance.FaceClassicVisuals[overlay] then
+                runtime.SyncFaceClassicVisual(overlay)
+            end
 
             if not state.NativeTransparencyBindName then
                 runtime.AvatarCloneEnforceBaseHidden(char)

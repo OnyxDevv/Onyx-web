@@ -15483,12 +15483,6 @@ UIElements.ToggleSaBtn = Tabs.Aim:Toggle({
 })
 
 
-UIElements.SliderGhostSpeed = Tabs.Mov:Slider({
-    Title = "Velocidad Fantasma", 
-    Step = 1, 
-    Value = {Min = 10, Max = 150, Default = 40}, 
-    Callback = function(Value) invisFlySpeed = Value end 
-})
 
 runtime.Track(player.CharacterAdded:Connect(function()
     isInvisible = false

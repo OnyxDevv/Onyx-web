@@ -399,479 +399,6 @@ aimbotTargetPart = "Cabeza"
 
 local UIElements = {} -- Tabla para guardar referencias
 
--- XeroHub bilingual layer. Encapsulated so it does not consume main-chunk local slots.
-runtime.Localization = (function()
-    local L = {}
-    local PREF = "XeroHub/Settings/language.txt"
-    local PREF_FOLDER = "XeroHub/Settings"
-    local EN = {
-    ["Seleccionar…"] = "Select…",
-    ["Buscar una opción…"] = "Search an option…",
-    ["Sin resultados"] = "No results",
-    ["Escribe aquí…"] = "Type here…",
-    ["Paleta RGB · arrastra para elegir tono e intensidad"] = "RGB palette · drag to choose hue and intensity",
-    ["Tu espacio. Todo bajo control."] = "Your space. Everything under control.",
-    ["Organiza tus ajustes de precisión y selección."] = "Manage your precision and targeting settings.",
-    ["Controles y ajustes de esta función."] = "Controls and settings for this feature.",
-    ["Elige qué información quieres ver."] = "Choose what information you want to see.",
-    ["Personaliza el movimiento y sus controles."] = "Customize movement and its controls.",
-    ["Configura tus acciones automáticas."] = "Configure your automatic actions.",
-    ["Ajusta el ambiente, la iluminación y los efectos."] = "Adjust the environment, lighting, and effects.",
-    ["Combina paquetes y movimientos a tu gusto."] = "Mix animation packs and movements your way.",
-    ["Tu avatar, a tu manera."] = "Your avatar, your way.",
-    ["Tu interfaz y tus configuraciones guardadas."] = "Your interface and saved configurations.",
-    ["Organiza tus opciones de inventario."] = "Manage your inventory options.",
-    ["Conoce al creador y los datos del proyecto."] = "Meet the creator and view project details.",
-    ["Personaliza tus opciones."] = "Customize your options.",
-    ["Sin coincidencias. Prueba otra búsqueda."] = "No matches. Try another search.",
-    ["Buscar ajuste..."] = "Search setting...",
-    ["RSHIFT  /  MOSTRAR U OCULTAR"] = "RSHIFT  /  SHOW / HIDE",
-    ["ABRIR PANEL"] = "OPEN PANEL",
-    ["Pestaña"] = "Tab",
-    ["Aceptar"] = "OK",
-    ["Cerrar XeroHub"] = "Close XeroHub",
-    ["Se cerrará el panel y se limpiará esta sesión. Puedes volver a ejecutar el hub cuando quieras."] = "The panel will close and this session will be cleaned up. You can run the hub again whenever you want.",
-    ["Volver"] = "Back",
-    ["Cerrar"] = "Close",
-    ["Tema"] = "Theme",
-    ["Blanco"] = "White",
-    ["Oscuro"] = "Dark",
-    ["PRINCIPAL"] = "MAIN",
-    ["PERSONAL"] = "PERSONAL",
-    ["Inicio"] = "Home",
-    ["Visuales"] = "Visuals",
-    ["Movimiento"] = "Movement",
-    ["Gráficos"] = "Graphics",
-    ["Sonidos"] = "Sounds",
-    ["Animaciones"] = "Animations",
-    ["Apariencia"] = "Appearance",
-    ["Configuración"] = "Settings",
-    ["Créditos"] = "Credits",
-    ["Sonido de disparo"] = "Gunshot sound",
-    ["Sonido del arma"] = "Weapon sound",
-    ["Actualizar lista de sonidos"] = "Refresh sound list",
-    ["Probar sonido"] = "Preview sound",
-    ["Cambiar sonido"] = "Change sound",
-    ["Desactivar sonido de disparo"] = "Disable gunshot sound",
-    ["Sonido de muerte"] = "Death sound",
-    ["Probar sonido de muerte"] = "Preview death sound",
-    ["Cambiar sonido de muerte"] = "Change death sound",
-    ["Personaliza los sonidos de disparo y de muerte."] = "Customize gunshot and death sounds.",
-    ["Elige el sonido que quieres al disparar."] = "Choose the sound you want when firing.",
-    ["Carga los sonidos nuevos."] = "Load newly added sounds.",
-    ["Escucha el sonido seleccionado."] = "Listen to the selected sound.",
-    ["Usa el sonido elegido al disparar."] = "Use the selected sound when firing.",
-    ["Dispara sin ningún sonido."] = "Fire without any sound.",
-    ["Suena cuando muere cualquier jugador, incluso tú."] = "Plays when any player dies, including you.",
-    ["Elige el sonido para cualquier muerte."] = "Choose the sound for any death.",
-    ["Reproduce el sonido cuando muere cualquier jugador."] = "Play the sound whenever any player dies.",
-    ["Cargando catálogo…"] = "Loading catalog…",
-    ["Bienvenido a XeroHub"] = "Welcome to XeroHub",
-    ["Novedades de XeroHub"] = "What's new in XeroHub",
-    ["Clonador de avatar"] = "Avatar cloner",
-    ["Información del Servidor"] = "Server Information",
-    ["Juego Actual"] = "Current Game",
-    ["Agradecimientos"] = "Thanks",
-    ["Juegos Soportados"] = "Supported Games",
-    ["Duelos de Asesinato"] = "Murder Duels",
-    ["Optimización"] = "Optimization",
-    ["Mostrar FPS y Ping"] = "Show FPS and Ping",
-    ["Cambiar de Servidor"] = "Switch Server",
-    ["Elige una categoría y encuentra cada ajuste con el buscador."] = "Choose a category and find every setting with the search bar.",
-    ["Pestaña Apariencia agregada con Korblox, Headless y algunos limiteds."] = "Added the Appearance tab with Korblox, Headless, and several limiteds.",
-    ["Clona avatares por username o seleccionando jugadores del servidor."] = "Clone avatars by username or by selecting players in the server.",
-    ["Gracias por usar XeroHub, su apoyo ayuda a mejorarlo más."] = "Thanks for using XeroHub. Your support helps make it better.",
-    ["Reduce materiales, texturas y efectos del mapa sin tocar los avatares."] = "Reduces map materials, textures, and effects without changing avatars.",
-    ["Macro (Pistola)"] = "Macro (Gun)",
-    ["Activar Macro"] = "Enable Macro",
-    ["Delay al Equipar"] = "Equip Delay",
-    ["Delay de Disparo"] = "Shot Delay",
-    ["Mostrar/Acomodar Zona Muerta"] = "Show/Adjust Dead Zone",
-    ["Tamaño de Zona Muerta"] = "Dead Zone Size",
-    ["Dispara con un solo toque."] = "Fire with a single tap.",
-    ["Sube esto si la pistola no alcanza a salir. (Segundos)"] = "Increase this if the gun does not have enough time to equip. (Seconds)",
-    ["Sube esto si el tiro no cuenta daño. (Segundos)"] = "Increase this if the shot does not register damage. (Seconds)",
-    ["Equipa accesorios visuales"] = "Equip visual accessories",
-    ["Jugador del servidor"] = "Server player",
-    ["Clonar jugador seleccionado"] = "Clone selected player",
-    ["Clonar por username"] = "Clone by username",
-    ["Cargar avatar por username"] = "Load avatar by username",
-    ["Mantener clon al respawnear"] = "Keep clone after respawn",
-    ["Restaurar mi avatar"] = "Restore my avatar",
-    ["Cuerpo"] = "Body",
-    ["Abrir editor visual"] = "Open visual editor",
-    ["Restaurar apariencia completa"] = "Restore full appearance",
-    ["Headless local estable"] = "Stable local Headless",
-    ["Korblox Deathspeaker · reemplazo local R15"] = "Korblox Deathspeaker · local R15 replacement",
-    ["Oculta únicamente el cabello del avatar."] = "Hides only the avatar's hair.",
-    ["Activa tus accesorios visuales y, si quieres ajustarlos fino, abre el editor visual con fondo negro."] = "Enable your visual accessories and open the black-background visual editor for fine adjustments.",
-    ["Copia el avatar."] = "Clone the avatar.",
-    ["Funciona aunque el usuario no esté en tu servidor."] = "Works even if the user is not in your server.",
-    ["Reaplica el avatar clonado después de morir sin tocar tus limiteds."] = "Reapplies the cloned avatar after death without touching your limiteds.",
-    ["Vuelve a tu avatar base y mantiene Headless, Korblox, HideHair y limiteds que estén activos."] = "Returns to your base avatar while keeping active Headless, Korblox, HideHair, and limiteds.",
-    ["Abre el editor aislado para mover, rotar y cambiar el tamaño de tus limiteds activos."] = "Opens the isolated editor to move, rotate, and resize your active limiteds.",
-    ["Restaura tu avatar base y quita Headless, Korblox, caras, HideHair y todos los limiteds aplicados por XeroHub."] = "Restores your base avatar and removes Headless, Korblox, faces, HideHair, and all limiteds applied by XeroHub.",
-    ["Auto Shoot (Cuchillo)"] = "Auto Shoot (Knife)",
-    ["Selector corporal · Auto Shoot"] = "Body selector · Auto Shoot",
-    ["Silent Aim (Pistola)"] = "Silent Aim (Gun)",
-    ["Silent Aim (Cuchillo)"] = "Silent Aim (Knife)",
-    ["Selección y controles"] = "Selection and controls",
-    ["Tecla para Activar/Desactivar Silent Aim"] = "Key to Toggle Silent Aim",
-    ["Selector corporal · Silent Aim"] = "Body selector · Silent Aim",
-    ["Filtro de círculo FOV"] = "FOV circle filter",
-    ["Mostrar Círculo FOV"] = "Show FOV Circle",
-    ["Campo de visión"] = "Field of View",
-    ["Tamaño del FOV"] = "FOV Size",
-    ["Dispara automáticamente a la parte del cuerpo seleccionada."] = "Automatically fires at the selected body part.",
-    ["Ataca o lanza el cuchillo automáticamente."] = "Automatically attacks or throws the knife.",
-    ["Abre una plantilla visual y permite seleccionar varias partes a la vez."] = "Opens a visual body template and lets you select multiple parts at once.",
-    ["Redirige las balas de tu pistola al enemigo."] = "Redirects your gun bullets toward the enemy.",
-    ["Redirige los ataques de tu cuchillo al enemigo."] = "Redirects your knife attacks toward the enemy.",
-    ["Selecciona cabeza, torso, brazos y piernas con multiselección visual."] = "Select head, torso, arms, and legs with visual multi-selection.",
-    ["Silent Aim solo considera objetivos dentro del círculo configurado."] = "Silent Aim only considers targets inside the configured circle.",
-    ["Dibuja un círculo en pantalla para saber dónde funciona tu Silent Aim."] = "Draws a circle on screen so you can see where Silent Aim is active.",
-    ["Kill all Cuchillo"] = "Knife Kill All",
-    ["Activar Kill All"] = "Enable Kill All",
-    ["Expandir Hitbox"] = "Expand Hitbox",
-    ["Aumentar Hitbox"] = "Increase Hitbox",
-    ["Hitbox Invisible"] = "Invisible Hitbox",
-    ["Tamaño de Hitbox"] = "Hitbox Size",
-    ["Escribir Tamaño Exacto"] = "Enter Exact Size",
-    ["Transparencia del Hitbox"] = "Hitbox Transparency",
-    ["Mata a los enemigos con cuchillo"] = "Kills enemies with the knife",
-    ["Expande la caja de colisión de los enemigos para que no falles balas."] = "Expands enemy hitboxes so your shots are less likely to miss.",
-    ["Oculta las cajas de los enemigos."] = "Hides enemy hitboxes.",
-    ["10 - 20 max recomendado"] = "10 - 20 max recommended",
-    ["0 = Color Sólido | 1 = Invisible."] = "0 = Solid Color | 1 = Invisible.",
-    ["Ocultar mi Nombre (Visual)"] = "Hide My Name (Visual)",
-    ["Activar Nombre Falso"] = "Enable Fake Name",
-    ["Tag [Content Creator]"] = "[Content Creator] Tag",
-    ["Nuevo Nombre"] = "New Name",
-    ["Efecto arcoíris en nombre"] = "Rainbow Name Effect",
-    ["ESP de jugadores"] = "Player ESP",
-    ["Color del ESP"] = "ESP Color",
-    ["Capas del ESP"] = "ESP Layers",
-    ["Mostrar Resplandor"] = "Show Glow",
-    ["Mostrar Nombre"] = "Show Name",
-    ["Mostrar Distancia"] = "Show Distance",
-    ["Barra de vida"] = "Health Bar",
-    ["Mostrar Líneas"] = "Show Lines",
-    ["Vuelve tu nombre invisible en tu pantalla."] = "Makes your name invisible on your screen.",
-    ["Reemplaza tu nombre por uno falso (Solo tú lo ves)."] = "Replaces your name with a fake one (only you can see it).",
-    ["Te pone la etiqueta de creador de contenido."] = "Adds the content creator tag.",
-    ["Hace que tu nombre brille cambiando de colores RGB."] = "Makes your name glow by cycling through RGB colors.",
-    ["Activa las capas visuales configuradas para enemigos."] = "Enables the configured visual layers for enemies.",
-    ["Caja anclada al enemigo"] = "Box anchored to the enemy",
-    ["Muestra la vida."] = "Shows health.",
-    ["Dibuja una línea desde el centro de tu pantalla hasta cada enemigo."] = "Draws a line from the center of your screen to each enemy.",
-    ["Modo Fantasma y Salto"] = "Ghost Mode and Jump",
-    ["Salto Infinito"] = "Infinite Jump",
-    ["Activar Modo Fantasma"] = "Enable Ghost Mode",
-    ["Mostrar Botón Flotante"] = "Show Floating Button",
-    ["Mostrar Botón Flotante (AutoShoot)"] = "Show Floating Button (AutoShoot)",
-    ["Mostrar Botón Flotante (Silent Aim)"] = "Show Floating Button (Silent Aim)",
-    ["Velocidad Fantasma"] = "Ghost Speed",
-    ["Mantener presionado para saltar infinitamente."] = "Hold to jump infinitely.",
-    ["Se invisible para los demas."] = "Become invisible to others.",
-    ["Modos Visuales (Elige solo uno)"] = "Visual Modes (Choose only one)",
-    ["Shaders Tokyowami"] = "Tokyowami Shaders",
-    ["Modo Noche"] = "Night Mode",
-    ["Skyboxes"] = "Skyboxes",
-    ["ID de tu cielo"] = "Your sky ID",
-    ["Aplicar cielo personalizado"] = "Apply custom sky",
-    ["Restaurar gráficos originales"] = "Restore original graphics",
-    ["Ajustes: Modo Noche"] = "Settings: Night Mode",
-    ["Claridad del Mapa"] = "Map Clarity",
-    ["Profundidad de Sombras"] = "Shadow Depth",
-    ["Resplandor"] = "Glow",
-    ["Fondo Borroso"] = "Background Blur",
-    ["Posición de la Luna"] = "Moon Position",
-    ["Ajustes: Pink Hour"] = "Settings: Pink Hour",
-    ["Intensidad del Morado"] = "Purple Intensity",
-    ["Intensidad del Rosa"] = "Pink Intensity",
-    ["Saturación de Color"] = "Color Saturation",
-    ["Aplica Shaders originales."] = "Applies original shaders.",
-    ["Modo noche ajustable."] = "Adjustable night mode.",
-    ["Estilo Synthwave. Cielo y ambiente ajustable con los sliders."] = "Synthwave style. Adjustable sky and environment using the sliders.",
-    ["Elige un skybox del repo o usa tu cielo personalizado."] = "Choose a skybox from the repo or use your custom sky.",
-    ["Imagen actual: 92427017914292. Se repite en las seis caras del cielo."] = "Current image: 92427017914292. It is repeated on all six sky faces.",
-    ["Reemplaza el cielo con tu imagen, sin nubes, niebla ni filtros. Pega un ID o rbxassetid://ID."] = "Replace the sky with your image, without clouds, fog, or filters. Paste an ID or rbxassetid://ID.",
-    ["Quita el skybox activo, desactiva FPS Boost y recupera los gráficos originales."] = "Removes the active skybox, disables FPS Boost, and restores the original graphics.",
-    ["Afecta solo al Modo Noche. Úsalo si está muy oscuro."] = "Only affects Night Mode. Use it if the map is too dark.",
-    ["0 = Oscuridad total. 50 = Sombra suave y clara."] = "0 = Total darkness. 50 = Soft, bright shadows.",
-    ["Ajusta qué tanto brillan las armas y las luces del mapa."] = "Adjusts how much weapons and map lights glow.",
-    ["0 = Sin borrosidad. Añade un efecto de cámara cinematográfica."] = "0 = No blur. Adds a cinematic camera effect.",
-    ["Mueve la luna en el cielo."] = "Moves the moon across the sky.",
-    ["Añade oscuridad y tonos violetas al cielo y al mapa."] = "Adds darkness and violet tones to the sky and map.",
-    ["Agrega tonos magentas y rosas a las luces."] = "Adds magenta and pink tones to lights.",
-    ["0 = Grisáceo y apagado. 1 = Colores fluorescentes."] = "0 = Gray and muted. 1 = Fluorescent colors.",
-    ["Haz que el cielo y los neones brillen mas."] = "Makes the sky and neon lights glow more.",
-    ["Cielo personalizado"] = "Custom sky",
-    ["Ninguno"] = "None",
-    ["Farmeo de Evento"] = "Event Farming",
-    ["Auto Farmear Evento"] = "Auto Farm Event",
-    ["Comprador de Cajas (Con monedas)"] = "Crate Buyer (Coins)",
-    ["Selecciona la Caja"] = "Select Crate",
-    ["Comprar 1 Caja"] = "Buy 1 Crate",
-    ["Auto Comprar Caja (Loop)"] = "Auto Buy Crate (Loop)",
-    ["Paquetes Completos"] = "Full Animation Packs",
-    ["Elegir Paquete"] = "Choose Pack",
-    ["Aplicar Paquete Completo"] = "Apply Full Pack",
-    ["Restaurar Default"] = "Restore Default",
-    ["Mezclador de Animaciones"] = "Animation Mixer",
-    ["Reposo"] = "Idle",
-    ["Caminar"] = "Walk",
-    ["Correr"] = "Run",
-    ["Saltar"] = "Jump",
-    ["Caer"] = "Fall",
-    ["Escalar"] = "Climb",
-    ["Combinar y Aplicar"] = "Combine and Apply",
-    ["INVENTARIO"] = "INVENTORY",
-    ["Generar Armas"] = "Generate Weapons",
-    ["Aviso"] = "Notice",
-    ["Filtrar por Tipo"] = "Filter by Type",
-    ["Buscar Item..."] = "Search Item...",
-    ["Selecciona un Item"] = "Select an Item",
-    ["Control del Inventario"] = "Inventory Control",
-    ["Cantidad a Generar"] = "Amount to Generate",
-    ["Agregar al Inventario"] = "Add to Inventory",
-    ["Eliminar Arma Seleccionada"] = "Delete Selected Weapon",
-    ["Limpiar Todo lo Generado"] = "Clear All Generated Items",
-    ["De momento solo genera armas en el inventario (visuales)."] = "For now it only generates weapons in the inventory (visual only).",
-    ["Todos"] = "All",
-    ["Cuchillos"] = "Knives",
-    ["Pistolas"] = "Guns",
-    ["Efectos"] = "Effects",
-    ["Personalización de Interfaz"] = "Interface Customization",
-    ["Negro, blanco y una interfaz hecha para XeroHub. Creado por Kev."] = "Black, white, and an interface built for XeroHub. Created by Kev.",
-    ["Tema de Interfaz"] = "Interface Theme",
-    ["Cambia entre el tema oscuro de Xero y un tema blanco con otra imagen de fondo."] = "Switch between Xero's dark theme and a white theme with a different background image.",
-    ["Ocultar Botón Flotante"] = "Hide Floating Button",
-    ["Lo deja invisible pero sigue en su sitio y sigue siendo tocable para reabrir el hub."] = "Makes it invisible while keeping it in place and clickable so you can reopen the hub.",
-    ["Botones Flotantes Invisibles"] = "Invisible Floating Buttons",
-    ["Oculta la posicion de los botones."] = "Hides the position of the buttons.",
-    ["Gestor de Configs"] = "Config Manager",
-    ["Seleccionar Configuración"] = "Select Configuration",
-    ["Actualizar Lista"] = "Refresh List",
-    ["Nombre para Guardar "] = "Save Name ",
-    ["Guardar Configuración"] = "Save Configuration",
-    [" Cargar Configuración"] = " Load Configuration",
-    ["Ej: Config 1, Config 2..."] = "E.g. Config 1, Config 2...",
-    ["Idioma"] = "Language",
-    ["Cambia el idioma visible del hub sin modificar los valores internos de tus ajustes."] = "Changes the hub's visible language without modifying internal setting values.",
-    ["Español"] = "Spanish",
-    ["Ej: builderman"] = "E.g. builderman",
-    ["Escribe una letra (Ej: Q, E, R...)"] = "Type a key (E.g. Q, E, R...)",
-    ["Ej: 2, 12, 25..."] = "E.g. 2, 12, 25...",
-    ["Escribe tu nombre falso..."] = "Type your fake name...",
-    ["Ej: 1, 10, 99+"] = "E.g. 1, 10, 99+",
-    ["Cargando XeroHub..."] = "Loading XeroHub...",
-    ["Preparando controles..."] = "Preparing controls...",
-    ["Selector corporal"] = "Body selector",
-    ["Toca varias zonas del cuerpo. Las partes activas se iluminan al instante."] = "Tap multiple body areas. Active parts light up instantly.",
-    ["Selector corporal · "] = "Body selector · ",
-    ["Editor visual de apariencia"] = "Visual appearance editor",
-    ["Modelo independiente de tu avatar. Ajusta limiteds sin usar al personaje que está dentro del juego."] = "Independent model of your avatar. Adjust limiteds without using your in-game character.",
-    ["Vista previa · avatar aislado"] = "Preview · isolated avatar",
-    ["Arrastra: rotar  ·  rueda/pellizca: zoom  ·  clic derecho/2 dedos: mover"] = "Drag: rotate  ·  wheel/pinch: zoom  ·  right click/2 fingers: move",
-    ["Limited activo"] = "Active limited",
-    ["Seleccionar limited"] = "Select limited",
-    ["Ajustes"] = "Settings",
-    ["Restablecer"] = "Reset",
-    ["Guardar"] = "Save",
-    ["Activa al menos un limited para editarlo aquí."] = "Enable at least one limited to edit it here.",
-    ["Sin limiteds activos"] = "No active limiteds",
-    ["XeroHub · Ajuste"] = "XeroHub · Setting",
-    ["XeroHub · Sonidos"] = "XeroHub · Sounds",
-    ["XeroHub · Error de sonido"] = "XeroHub · Sound Error",
-    ["Sonido original del arma restaurado."] = "Original weapon sound restored.",
-    ["El sonido de disparo ya está activo."] = "The gunshot sound is already active.",
-    ["Sonido de disparo activado."] = "Gunshot sound enabled.",
-    ["Selecciona un sonido del catálogo."] = "Select a sound from the catalog.",
-    ["Selecciona un sonido para probarlo."] = "Select a sound to preview it.",
-    ["Sonido de muerte original restaurado."] = "Original death sound restored.",
-    ["Selecciona un sonido de muerte del catálogo."] = "Select a death sound from the catalog.",
-    ["Actualizando catálogo del repo…"] = "Refreshing the repo catalog…",
-    ["Link copiado. Si no te hace TP, pégalo en tu navegador para entrar."] = "Link copied. If teleport does not work, paste it into your browser to join.",
-    ["FPS Boost aplicado."] = "FPS Boost applied.",
-    ["Gráficos originales restaurados."] = "Original graphics restored.",
-    ["Buscando servidor vacío..."] = "Searching for an empty server...",
-    ["¡Servidor encontrado!..."] = "Server found!...",
-    ["No hay servidores vacíos disponibles."] = "No empty servers are available.",
-    ["Error de conexión con el Proxy."] = "Proxy connection error.",
-    ["Tu ejecutor no soporta HTTP Requests."] = "Your executor does not support HTTP requests.",
-    ["Korblox local requiere R15."] = "Local Korblox requires R15.",
-    ["Tu avatar original fue restaurado."] = "Your original avatar was restored.",
-    ["Selecciona un jugador válido."] = "Select a valid player.",
-    ["Escribe un username."] = "Type a username.",
-    ["No tienes un avatar clonado activo."] = "You do not have an active cloned avatar.",
-    ["No se pudo restaurar tu avatar."] = "Your avatar could not be restored.",
-    ["El editor visual aún no está listo."] = "The visual editor is not ready yet.",
-    ["Activa un limited primero."] = "Enable a limited first.",
-    ["Ajustes aplicados y guardados."] = "Settings applied and saved.",
-    ["Selecciona un limited primero."] = "Select a limited first.",
-    ["Apariencia restaurada."] = "Appearance restored.",
-    ["Kill All no se puede activar en zona segura."] = "Kill All cannot be enabled in a safe zone.",
-    ["Kill All: ACTIVADO"] = "Kill All: ENABLED",
-    ["Kill All: DESACTIVADO"] = "Kill All: DISABLED",
-    ["No se pudo aplicar el modo; se restauraron los gráficos."] = "The mode could not be applied; graphics were restored.",
-    ["Noche: ON (Cielo despejado)"] = "Night: ON (Clear sky)",
-    ["Noche: OFF"] = "Night: OFF",
-    ["Pega un ID de textura válido, por ejemplo 92427017914292."] = "Paste a valid texture ID, for example 92427017914292.",
-    ["Cielo e iluminación originales restaurados."] = "Original sky and lighting restored.",
-    ["Auto Farm activado..."] = "Auto Farm enabled...",
-    ["Auto Farm detenido."] = "Auto Farm stopped.",
-    ["Error al comprar o sin dinero."] = "Purchase failed or not enough money.",
-    ["Auto-compra iniciada..."] = "Auto-buy started...",
-    ["Auto-compra detenida."] = "Auto-buy stopped.",
-    ["Animaciones de tu avatar restauradas."] = "Your avatar animations were restored.",
-    ["Aplicando combinación de animaciones..."] = "Applying animation combination...",
-    ["Selecciona al menos una animación para combinar."] = "Select at least one animation to combine.",
-    ["Base de datos de armas cargada con éxito."] = "Weapon database loaded successfully.",
-    ["Error: Necesitas tener al menos 1 arma real en tu inventario."] = "Error: You need at least 1 real weapon in your inventory.",
-    ["El arma no es Spoof o no está en el inventario."] = "The weapon is not spoofed or is not in the inventory.",
-    ["Lista de configuraciones actualizada."] = "Configuration list refreshed.",
-    [" Escribe un nombre válido o selecciona una config para sobreescribir."] = " Enter a valid name or select a config to overwrite.",
-    [" Error interno al procesar los datos."] = " Internal error while processing data.",
-    [" Error: Tu ejecutor no soporta guardar"] = " Error: Your executor does not support saving",
-    ["No hay ninguna configuración seleccionada."] = "No configuration is selected.",
-    ["Error al leer el archivo."] = "Error reading the file.",
-    ["La configuración no existe."] = "The configuration does not exist.",
-    ["No se pudo cargar XeroHub"] = "Could not load XeroHub",
-    ["Nombre invisible."] = "Name hidden.",
-    ["Nombre visible."] = "Name visible.",
-    ["Nombre falso activado."] = "Fake name enabled.",
-    ["Nombre falso desactivado."] = "Fake name disabled.",
-    ["Tag de Creador activado."] = "Creator tag enabled.",
-    ["Tag de Creador desactivado."] = "Creator tag disabled.",
-    ["Creador de XeroHub\nTikTok: @kevzzx_"] = "XeroHub creator\nTikTok: @kevzzx_",
-    ["ZONA MUERTA\n(Arrastrar)"] = "DEAD ZONE\n(Drag)",
-}
-    local PREFIXES = {
-    ["Sonido de disparo desactivado · "] = "Gunshot sound disabled · ",
-    ["Preparando sonido de muerte: "] = "Preparing death sound: ",
-    ["Cargando vista previa: "] = "Loading preview: ",
-    ["No se pudo cargar todo el cielo de "] = "Could not fully load the sky for ",
-    ["No se pudo cargar la textura de "] = "Could not load the texture for ",
-    ["No se pudo cargar "] = "Could not load ",
-    ["Avatar clonado: "] = "Avatar cloned: ",
-    ["Cargando avatar de "] = "Loading avatar for ",
-    ["No se pudo clonar: "] = "Could not clone: ",
-    ["Buscando @"] = "Searching @",
-    ["Ajustes restaurados: "] = "Settings restored: ",
-    ["Tecla Silent Aim asignada a: "] = "Silent Aim key assigned to: ",
-    ["Hitbox fijada en: "] = "Hitbox set to: ",
-    ["Nombre guardado: "] = "Name saved: ",
-    ["Error cargando "] = "Error loading ",
-    ["Aplicando paquete: "] = "Applying pack: ",
-    ["Cantidad sumada: "] = "Amount added: ",
-    ["Generado: "] = "Generated: ",
-    ["Eliminado: "] = "Removed: ",
-    ["Limpieza completa: "] = "Cleanup complete: ",
-    [" Guardado como: "] = " Saved as: ",
-    ["Reproduciendo: "] = "Playing: ",
-    ["Preparando "] = "Preparing ",
-    ["Ya estás en "] = "You are already in ",
-    ["Intentando ir a "] = "Trying to join ",
-}
-    local REVERSE = {}
-    for source, translated in pairs(EN) do REVERSE[translated] = source end
-
-    local function normalize(value)
-        local key=string.lower(tostring(value or "es"))
-        if key=="en" or key=="eng" or key=="english" or key=="ingles" or key=="inglés" then return "en" end
-        return "es"
-    end
-
-    local env=(getgenv and getgenv()) or _G
-    local function loadPreference()
-        local language=normalize(env.XERO_LANGUAGE or "es")
-        if type(isfile)=="function" and type(readfile)=="function" and isfile(PREF) then
-            local ok,data=pcall(readfile,PREF)
-            if ok and type(data)=="string" and data~="" then language=normalize(data) end
-        end
-        return language
-    end
-
-    L.En = EN
-    L.Normalize = normalize
-    L.Language = loadPreference()
-    env.XERO_LANGUAGE=L.Language
-    runtime.InterfaceLanguage=L.Language
-
-    function L.SetLanguage(language)
-        language=normalize(language)
-        L.Language=language
-        env.XERO_LANGUAGE=language
-        runtime.InterfaceLanguage=language
-        if type(writefile)=="function" then
-            pcall(function()
-                if type(makefolder)=="function" and (type(isfolder)~="function" or not isfolder("XeroHub")) then makefolder("XeroHub") end
-                if type(makefolder)=="function" and (type(isfolder)~="function" or not isfolder(PREF_FOLDER)) then makefolder(PREF_FOLDER) end
-                writefile(PREF,language)
-            end)
-        end
-        return language
-    end
-
-    function L.T(value)
-        local text=tostring(value or "")
-        if runtime.InterfaceLanguage~="en" then return text end
-        return EN[text] or text
-    end
-
-    function L.Dynamic(value)
-        local text=tostring(value or "")
-        if runtime.InterfaceLanguage~="en" then return text end
-        local exact=EN[text]
-        if exact then return exact end
-        local bestSource,bestTranslated=nil,nil
-        for source,translated in pairs(PREFIXES) do
-            if text:sub(1,#source)==source and (not bestSource or #source>#bestSource) then
-                bestSource,bestTranslated=source,translated
-            end
-        end
-        if bestSource then return bestTranslated..text:sub(#bestSource+1) end
-        text=text:gsub(" activado$"," enabled"):gsub(" desactivado$"," disabled")
-        text=text:gsub(": ACTIVADO",": ENABLED"):gsub(": DESACTIVADO",": DISABLED")
-        return text
-    end
-
-    function L.RefreshRoot(root)
-        if not root or not root.Parent then return end
-        local objects={root}
-        for _,descendant in ipairs(root:GetDescendants()) do objects[#objects+1]=descendant end
-        for _,object in ipairs(objects) do
-            if object:IsA("TextLabel") or object:IsA("TextButton") or object:IsA("TextBox") then
-                local source=object:GetAttribute("XeroLangSource")
-                if not source then
-                    local current=tostring(object.Text or "")
-                    source=REVERSE[current] or (EN[current] and current or nil)
-                    if source then pcall(function() object:SetAttribute("XeroLangSource",source) end) end
-                end
-                if source then object.Text=L.T(source) end
-                if object:IsA("TextBox") then
-                    local placeholderSource=object:GetAttribute("XeroLangPlaceholderSource")
-                    if not placeholderSource then
-                        local current=tostring(object.PlaceholderText or "")
-                        placeholderSource=REVERSE[current] or (EN[current] and current or nil)
-                        if placeholderSource then pcall(function() object:SetAttribute("XeroLangPlaceholderSource",placeholderSource) end) end
-                    end
-                    if placeholderSource then object.PlaceholderText=L.T(placeholderSource) end
-                end
-            end
-        end
-    end
-
-    function L.RefreshAll()
-        for _,root in ipairs({runtime.ScreenGui,runtime.BodySelectorGui,runtime.AppearanceStudioGui,runtime.NotificationGui,runtime.StartupGui}) do
-            pcall(L.RefreshRoot,root)
-        end
-    end
-
-    return L
-end)()
-
 local playerGui = player:WaitForChild("PlayerGui")
 local previousOverlay = playerGui:FindFirstChild("XeroHub_Overlays") or playerGui:FindFirstChild("iLunXHub_Overlays")
 if previousOverlay then
@@ -955,7 +482,7 @@ do
     status.Size = UDim2.new(1, -48, 0, 22)
     status.Position = UDim2.new(0.5, 0, 0, 62)
     status.BackgroundTransparency = 1
-    status.Text = runtime.Localization.T("Cargando XeroHub...")
+    status.Text = "Cargando XeroHub..."
     status.TextColor3 = Color3.fromHex("#9B9B9B")
     status.Font = Enum.Font.GothamMedium
     status.TextSize = 13
@@ -996,7 +523,7 @@ function startupSplashState.Finish(message)
     -- Sólo los errores conservan un momento de lectura. La carga correcta
     -- termina inmediatamente, sin duración mínima ni esperar animaciones.
     if message and startupSplashState.Status then
-        startupSplashState.Status.Text = runtime.Localization.Dynamic(message)
+        startupSplashState.Status.Text = message
         task.wait(0.65)
     end
     if startupSplashState.Progress then
@@ -1085,7 +612,7 @@ end
 local WindUI
 -- UI separada: puedes ofuscar este archivo sin mezclar las ~1k líneas visuales.
 -- Orden de carga: archivo local XeroHub_UI.lua -> URL RAW oficial de XeroHub.
-local NOX_UI_URL = ((getgenv and getgenv()) or _G).NOX_UI_URL or "https://raw.githubusercontent.com/OnyxDevv/Onyx-web/refs/heads/main/main2.lua"
+local NOX_UI_URL = ((getgenv and getgenv()) or _G).NOX_UI_URL or "https://raw.githubusercontent.com/OnyxDevv/Onyx-web/refs/heads/main/main%20(3).lua"
 local ok, result = pcall(function()
     local source
     if isfile and readfile and isfile("XeroHub_UI.lua") then
@@ -1116,8 +643,6 @@ end)
 
 if ok and result then
     WindUI = result
-    if WindUI.RegisterTranslations then WindUI:RegisterTranslations("en", runtime.Localization.En) end
-    if WindUI.SetLanguage then WindUI:SetLanguage(runtime.InterfaceLanguage) end
 else
     warn("[XeroHub] No se pudo iniciar la UI: " .. tostring(result))
     startupSplashState.Finish("No se pudo cargar XeroHub")
@@ -1139,13 +664,12 @@ local Window = WindUI:CreateWindow({
 -- La UI ya está cargada; el resto del arranque prepara sus controles.
 if startupSplashState.Progress then
     startupSplashState.Progress.Size = UDim2.fromScale(0.65, 1)
-    startupSplashState.Status.Text = runtime.Localization.T("Preparando controles...")
+    startupSplashState.Status.Text = "Preparando controles..."
 end
 
 pcall(function()
     Window:OnDestroy(runtime.Cleanup)
 end)
-task.defer(runtime.Localization.RefreshAll)
 
 
 -- ==========================================
@@ -1328,7 +852,7 @@ sendNotification = function(text, options)
     if not runtime.Alive then return end
     if (not runtime.NotificationsReady or runtime.SuppressNotifications) and not options.force then return end
 
-    text = runtime.Localization.Dynamic(tostring(text or ""))
+    text = tostring(text or "")
     if text == "" then return end
 
     -- El serial permite que los wrappers sepan que el callback ya avisó,
@@ -1348,7 +872,7 @@ sendNotification = function(text, options)
 
     local payload = {
         text = text,
-        title = runtime.Localization.Dynamic(tostring(options.title or "XeroHub")),
+        title = tostring(options.title or "XeroHub"),
         icon = tostring(options.icon or "◇"),
         accent = Color3.fromHex("#E6E6E6"),
         duration = holdDuration,
@@ -1424,9 +948,9 @@ for _, tab in pairs(Tabs) do
                         and (runtime.NotificationSerial or 0) == serialBefore then
                         local enabled = state == true
                         sendNotification(
-                            runtime.Localization.T(title) .. (enabled and (runtime.InterfaceLanguage=="en" and " enabled" or " activado") or (runtime.InterfaceLanguage=="en" and " disabled" or " desactivado")),
+                            title .. (enabled and " activado" or " desactivado"),
                             {
-                                title = runtime.Localization.T("XeroHub · Ajuste"),
+                                title = "XeroHub · Ajuste",
                                 icon = enabled and "✓" or "–",
                                 accent = enabled and Color3.fromHex("#78D98B") or Color3.fromHex("#8E8E93"),
                                 key = "toggle:" .. title,
@@ -3703,7 +3227,7 @@ dzStroke.LineJoinMode = Enum.LineJoinMode.Round
 local dzLabel = Instance.new("TextLabel", deadZoneFrame)
 dzLabel.Size = UDim2.new(1, 0, 1, 0)
 dzLabel.BackgroundTransparency = 1
-dzLabel.Text = runtime.Localization.T("ZONA MUERTA\n(Arrastrar)")
+dzLabel.Text = "ZONA MUERTA\n(Arrastrar)"
 dzLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
 dzLabel.Font = Enum.Font.GothamBold
 dzLabel.TextSize = 14
@@ -4221,7 +3745,7 @@ function runtime.EnsureBodySelector()
     title.Size = UDim2.new(1, -88, 0, 24)
     title.Position = UDim2.fromOffset(18, 14)
     title.BackgroundTransparency = 1
-    title.Text = runtime.Localization.T("Selector corporal")
+    title.Text = "Selector corporal"
     title.TextColor3 = Color3.fromHex("#F7F8F9")
     title.Font = Enum.Font.GothamBold
     title.TextSize = 15
@@ -4251,7 +3775,7 @@ function runtime.EnsureBodySelector()
     subtitle.Size = UDim2.new(1, -36, 0, 28)
     subtitle.Position = UDim2.fromOffset(18, 39)
     subtitle.BackgroundTransparency = 1
-    subtitle.Text = runtime.Localization.T("Toca varias zonas del cuerpo. Las partes activas se iluminan al instante.")
+    subtitle.Text = "Toca varias zonas del cuerpo. Las partes activas se iluminan al instante."
     subtitle.TextColor3 = Color3.fromHex("#9DA3AB")
     subtitle.Font = Enum.Font.Gotham
     subtitle.TextSize = 10
@@ -4541,7 +4065,7 @@ function runtime.OpenBodySelector(mode)
         runtime.BodySelectorGui.DisplayOrder = 2147483647
     end
     runtime.BodySelector.Mode = mode
-    runtime.BodySelector.Title.Text = runtime.Localization.T("Selector corporal · ") .. (mode == "AutoShoot" and "Auto Shoot" or "Silent Aim")
+    runtime.BodySelector.Title.Text = "Selector corporal · " .. (mode == "AutoShoot" and "Auto Shoot" or "Silent Aim")
     runtime.BodySelector.Refresh()
     runtime.BodySelector.Overlay.Visible = true
 
@@ -9266,7 +8790,7 @@ function runtime.EnsureAppearanceStudio()
     title.BackgroundTransparency = 1
     title.Position = UDim2.fromOffset(22, 18)
     title.Size = UDim2.new(1, -96, 0, 26)
-    title.Text = runtime.Localization.T("Editor visual de apariencia")
+    title.Text = "Editor visual de apariencia"
     title.TextColor3 = Color3.fromRGB(244, 244, 244)
     title.Font = Enum.Font.GothamBold
     title.TextSize = 18
@@ -9278,7 +8802,7 @@ function runtime.EnsureAppearanceStudio()
     subtitle.BackgroundTransparency = 1
     subtitle.Position = UDim2.fromOffset(22, 44)
     subtitle.Size = UDim2.new(1, -120, 0, 18)
-    subtitle.Text = runtime.Localization.T("Modelo independiente de tu avatar. Ajusta limiteds sin usar al personaje que está dentro del juego.")
+    subtitle.Text = "Modelo independiente de tu avatar. Ajusta limiteds sin usar al personaje que está dentro del juego."
     subtitle.TextColor3 = Color3.fromRGB(160, 160, 165)
     subtitle.Font = Enum.Font.Gotham
     subtitle.TextSize = 11
@@ -9325,7 +8849,7 @@ function runtime.EnsureAppearanceStudio()
     previewLabel.BackgroundTransparency = 1
     previewLabel.Position = UDim2.fromOffset(14, 9)
     previewLabel.Size = UDim2.new(1, -76, 0, 18)
-    previewLabel.Text = runtime.Localization.T("Vista previa · avatar aislado")
+    previewLabel.Text = "Vista previa · avatar aislado"
     previewLabel.TextColor3 = Color3.fromRGB(240, 240, 240)
     previewLabel.Font = Enum.Font.GothamBold
     previewLabel.TextSize = 12
@@ -9353,7 +8877,7 @@ function runtime.EnsureAppearanceStudio()
     previewHint.BackgroundTransparency = 1
     previewHint.Position = UDim2.fromOffset(14, 29)
     previewHint.Size = UDim2.new(1, -28, 0, 16)
-    previewHint.Text = runtime.Localization.T("Arrastra: rotar  ·  rueda/pellizca: zoom  ·  clic derecho/2 dedos: mover")
+    previewHint.Text = "Arrastra: rotar  ·  rueda/pellizca: zoom  ·  clic derecho/2 dedos: mover"
     previewHint.TextColor3 = Color3.fromRGB(126, 126, 132)
     previewHint.Font = Enum.Font.Gotham
     previewHint.TextSize = 9
@@ -9386,7 +8910,7 @@ function runtime.EnsureAppearanceStudio()
     targetTitle.BackgroundTransparency = 1
     targetTitle.Position = UDim2.fromOffset(0, 0)
     targetTitle.Size = UDim2.new(1, 0, 0, 22)
-    targetTitle.Text = runtime.Localization.T("Limited activo")
+    targetTitle.Text = "Limited activo"
     targetTitle.TextColor3 = Color3.fromRGB(244, 244, 244)
     targetTitle.Font = Enum.Font.GothamBold
     targetTitle.TextSize = 13
@@ -9414,7 +8938,7 @@ function runtime.EnsureAppearanceStudio()
     selectorButton.Size = UDim2.new(1, 0, 0, 36)
     selectorButton.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
     selectorButton.BorderSizePixel = 0
-    selectorButton.Text = runtime.Localization.T("Seleccionar limited")
+    selectorButton.Text = "Seleccionar limited"
     selectorButton.TextColor3 = Color3.fromRGB(240, 240, 240)
     selectorButton.Font = Enum.Font.GothamMedium
     selectorButton.TextSize = 11
@@ -9481,7 +9005,7 @@ function runtime.EnsureAppearanceStudio()
     controlTitle.BackgroundTransparency = 1
     controlTitle.Position = UDim2.fromOffset(0, 168)
     controlTitle.Size = UDim2.new(1, 0, 0, 20)
-    controlTitle.Text = runtime.Localization.T("Ajustes")
+    controlTitle.Text = "Ajustes"
     controlTitle.TextColor3 = Color3.fromRGB(244, 244, 244)
     controlTitle.Font = Enum.Font.GothamBold
     controlTitle.TextSize = 13
@@ -9521,7 +9045,7 @@ function runtime.EnsureAppearanceStudio()
     resetButton.Position = UDim2.new(0, 0, 1, -38)
     resetButton.BackgroundColor3 = Color3.fromRGB(24, 24, 24)
     resetButton.BorderSizePixel = 0
-    resetButton.Text = runtime.Localization.T("Restablecer")
+    resetButton.Text = "Restablecer"
     resetButton.TextColor3 = Color3.fromRGB(235, 235, 235)
     resetButton.Font = Enum.Font.GothamBold
     resetButton.TextSize = 10
@@ -9535,7 +9059,7 @@ function runtime.EnsureAppearanceStudio()
     saveButton.Position = UDim2.new(0.30, 3, 1, -38)
     saveButton.BackgroundColor3 = Color3.fromRGB(236, 236, 236)
     saveButton.BorderSizePixel = 0
-    saveButton.Text = runtime.Localization.T("Guardar")
+    saveButton.Text = "Guardar"
     saveButton.TextColor3 = Color3.fromRGB(14, 14, 14)
     saveButton.Font = Enum.Font.GothamBold
     saveButton.TextSize = 11
@@ -9549,7 +9073,7 @@ function runtime.EnsureAppearanceStudio()
     doneButton.Position = UDim2.new(0.64, 3, 1, -38)
     doneButton.BackgroundColor3 = Color3.fromRGB(24, 24, 24)
     doneButton.BorderSizePixel = 0
-    doneButton.Text = runtime.Localization.T("Cerrar")
+    doneButton.Text = "Cerrar"
     doneButton.TextColor3 = Color3.fromRGB(235, 235, 235)
     doneButton.Font = Enum.Font.GothamBold
     doneButton.TextSize = 11
@@ -9578,7 +9102,7 @@ function runtime.EnsureAppearanceStudio()
     noActive.BackgroundTransparency = 1
     noActive.Position = UDim2.fromOffset(0, 80)
     noActive.Size = UDim2.new(1, 0, 0, 32)
-    noActive.Text = runtime.Localization.T("Activa al menos un limited para editarlo aquí.")
+    noActive.Text = "Activa al menos un limited para editarlo aquí."
     noActive.TextColor3 = Color3.fromRGB(168, 168, 173)
     noActive.Font = Enum.Font.Gotham
     noActive.TextSize = 11
@@ -9818,7 +9342,7 @@ function runtime.EnsureAppearanceStudio()
 
             studio.TargetTitle.Position = UDim2.fromOffset(0, 0)
             studio.TargetTitle.Size = UDim2.new(1, 0, 0, 18)
-            studio.TargetTitle.Text = runtime.Localization.T("Limited activo")
+            studio.TargetTitle.Text = "Limited activo"
             studio.TargetTitle.TextSize = sideW < 250 and 10 or 12
             studio.TargetHint.Visible = false
 
@@ -9883,7 +9407,7 @@ function runtime.EnsureAppearanceStudio()
 
             studio.TargetTitle.Position = UDim2.fromOffset(0, 0)
             studio.TargetTitle.Size = UDim2.new(1, 0, 0, 18)
-            studio.TargetTitle.Text = runtime.Localization.T("Limited activo")
+            studio.TargetTitle.Text = "Limited activo"
             studio.TargetTitle.TextSize = 11
             studio.TargetHint.Visible = false
 
@@ -11606,7 +11130,7 @@ function runtime.RefreshAppearanceStudio()
     if studio.SelectedKey then
         local asset = runtime.AppearanceCatalog[studio.SelectedKey]
         local state = runtime.GetAppearanceOffset(studio.SelectedKey)
-        studio.TargetTitle.Text = runtime.Localization.T("Limited activo")
+        studio.TargetTitle.Text = "Limited activo"
         studio.AccessorySelector.Text = asset and asset.Name or studio.SelectedKey
         studio.AccessorySelector.TextColor3 = Color3.fromRGB(240, 240, 240)
         local values = {
@@ -11625,8 +11149,8 @@ function runtime.RefreshAppearanceStudio()
             end
         end
     else
-        studio.TargetTitle.Text = runtime.Localization.T("Limited activo")
-        studio.AccessorySelector.Text = runtime.Localization.T("Sin limiteds activos")
+        studio.TargetTitle.Text = "Limited activo"
+        studio.AccessorySelector.Text = "Sin limiteds activos"
         studio.AccessorySelector.TextColor3 = Color3.fromRGB(132, 132, 138)
         for component, control in pairs(studio.Controls) do
             control:Set(component == "SCALE" and 1 or 0, true)
@@ -11731,38 +11255,64 @@ if not aimHookState then
     local oldNamecall
     oldNamecall = hookmetamethod(game, "__namecall", function(self, ...)
         local target = aimHookState.Target
-        if not checkcaller() and target then
-            -- 🔥 FIX: Quitamos IsDescendantOf, que era lo que crasheaba el juego
-            if target.Parent then 
-                local method = getnamecallmethod()
-                if self == workspace then
-                    if method == "Raycast" then
-                        local origin, direction, p3 = ...
-                        if typeof(direction) == "Vector3" and direction.Magnitude > 5 and (origin - workspace.CurrentCamera.CFrame.Position).Magnitude > 1 then
-                            local newDir = (target.Position - origin).Unit * 5000
+
+        -- XERO_AIM_HOOK_FASTPATH:
+        -- Los hooks son globales. Primero descartamos el 99% de llamadas baratas y
+        -- sólo entonces consultamos checkcaller/getnamecallmethod. Durante un disparo
+        -- el juego hace muchas llamadas seguidas, así que este orden evita micro-picos.
+        if target and self == workspace and not checkcaller() then
+            if not target.Parent then
+                aimHookState.Target = nil
+                return oldNamecall(self, ...)
+            end
+
+            local method = getnamecallmethod()
+            local currentCamera = workspace.CurrentCamera
+            local cameraPosition = currentCamera and currentCamera.CFrame.Position
+
+            if cameraPosition and method == "Raycast" then
+                local origin, direction, p3 = ...
+                if typeof(direction) == "Vector3" and direction:Dot(direction) > 25 then
+                    local cameraDelta = origin - cameraPosition
+                    if cameraDelta:Dot(cameraDelta) > 1 then
+                        local targetDelta = target.Position - origin
+                        if targetDelta:Dot(targetDelta) > 0.0001 then
+                            local newDir = targetDelta.Unit * 5000
                             return oldNamecall(self, origin, newDir, p3)
                         end
-                    elseif method == "FindPartOnRay" or method == "FindPartOnRayWithIgnoreList" then
-                        local ray, p2, p3, p4 = ...
-                        if typeof(ray) == "Ray" and ray.Direction.Magnitude > 5 and (ray.Origin - workspace.CurrentCamera.CFrame.Position).Magnitude > 1 then
-                            local newRay = Ray.new(ray.Origin, (target.Position - ray.Origin).Unit * 5000)
+                    end
+                end
+            elseif cameraPosition and (method == "FindPartOnRay" or method == "FindPartOnRayWithIgnoreList") then
+                local ray, p2, p3, p4 = ...
+                if typeof(ray) == "Ray" and ray.Direction:Dot(ray.Direction) > 25 then
+                    local cameraDelta = ray.Origin - cameraPosition
+                    if cameraDelta:Dot(cameraDelta) > 1 then
+                        local targetDelta = target.Position - ray.Origin
+                        if targetDelta:Dot(targetDelta) > 0.0001 then
+                            local newRay = Ray.new(ray.Origin, targetDelta.Unit * 5000)
                             return oldNamecall(self, newRay, p2, p3, p4)
                         end
                     end
                 end
-            else
-                aimHookState.Target = nil
             end
         end
+
         return oldNamecall(self, ...)
     end)
 
     local oldIndex
     oldIndex = hookmetamethod(game, "__index", function(t, k)
         local target = aimHookState.Target
-        if not checkcaller() and t == aimHookState.Mouse and target and target.Parent then
-            if k == "Hit" or k == "hit" then return target.CFrame
-            elseif k == "Target" or k == "target" then return target end
+        -- Igual que arriba: no llames checkcaller() en cada __index del juego.
+        if target and t == aimHookState.Mouse then
+            if not checkcaller() then
+                if target.Parent then
+                    if k == "Hit" or k == "hit" then return target.CFrame
+                    elseif k == "Target" or k == "target" then return target end
+                else
+                    aimHookState.Target = nil
+                end
+            end
         end
         return oldIndex(t, k)
     end)
@@ -12505,7 +12055,10 @@ runtime.Track(RunService.Heartbeat:Connect(function(deltaTime)
     if silentAimPistolaEnabled or silentAimCuchilloEnabled then
         mState.saAct = true
         mState.tSA = mState.tSA + deltaTime
-        if mState.tSA >= 0.03 then
+        -- Si AutoShoot va a disparar en ESTE Heartbeat ya hizo su propia adquisición
+        -- de target. No repetimos aquí otro barrido completo + raycasts en el mismo frame.
+        -- Dejamos tSA vencido para que Silent Aim refresque en el Heartbeat siguiente.
+        if mState.tSA >= 0.03 and not mState.autoShootHeavyDue then
             mState.tSA = 0
             if not enLobby then
                 local char = player.Character
@@ -16530,7 +16083,211 @@ UIElements.TogTokyowami = modes.toggle("Tokyowami", {
 })
 
 -- ==========================================
--- 2. SHADERS NOCTURNOS (CUSTOM PBR)
+-- 2. CYBERPUNK RTX · BASE TOKYOWAMI + METAL/REFLEJOS
+-- ==========================================
+-- No es ray tracing real: es un preset cliente que reutiliza la composición de
+-- Tokyowami (Bloom/CC/SunRays/Sky) y añade una pasada PBR-like reversible al mapa.
+local cyberState = {
+    Active = false,
+    ScanToken = 0,
+    Connection = nil,
+    Cache = setmetatable({}, {__mode = "k"}),
+    HumanoidModelCache = setmetatable({}, {__mode = "k"}),
+}
+
+local CYBER_SCAN_BUDGET = 0.0030
+local CYBER_SCAN_CHECK_EVERY = 72
+
+local function cyberIsCharacterPart(object)
+    local model = object and object:FindFirstAncestorOfClass("Model")
+    if not model then return false end
+
+    local cached = cyberState.HumanoidModelCache[model]
+    if cached ~= nil then return cached end
+
+    local isCharacter = model:FindFirstChildOfClass("Humanoid") ~= nil
+    cyberState.HumanoidModelCache[model] = isCharacter
+    return isCharacter
+end
+
+local function cyberShouldModify(object)
+    if not object or not object:IsA("BasePart") then return false end
+    if object.Transparency >= 0.95 then return false end
+    if player.Character and object:IsDescendantOf(player.Character) then return false end
+    if object:FindFirstAncestorWhichIsA("Tool") then return false end
+    if cyberIsCharacterPart(object) then return false end
+    return true
+end
+
+local function cyberApplyPart(object)
+    if not cyberState.Active or not cyberShouldModify(object) then return end
+    if cyberState.Cache[object] then return end
+
+    cyberState.Cache[object] = {
+        Material = object.Material,
+        MaterialVariant = object.MaterialVariant,
+        Reflectance = object.Reflectance,
+    }
+
+    -- Conservamos Neon/Glass para que luces y ventanas sigan teniendo identidad.
+    -- El resto del mapa adopta metal sin tocar Color/TextureID/SurfaceAppearance.
+    if object.Material == Enum.Material.Neon then
+        object.Reflectance = math.max(object.Reflectance, 0.04)
+    elseif object.Material == Enum.Material.Glass then
+        object.Reflectance = math.max(object.Reflectance, 0.10)
+    elseif object.Material ~= Enum.Material.ForceField then
+        object.MaterialVariant = ""
+        object.Material = Enum.Material.Metal
+        object.Reflectance = math.max(object.Reflectance, 0.16)
+    end
+end
+
+local function cyberRestoreParts()
+    for object, data in pairs(cyberState.Cache) do
+        if object and object.Parent then
+            pcall(function()
+                object.Material = data.Material
+                object.MaterialVariant = data.MaterialVariant
+                object.Reflectance = data.Reflectance
+            end)
+        end
+        cyberState.Cache[object] = nil
+    end
+    table.clear(cyberState.HumanoidModelCache)
+end
+
+local function cyberStartMapPass()
+    cyberState.ScanToken = cyberState.ScanToken + 1
+    local token = cyberState.ScanToken
+
+    task.spawn(function()
+        local descendants = workspace:GetDescendants()
+        local nextYieldAt = os.clock() + CYBER_SCAN_BUDGET
+
+        for i = 1, #descendants do
+            if not cyberState.Active or token ~= cyberState.ScanToken then break end
+            cyberApplyPart(descendants[i])
+
+            if i % CYBER_SCAN_CHECK_EVERY == 0 and os.clock() >= nextYieldAt then
+                task.wait()
+                nextYieldAt = os.clock() + CYBER_SCAN_BUDGET
+            end
+        end
+
+        table.clear(descendants)
+    end)
+end
+
+local function cyberDisconnect()
+    cyberState.ScanToken = cyberState.ScanToken + 1
+    if cyberState.Connection then
+        pcall(function() cyberState.Connection:Disconnect() end)
+        cyberState.Connection = nil
+    end
+end
+
+UIElements.TogCyberpunk = modes.toggle("Cyberpunk RTX", {
+    Title = "Cyberpunk RTX",
+    Desc = "Tokyowami reconstruido con metal, reflejos, neón y ambiente cyberpunk.",
+    Callback = function(Value)
+        local Lighting = game:GetService("Lighting")
+        local Terrain = workspace:FindFirstChildOfClass("Terrain")
+        cyberState.Active = Value
+
+        if Value then
+            -- Misma familia visual de Tokyowami, pero ajustada para un look nocturno,
+            -- metálico y contrastado. modes.capture() ya guardó Lighting/Terrain.
+            local bloom = addEffect("BloomEffect", {
+                Intensity = 0.38,
+                Threshold = 0.72,
+                Size = 52,
+            })
+            bloom.Name = "XeroCyber_Bloom"
+
+            local blur = addEffect("BlurEffect", {Size = 1})
+            blur.Name = "XeroCyber_Blur"
+
+            local cc = addEffect("ColorCorrectionEffect", {
+                Brightness = -0.015,
+                Contrast = 0.24,
+                Saturation = 0.16,
+                TintColor = Color3.fromRGB(205, 225, 255),
+            })
+            cc.Name = "XeroCyber_Color"
+
+            local rays = addEffect("SunRaysEffect", {
+                Intensity = 0.045,
+                Spread = 0.78,
+            })
+            rays.Name = "XeroCyber_Rays"
+
+            local atmosphere = addEffect("Atmosphere", {
+                Color = Color3.fromRGB(105, 155, 255),
+                Decay = Color3.fromRGB(72, 16, 105),
+                Density = 0.22,
+                Offset = 0.15,
+                Glare = 0.12,
+                Haze = 1.35,
+            })
+            atmosphere.Name = "XeroCyber_Atmosphere"
+
+            -- Base del sky de Tokyowami: conservamos sus seis caras y cambiamos
+            -- completamente la iluminación que las colorea.
+            local sky = addEffect("Sky", {
+                SkyboxUp = "rbxassetid://323493360",
+                SkyboxLf = "rbxassetid://323494252",
+                SkyboxBk = "rbxassetid://323494035",
+                SkyboxFt = "rbxassetid://323494130",
+                SkyboxDn = "rbxassetid://323494368",
+                SkyboxRt = "rbxassetid://323494067",
+                SunAngularSize = 9,
+                StarCount = 1800,
+            })
+            sky.Name = "XeroCyber_TokyoSky"
+
+            Lighting.Brightness = 2.55
+            Lighting.ClockTime = 20.35
+            Lighting.GlobalShadows = true
+            Lighting.ShadowSoftness = 0.06
+            Lighting.ExposureCompensation = 0.16
+            Lighting.EnvironmentSpecularScale = 1
+            Lighting.EnvironmentDiffuseScale = 0.58
+            Lighting.Ambient = Color3.fromRGB(13, 15, 28)
+            Lighting.OutdoorAmbient = Color3.fromRGB(25, 38, 66)
+            Lighting.ColorShift_Top = Color3.fromRGB(54, 145, 255)
+            Lighting.ColorShift_Bottom = Color3.fromRGB(255, 32, 154)
+            Lighting.FogColor = Color3.fromRGB(18, 12, 31)
+            Lighting.FogStart = 0
+            Lighting.FogEnd = 1700
+
+            if Terrain then
+                Terrain.WaterWaveSize = 0.08
+                Terrain.WaterWaveSpeed = 10
+                Terrain.WaterReflectance = 1
+                Terrain.WaterTransparency = 0.32
+                Terrain.WaterColor = Color3.fromRGB(8, 24, 42)
+            end
+
+            cyberDisconnect()
+            -- Conexión estable primero; después hacemos una sola pasada amortizada.
+            cyberState.Active = true
+            cyberState.Connection = runtime.Track(workspace.DescendantAdded:Connect(function(object)
+                if cyberState.Active then cyberApplyPart(object) end
+            end))
+            cyberStartMapPass()
+
+            showBottomMessage("Cyberpunk RTX: ON")
+        else
+            cyberState.Active = false
+            cyberDisconnect()
+            cyberRestoreParts()
+            showBottomMessage("Cyberpunk RTX: OFF")
+        end
+    end
+})
+
+-- ==========================================
+-- 3. SHADERS NOCTURNOS (CUSTOM PBR)
 -- ==========================================
 UIElements.TogNight = modes.toggle("Noche", {
     Title = "Modo Noche",
@@ -17722,22 +17479,6 @@ local themeDropdown = Tabs.Config:Dropdown({
 })
 UIElements.ThemeDropdown = themeDropdown
 
-UIElements.LanguageDropdown = Tabs.Config:Dropdown({
-    Title = "Idioma",
-    Desc = "Cambia el idioma visible del hub sin modificar los valores internos de tus ajustes.",
-    Values = {"Español", "English"},
-    Value = runtime.InterfaceLanguage == "en" and "English" or "Español",
-    Callback = function(Value)
-        local targetLanguage = (Value == "English") and "en" or "es"
-        if targetLanguage == runtime.InterfaceLanguage then return end
-        runtime.Localization.SetLanguage(targetLanguage)
-        if Window and Window.SetLanguage then Window:SetLanguage(targetLanguage)
-        elseif WindUI and WindUI.SetLanguage then WindUI:SetLanguage(targetLanguage) end
-        runtime.Localization.RefreshAll()
-        showBottomMessage(targetLanguage == "en" and "Language changed to English." or "Idioma cambiado a Español.", {force=true})
-    end
-})
-
 Tabs.Config:Toggle({
     Title = "Ocultar Botón Flotante",
     Desc = "Lo deja invisible pero sigue en su sitio y sigue siendo tocable para reabrir el hub.",
@@ -18102,4 +17843,4 @@ end)
 startupSplashState.Finish()
 runtime.NotificationsReady = true
 -- XERO_FULL_GENERAL_OPTIMIZATION_2026_09_13
--- XERO_GENERAL_OPTIMIZATION_2026_09_14v
+-- XERO_GENERAL_OPTIMIZATION_2026_09_14

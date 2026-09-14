@@ -15273,6 +15273,82 @@ local loopHeartbeat = nil
 local isHidden = false
 local offsetDistance = 5000 -- Distancia estable: evita el error de precisión que aparece a 100k studs.
 local ghostEnabled = false
+
+-- XERO_WALK_SPEED_SLIDER_BEGIN
+-- Velocidad de locomoción sin modificar Humanoid.WalkSpeed.
+-- Usa MoveDirection + velocidad horizontal del HRP para conservar animaciones,
+-- colisiones y estados normales del Humanoid. En 16 no existe ningún loop activo.
+local walkSpeedValue = 16
+local walkSpeedConnection = nil
+
+local function stopWalkSpeedLoop()
+    if walkSpeedConnection then
+        pcall(function() walkSpeedConnection:Disconnect() end)
+        walkSpeedConnection = nil
+        runtime.PruneConnections()
+    end
+end
+
+local function ensureWalkSpeedLoop()
+    if walkSpeedValue <= 16 then
+        stopWalkSpeedLoop()
+        return
+    end
+    if walkSpeedConnection and walkSpeedConnection.Connected then return end
+
+    walkSpeedConnection = runtime.Track(RunService.Heartbeat:Connect(function()
+        if not runtime.Alive or walkSpeedValue <= 16 then return end
+        if ghostEnabled then return end
+
+        local char = player.Character
+        local hum = char and char:FindFirstChildOfClass("Humanoid")
+        local hrp = char and char:FindFirstChild("HumanoidRootPart")
+        if not hum or not hrp or hum.Health <= 0 then return end
+
+        -- Respeta freezes de ronda y sólo acelera locomoción terrestre real.
+        if hum.WalkSpeed <= 0 then return end
+        if hum.Sit or hum.FloorMaterial == Enum.Material.Air then return end
+
+        local moveDirection = hum.MoveDirection
+        local horizontal = Vector3_new(moveDirection.X, 0, moveDirection.Z)
+        local magnitude = horizontal.Magnitude
+        if magnitude <= 0.001 then return end
+
+        horizontal = horizontal / magnitude
+        local desired = horizontal * walkSpeedValue
+        local velocity = hrp.AssemblyLinearVelocity
+
+        -- Conserva Y para no tocar saltos/gravedad; sólo sustituye locomoción X/Z.
+        if math.abs(velocity.X - desired.X) > 0.05 or math.abs(velocity.Z - desired.Z) > 0.05 then
+            hrp.AssemblyLinearVelocity = Vector3_new(desired.X, velocity.Y, desired.Z)
+        end
+    end))
+end
+
+Tabs.Mov:Section({Title = "Velocidad"})
+UIElements.SliderWalkSpeed = Tabs.Mov:Slider({
+    Title = "Velocidad",
+    Desc = "Aumenta la velocidad de movimiento sin cambiar WalkSpeed.",
+    Step = 1,
+    Value = {Min = 16, Max = 60, Default = 16},
+    Callback = function(Value)
+        walkSpeedValue = math.clamp(tonumber(Value) or 16, 16, 60)
+        ensureWalkSpeedLoop()
+    end,
+})
+
+-- Al reaparecer vuelve a velocidad normal y no arrastra impulso/config de otra ronda.
+runtime.Track(player.CharacterAdded:Connect(function()
+    walkSpeedValue = 16
+    stopWalkSpeedLoop()
+    task.defer(function()
+        if runtime.Alive and UIElements.SliderWalkSpeed then
+            pcall(function() UIElements.SliderWalkSpeed:Set(16) end)
+        end
+    end)
+end))
+-- XERO_WALK_SPEED_SLIDER_END
+
 runtime.GhostOriginalTransparency = setmetatable({}, {__mode = "k"})
 
 function runtime.RestoreGhostTransparency(char)

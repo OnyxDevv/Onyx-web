@@ -569,6 +569,20 @@ local ok, result = pcall(function()
     else
         error("Falta XeroHub_UI.lua o getgenv().NOX_UI_URL")
     end
+    -- XeroHub UI patch: el main remoto actual no tiene numeración para Sonidos.
+    -- Se corrige en memoria antes de compilar para no requerir otro archivo UI local.
+    if type(source) == "string" then
+        source = source:gsub(
+            'AutoFarm="06",%["Gráficos"%]="07",Animaciones="08",Apariencia="09",%["Generar Armas"%]="10",%["Configuración"%]="11",%["Créditos"%]="12"',
+            'AutoFarm="06",["Gráficos"]="07",Sonidos="08",Animaciones="09",Apariencia="10",["Generar Armas"]="11",["Configuración"]="12",["Créditos"]="13"',
+            1
+        )
+        source = source:gsub(
+            '%["Gráficos"%]="Ajusta el ambiente, la iluminación y los efectos%.",',
+            '["Gráficos"]="Ajusta el ambiente, la iluminación y los efectos.", Sonidos="Personaliza los sonidos de disparo y kill.",',
+            1
+        )
+    end
     local chunk, compileError = loadstring(source)
     if not chunk then error("No se pudo compilar XeroHub_UI.lua: " .. tostring(compileError)) end
     return chunk()
@@ -976,6 +990,9 @@ local killSoundState = {
     RecentAttackTool = nil,
     LastConfirmedKillTrigger = 0,
     LastKillReplacementAt = 0,
+    -- Mientras el custom de kill está activo, los Died ajenos quedan mudos por
+    -- defecto. Sólo se vuelve audible el Died exacto que ya tiene el custom.
+    SuppressedDeathOriginalVolumes = setmetatable({}, {__mode = "k"}),
 }
 runtime.KillSoundChanger = killSoundState
 
@@ -1659,6 +1676,44 @@ local function isNativeDeathSound(sound)
     return name == "died" or idText == string.lower(DEFAULT_DEATH_SOUND)
 end
 
+local function releaseSuppressedDeathSound(sound)
+    local original = killSoundState.SuppressedDeathOriginalVolumes[sound]
+    if original == nil then return end
+    killSoundState.SuppressedDeathOriginalVolumes[sound] = nil
+    if sound and sound.Parent then
+        killSoundState.Muting[sound] = true
+        pcall(function() sound.Volume = original end)
+        killSoundState.Muting[sound] = nil
+    end
+end
+
+local function suppressDefaultDeathSound(sound)
+    if not killSoundState.Enabled or not sound or not sound.Parent or not isNativeDeathSound(sound) then
+        return false
+    end
+
+    -- Si ya parcheamos ESTE Died con el sonido personalizado, debe quedar audible.
+    if killSoundState.NativeDeathOriginalIds[sound] ~= nil then
+        releaseSuppressedDeathSound(sound)
+        return false
+    end
+
+    if killSoundState.SuppressedDeathOriginalVolumes[sound] == nil then
+        killSoundState.SuppressedDeathOriginalVolumes[sound] = sound.Volume
+    end
+
+    killSoundState.Muting[sound] = true
+    pcall(function() sound.Volume = 0 end)
+    killSoundState.Muting[sound] = nil
+    return true
+end
+
+local function restoreSuppressedDeathSounds()
+    for sound in pairs(killSoundState.SuppressedDeathOriginalVolumes) do
+        releaseSuppressedDeathSound(sound)
+    end
+end
+
 local function applyNativeDeathSound(sound)
     if not killSoundState.Enabled or not sound or not sound.Parent or not isNativeDeathSound(sound) then
         return false
@@ -1698,6 +1753,9 @@ local function restoreNativeDeathSound(sound)
         killSoundState.NativeDeathUpdating[sound] = true
         pcall(function() sound.SoundId = originalId end)
         killSoundState.NativeDeathUpdating[sound] = nil
+        if killSoundState.Enabled then
+            suppressDefaultDeathSound(sound)
+        end
     end
 end
 
@@ -1786,6 +1844,9 @@ local function armNativeDeathTarget(character, tool, forceExactTarget)
     local function watchDeathSound(sound)
         if not sound or not sound:IsA("Sound") or not isNativeDeathSound(sound) then return end
         applyNativeDeathSound(sound)
+        -- El default estaba silenciado globalmente. Ya que ESTE Sound tiene el
+        -- custom, restauramos su volumen para que Roblox lo reproduzca nativamente.
+        releaseSuppressedDeathSound(sound)
 
         table.insert(connections, sound:GetPropertyChangedSignal("SoundId"):Connect(function()
             if killSoundState.Enabled
@@ -1897,7 +1958,9 @@ local function playKillReplacement(originSound, sourceType)
         return false
     end
 
-    muteDynamicDeathSound(originSound)
+    if not originSound or killSoundState.SuppressedDeathOriginalVolumes[originSound] == nil then
+        muteDynamicDeathSound(originSound)
+    end
 
     -- Varias señales del mismo Died pueden llegar casi juntas; una sola reproducción.
     if now - (killSoundState.LastKillReplacementAt or 0) < KILL_DUPLICATE_WINDOW then
@@ -1929,6 +1992,19 @@ local function bindKillSound(sound)
     end
 
     local connections = {}
+
+    if kind == "death" then
+        -- Se hace al enlazar el Sound, mucho antes de Humanoid.Died/Played. Así el
+        -- uuhhh original no puede colarse aunque haya ping o el target llegue tarde.
+        suppressDefaultDeathSound(sound)
+        table.insert(connections, sound:GetPropertyChangedSignal("Volume"):Connect(function()
+            if killSoundState.Enabled and sound.Parent
+                and killSoundState.NativeDeathOriginalIds[sound] == nil
+                and not killSoundState.Muting[sound] then
+                suppressDefaultDeathSound(sound)
+            end
+        end))
+    end
 
     if kind == "gunkill" then
         applyNativeGunKill(sound)
@@ -2138,6 +2214,7 @@ local function restoreKillOriginalSounds()
     for sound in pairs(killSoundState.DynamicOriginals) do
         restoreDynamicDeathSound(sound)
     end
+    restoreSuppressedDeathSounds()
 end
 
 local function setKillToggleSilently(value)
@@ -2327,14 +2404,14 @@ local function refreshSoundCatalog(announce)
 end
 
 Tabs.Sonidos:Paragraph({
-    Title = "Sonidos del arma",
-    Desc = "Lee automáticamente los MP3 y OGG de Onyx-web/sounds. No necesita detectar el disparo: usa Gunshot (10209603).",
+    Title = "Sonidos",
+    Desc = "Personaliza los sonidos de disparo y de kill.",
 })
-Tabs.Sonidos:Section({Title = "Catálogo del repo"})
+Tabs.Sonidos:Section({Title = "Sonido de disparo"})
 
 soundDropdown = Tabs.Sonidos:Dropdown({
     Title = "Sonido del arma",
-    Desc = "Al elegir otro mientras está activo, el cambio se aplica en caliente.",
+    Desc = "Elige el sonido que quieres al disparar.",
     Values = {"Cargando catálogo…"},
     Value = "Cargando catálogo…",
     Callback = function(value)
@@ -2356,19 +2433,19 @@ soundDropdown = Tabs.Sonidos:Dropdown({
 
 Tabs.Sonidos:Button({
     Title = "Actualizar lista del repo",
-    Desc = "Busca archivos nuevos sin volver a ejecutar el hub.",
+    Desc = "Carga los sonidos nuevos del repo.",
     Callback = function() refreshSoundCatalog(true) end,
 })
 
 Tabs.Sonidos:Button({
     Title = "Probar sonido",
-    Desc = "Descarga, guarda en caché y reproduce el sonido seleccionado.",
+    Desc = "Escucha el sonido seleccionado.",
     Callback = function() previewEntry(getSelectedEntry()) end,
 })
 
 soundToggle = Tabs.Sonidos:Toggle({
     Title = "Cambiar sonido",
-    Desc = "Silencia el Gunshot original y reproduce el sonido seleccionado en cada disparo.",
+    Desc = "Usa el sonido elegido al disparar.",
     Value = false,
     Callback = function(enabled)
         if soundState.SyncingToggle then return end
@@ -2382,7 +2459,7 @@ UIElements.TogWeaponSound = soundToggle
 
 muteGunshotToggle = Tabs.Sonidos:Toggle({
     Title = "Desactivar sonido de disparo",
-    Desc = "Silencia por completo el Gunshot original. Si está activo un sonido personalizado, se desactiva automáticamente.",
+    Desc = "Dispara sin ningún sonido.",
     Value = false,
     Callback = function(enabled)
         if soundState.SyncingMuteToggle then return end
@@ -2398,12 +2475,12 @@ UIElements.TogMuteGunshot = muteGunshotToggle
 Tabs.Sonidos:Section({Title = "Sonido de muerte"})
 Tabs.Sonidos:Paragraph({
     Title = "Kill sound",
-    Desc = "GunKill (296102734) usa el Sound nativo de tu pistola. En cuchillo/otras armas, XeroHub arma el Died/uuhhh.mp3 de la víctima antes de morir para que Roblox reproduzca tu audio con timing nativo; el método anterior queda sólo como fallback.",
+    Desc = "Personaliza el sonido al conseguir una kill.",
 })
 
 killSoundDropdown = Tabs.Sonidos:Dropdown({
     Title = "Sonido de muerte",
-    Desc = "Catálogo independiente del sonido de disparo; usa los mismos MP3/OGG y la misma caché.",
+    Desc = "Elige el sonido que quieres al matar.",
     Values = {"Cargando catálogo…"},
     Value = "Cargando catálogo…",
     Callback = function(value)
@@ -2425,13 +2502,13 @@ killSoundDropdown = Tabs.Sonidos:Dropdown({
 
 Tabs.Sonidos:Button({
     Title = "Probar sonido de muerte",
-    Desc = "Reproduce el audio seleccionado sin activar el reemplazo.",
+    Desc = "Escucha el sonido seleccionado.",
     Callback = function() previewEntry(getSelectedKillEntry()) end,
 })
 
 killSoundToggle = Tabs.Sonidos:Toggle({
     Title = "Cambiar sonido de muerte",
-    Desc = "GunKill y Died de la víctima usan reemplazo nativo cuando es posible; fallback automático si no se pudo armar el objetivo a tiempo.",
+    Desc = "Usa el sonido elegido al conseguir una kill.",
     Value = false,
     Callback = function(enabled)
         if killSoundState.SyncingToggle then return end
@@ -14549,10 +14626,32 @@ end
 local function restoreProperties(object, values)
     if object then for name, value in pairs(values) do pcall(function() object[name] = value end) end end
 end
-function modes.capture()
-    local saved = {lighting = copyProperties(Lighting, lightProperties), water = copyProperties(terrain, waterProperties), hidden = {}, clouds = {}}
+function modes.capture(skyOnly)
+    local saved = {
+        lighting = nil,
+        water = nil,
+        hidden = {},
+        clouds = {},
+        skyOnly = skyOnly == true,
+    }
     modes.snapshot = saved
-    -- Retain original instances and their properties instead of destroying them.
+
+    -- Skyboxes del repo/personalizados son SOLO imagen. No tocar Lighting,
+    -- Atmosphere, postprocesado, nubes, agua ni colores del juego.
+    if saved.skyOnly then
+        for _, object in ipairs(Lighting:GetChildren()) do
+            if object:IsA("Sky") then
+                table.insert(saved.hidden, {object, object.Parent})
+                object.Parent = nil
+            end
+        end
+        return
+    end
+
+    saved.lighting = copyProperties(Lighting, lightProperties)
+    saved.water = copyProperties(terrain, waterProperties)
+
+    -- Los modos gráficos completos sí pueden sustituir el entorno visual.
     for _, object in ipairs(Lighting:GetChildren()) do
         if object:IsA("Sky") or object:IsA("Atmosphere") or object:IsA("PostEffect") then
             table.insert(saved.hidden, {object, object.Parent})
@@ -14591,10 +14690,18 @@ function modes.restore()
     local saved = modes.snapshot
     modes.snapshot = nil
     if saved then
-        restoreProperties(Lighting, saved.lighting)
-        restoreProperties(terrain, saved.water)
-        for _, entry in ipairs(saved.hidden) do pcall(function() entry[1].Parent = entry[2] end) end
-        for cloud, enabled in pairs(saved.clouds) do pcall(function() cloud.Enabled = enabled end) end
+        -- Un skybox puro nunca modificó estas propiedades, por lo que tampoco
+        -- debe reescribirlas al salir (el propio juego pudo cambiarlas mientras tanto).
+        if not saved.skyOnly then
+            restoreProperties(Lighting, saved.lighting)
+            restoreProperties(terrain, saved.water)
+            for cloud, enabled in pairs(saved.clouds or {}) do
+                pcall(function() cloud.Enabled = enabled end)
+            end
+        end
+        for _, entry in ipairs(saved.hidden or {}) do
+            pcall(function() entry[1].Parent = entry[2] end)
+        end
     end
 end
 local function addEffect(className, properties)
@@ -14814,51 +14921,32 @@ end
 function modes.clearCustomSky()
     local saved = modes.snapshot
     modes.customConnections = {}
-    local parked, watchedClouds, watchedParents = {}, {}, {}
+    local parked = {}
+
     local function watch(signal, callback)
         table.insert(modes.customConnections, signal:Connect(callback))
     end
+
     local function suppress(object)
         local activePreset = modes.presets[modes.active]
         if not activePreset or not activePreset.cleanSky then return end
-        for _, owned in ipairs(modes.effects) do if object == owned then return end end
-        if object:IsA("Sky") or object:IsA("Atmosphere") or object:IsA("PostEffect") then
+        for _, owned in ipairs(modes.effects) do
+            if object == owned then return end
+        end
+
+        -- Importante: SOLO sustituimos otros Sky. Atmosphere, ColorCorrection,
+        -- Clouds y todas las propiedades de Lighting pertenecen al juego y se conservan.
+        if object:IsA("Sky") then
             if not parked[object] then
                 parked[object] = true
                 table.insert(saved.hidden, {object, object.Parent})
             end
             object.Parent = nil
-        elseif object:IsA("Clouds") then
-            if saved.clouds[object] == nil then saved.clouds[object] = object.Enabled end
-            object.Enabled = false
-            if not watchedClouds[object] then
-                watchedClouds[object] = true
-                watch(object:GetPropertyChangedSignal("Enabled"), function()
-                    if object.Enabled then object.Enabled = false end
-                end)
-            end
         end
     end
-    local function bind(parent)
-        if not parent or watchedParents[parent] then return end
-        watchedParents[parent] = true
-        watch(parent.ChildAdded, suppress)
-        for _, object in ipairs(parent:GetChildren()) do suppress(object) end
-    end
-    bind(Lighting)
-    bind(terrain)
-    bind(workspace.CurrentCamera)
-    -- Workspace is checked only for direct Clouds, never map descendants.
-    for _, object in ipairs(workspace:GetChildren()) do if object:IsA("Clouds") then suppress(object) end end
-    watch(workspace.ChildAdded, function(object) if object:IsA("Clouds") then suppress(object) end end)
-    watch(workspace:GetPropertyChangedSignal("CurrentCamera"), function() bind(workspace.CurrentCamera) end)
-    local neutral = {ClockTime=14, ExposureCompensation=0, FogStart=1000000000, FogEnd=1000000000}
-    for property, value in pairs(neutral) do
-        Lighting[property] = value
-        watch(Lighting:GetPropertyChangedSignal(property), function()
-            if Lighting[property] ~= value then Lighting[property] = value end
-        end)
-    end
+
+    watch(Lighting.ChildAdded, suppress)
+    for _, object in ipairs(Lighting:GetChildren()) do suppress(object) end
 end
 function modes.applyPreset(name)
     local preset = modes.presets[name]
@@ -14923,7 +15011,9 @@ function modes.select(name)
         -- FPS Boost and cinematic lighting own the same properties.
         if fpsBoostEnabled and UIElements.ToggleFPS then UIElements.ToggleFPS:Set(false) end
         local ok, err = pcall(function()
-            modes.capture()
+            local selectedPreset = modes.presets[name]
+            local skyOnly = selectedPreset and (selectedPreset.remote or selectedPreset.sky == "Custom") or false
+            modes.capture(skyOnly)
             modes.active = name
             if modes.callbacks[name] then modes.callbacks[name](true) else modes.applyPreset(name) end
         end)

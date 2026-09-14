@@ -21,7 +21,7 @@ local XERO_BACKGROUND_URL = tostring(XeroEnv.XERO_BACKGROUND_URL or
     "https://raw.githubusercontent.com/OnyxDevv/Onyx-web/refs/heads/main/assets/backgrounds/xero_anime.png")
 local XERO_BACKGROUND_FOLDER = "XeroHub/Assets"
 -- Cambia v1 -> v2 si reemplazas la imagen y quieres forzar una caché nueva.
-local XERO_BACKGROUND_CACHE = "XeroHub/Assets/xero_anime_v1.png"
+local XERO_BACKGROUND_CACHE = "XeroHub/Assets/xero_anime_v2.png"
 
 local function isPngPayload(data)
     return type(data) == "string"
@@ -106,6 +106,17 @@ local C = {
     Text = Color3.fromRGB(242,242,242), Muted = Color3.fromRGB(157,157,157),
     Faint = Color3.fromRGB(103,103,103), White = Color3.fromRGB(255,255,255),
 }
+local Glass = {
+    Root = 0.04,
+    Sidebar = 0.18,
+    Row = 0.26,
+    Field = 0.30,
+    Button = 0.24,
+    NavIdle = 0.34,
+    NavHover = 0.20,
+    NavActive = 0.12,
+    Popup = 0.12,
+}
 local FONT = Enum.Font.Gotham
 local MEDIUM = Enum.Font.GothamMedium
 local BOLD = Enum.Font.GothamBold
@@ -146,7 +157,12 @@ local function label(parent, text, size, color, props)
     return new("TextLabel", p, parent)
 end
 local function button(parent, text, props)
-    local p = {Text = text or "", BackgroundColor3 = C.Row, Size = UDim2.fromOffset(36,36)}
+    local p = {
+        Text = text or "",
+        BackgroundColor3 = C.Row,
+        BackgroundTransparency = Glass.Button,
+        Size = UDim2.fromOffset(36,36)
+    }
     for k,v in pairs(props or {}) do p[k] = v end
     return new("TextButton", p, parent)
 end
@@ -173,9 +189,28 @@ local function connect(window, signal, callback, bucket)
     table.insert(bucket or window._connections, connection)
     return connection
 end
-local function hover(window, target, base)
-    connect(window, target.MouseEnter, function() target.BackgroundColor3 = C.Hover end)
-    connect(window, target.MouseLeave, function() target.BackgroundColor3 = base or C.Row end)
+local function hover(window, target, baseColor, baseTransparency, hoverColor, hoverTransparency)
+    local idleColor = baseColor or C.Row
+    local idleTransparency = baseTransparency
+    if idleTransparency == nil then
+        idleTransparency = target.BackgroundTransparency
+        if idleTransparency == nil then idleTransparency = Glass.Button end
+    end
+
+    local overColor = hoverColor or C.Hover
+    local overTransparency = hoverTransparency
+    if overTransparency == nil then
+        overTransparency = math.max(0, idleTransparency - 0.10)
+    end
+
+    connect(window, target.MouseEnter, function()
+        target.BackgroundColor3 = overColor
+        target.BackgroundTransparency = overTransparency
+    end)
+    connect(window, target.MouseLeave, function()
+        target.BackgroundColor3 = idleColor
+        target.BackgroundTransparency = idleTransparency
+    end)
 end
 local function line(parent, x, y, w, h, rotation, color)
     return new("Frame", {Position=UDim2.fromOffset(x,y), Size=UDim2.fromOffset(w,h),
@@ -380,9 +415,9 @@ function Tab:_control(kind, options)
     self._order += 1
     local slot = new("Frame", {Name="Slot",BackgroundTransparency=1,
         Size=UDim2.new(1,-4,0,0),LayoutOrder=self._order},self.Content)
-    local row = new("Frame", {Name=kind,BackgroundColor3=o.Color or C.Row,
+    local row = new("Frame", {Name=kind,BackgroundColor3=o.Color or C.Row,BackgroundTransparency=Glass.Row,
         Size=UDim2.new(1,0,0,0),LayoutOrder=self._order,ClipsDescendants=true},slot)
-    round(row,11); local rowStroke=stroke(row,o.StrokeColor or Color3.fromRGB(31,31,31))
+    round(row,11); local rowStroke=stroke(row,o.StrokeColor or Color3.fromRGB(31,31,31)); rowStroke.Transparency=.18
     local head = new("Frame", {Name="Heading",BackgroundTransparency=1,
         Size=UDim2.new(1,0,0,0),LayoutOrder=1},row)
     local copy = new("Frame", {Name="Copy",BackgroundTransparency=1,
@@ -470,7 +505,7 @@ end
 function Tab:Button(options)
     local c = self:_control("Button",options)
     c.Reserve=34; c.HeadMinimum=28
-    local hit = button(c.Head,"→",{Name="Action",BackgroundColor3=Color3.fromRGB(14,14,14),TextSize=14,
+    local hit = button(c.Head,"→",{Name="Action",BackgroundColor3=Color3.fromRGB(14,14,14),BackgroundTransparency=Glass.Button,TextSize=14,
         Position=UDim2.new(1,-26,0,0),Size=UDim2.fromOffset(26,26)})
     round(hit,8); stroke(hit,Color3.fromRGB(30,30,30)); hover(c.Window,hit,C.Field)
     -- The title and description are clickable too; nested field controls are separate.
@@ -509,7 +544,7 @@ function Tab:Toggle(options)
 end
 local function field(parent, placeholder)
     local box=new("TextBox",{Name="Field",Text="",PlaceholderText=placeholder or "",
-        PlaceholderColor3=C.Faint,BackgroundColor3=C.Field,ClearTextOnFocus=false,
+        PlaceholderColor3=C.Faint,BackgroundColor3=C.Field,BackgroundTransparency=Glass.Field,ClearTextOnFocus=false,
         TextXAlignment=Enum.TextXAlignment.Left,TextSize=11,Size=UDim2.new(1,0,0,28),LayoutOrder=2},parent)
     round(box,8); stroke(box,Color3.fromRGB(30,30,30)); padding(box,9,0)
     return box
@@ -631,7 +666,7 @@ end
 function Tab:Dropdown(options)
     local o=options or {}; local c=self:_control("Dropdown",o)
     c.Values=table.clone(o.Values or {}); c.Multi=o.Multi==true or o.MultiSelect==true
-    local hit=button(c.ElementFrame,"",{Name="Dropdown",BackgroundColor3=C.Field,
+    local hit=button(c.ElementFrame,"",{Name="Dropdown",BackgroundColor3=C.Field,BackgroundTransparency=Glass.Field,
         Size=UDim2.new(1,0,0,28),LayoutOrder=2}); round(hit,8); stroke(hit,Color3.fromRGB(28,28,28))
     local valueLabel=label(hit,"",11,C.Text,{Position=UDim2.fromOffset(8,0),Size=UDim2.new(1,-30,1,0),TextWrapped=true})
     label(hit,"⌄",14,C.Muted,{Position=UDim2.new(1,-24,0,0),Size=UDim2.new(0,16,1,0),TextXAlignment=Enum.TextXAlignment.Center})
@@ -920,7 +955,7 @@ function Nox:CreateWindow(options)
     self.ScreenGui=gui; w.ScreenGui=gui
     -- Full-viewport bounds are shared by popups, dragging and responsive layout.
     local surface=new("Frame",{Name="Surface",BackgroundTransparency=1,Size=UDim2.fromScale(1,1)},gui)
-    local root=new("Frame",{Name="XeroPanel",BackgroundColor3=Color3.fromRGB(7,7,7),AnchorPoint=Vector2.new(.5,.5),
+    local root=new("Frame",{Name="XeroPanel",BackgroundColor3=Color3.fromRGB(7,7,7),BackgroundTransparency=Glass.Root,AnchorPoint=Vector2.new(.5,.5),
         Position=UDim2.fromScale(.5,.5),Size=UDim2.fromOffset(680,430),ClipsDescendants=true},surface)
     round(root,20); stroke(root,Color3.fromRGB(48,48,48))
     local rootGradient=new("UIGradient",{Rotation=22,Color=ColorSequence.new({
@@ -941,7 +976,7 @@ function Nox:CreateWindow(options)
     round(animeImage,20)
 
     local animeShade=new("Frame",{
-        Name="AnimeShade",BackgroundColor3=Color3.fromRGB(0,0,0),BackgroundTransparency=.55,
+        Name="AnimeShade",BackgroundColor3=Color3.fromRGB(0,0,0),BackgroundTransparency=.64,
         Size=UDim2.fromScale(1,1),Visible=false,ZIndex=2,
     },root)
     round(animeShade,20)
@@ -1017,7 +1052,7 @@ function Nox:CreateWindow(options)
     icon(close,"close").Position=UDim2.fromOffset(4,4)
     hover(w,minimize); hover(w,close)
     local topRule=line(root,14,57,784,1,0,C.Border); topRule.Size=UDim2.new(1,-28,0,1)
-    local sidebar=new("Frame",{Name="Navigation",BackgroundColor3=Color3.fromRGB(10,10,10),Position=UDim2.fromOffset(12,70),
+    local sidebar=new("Frame",{Name="Navigation",BackgroundColor3=Color3.fromRGB(10,10,10),BackgroundTransparency=Glass.Sidebar,Position=UDim2.fromOffset(12,70),
         Size=UDim2.new(0,154,1,-82),ZIndex=12},root); round(sidebar,12); stroke(sidebar,Color3.fromRGB(28,28,28))
     local nav=scroll(sidebar,{Name="Tabs",Position=UDim2.fromOffset(8,10),Size=UDim2.new(1,-16,1,-58),ScrollBarThickness=0})
     vertical(nav,6)
@@ -1029,7 +1064,7 @@ function Nox:CreateWindow(options)
     local pageDesc=label(content,DESCRIPTIONS.Inicio,10,C.Muted,{Position=UDim2.fromOffset(0,24),Size=UDim2.new(1,0,0,20),TextWrapped=true,TextYAlignment=Enum.TextYAlignment.Top})
     local count=label(content,"0 opciones",9,C.Faint,{Position=UDim2.new(1,-96,0,5),Size=UDim2.fromOffset(96,16),TextXAlignment=Enum.TextXAlignment.Right,Font=Enum.Font.Code})
     w.CountLabel=count
-    local searchBox=new("Frame",{Name="SearchBox",BackgroundColor3=C.Field,ClipsDescendants=true,
+    local searchBox=new("Frame",{Name="SearchBox",BackgroundColor3=C.Field,BackgroundTransparency=Glass.Field,ClipsDescendants=true,
         Position=UDim2.new(1,-312,0,8),Size=UDim2.fromOffset(198,30),ZIndex=6},top)
     round(searchBox,9); stroke(searchBox,Color3.fromRGB(32,32,32))
     local search=new("TextBox",{Name="Search",BackgroundTransparency=1,ClearTextOnFocus=false,TextSize=12,TextTruncate=Enum.TextTruncate.AtEnd,
@@ -1040,7 +1075,7 @@ function Nox:CreateWindow(options)
     local pages=new("Frame",{Name="Pages",BackgroundTransparency=1,Position=UDim2.fromOffset(0,34),Size=UDim2.new(1,0,1,-34)},content)
     local footer=label(root,"XEROHUB",8,C.Faint,{Position=UDim2.new(0,18,1,-24),Size=UDim2.new(.6,0,0,14),Font=Enum.Font.Code})
     local shortcut=label(root,"RSHIFT  /  MOSTRAR U OCULTAR",8,C.Faint,{Position=UDim2.new(.4,0,1,-24),Size=UDim2.new(.6,-18,0,14),TextXAlignment=Enum.TextXAlignment.Right,Font=Enum.Font.Code})
-    local openButton=button(launcherSurface,"",{Name="OpenXeroHub",Position=UDim2.new(.5,-73,0,16),Size=UDim2.fromOffset(146,44),BackgroundColor3=C.Window,ZIndex=20})
+    local openButton=button(launcherSurface,"",{Name="OpenXeroHub",Position=UDim2.new(.5,-73,0,16),Size=UDim2.fromOffset(146,44),BackgroundColor3=C.Window,BackgroundTransparency=Glass.Button,ZIndex=20})
     round(openButton,12); local openStroke=stroke(openButton,Color3.fromRGB(66,66,66))
     local openIcon=mark(openButton,22); openIcon.Position=UDim2.fromOffset(12,11)
     local openLabel=label(openButton,"XEROHUB",11,C.Text,{Position=UDim2.fromOffset(45,5),Size=UDim2.new(1,-55,0,20),Font=MEDIUM})
@@ -1130,7 +1165,7 @@ function Nox:CreateWindow(options)
         self:_closePopup()
         local layer=button(surface,"",{Name="ModalBackdrop",BackgroundColor3=Color3.new(),BackgroundTransparency=.3,Size=UDim2.fromScale(1,1),ZIndex=50})
         launcherGui.Enabled=false
-        local panel=button(layer,"",{Name="Modal",BackgroundColor3=C.Panel,AnchorPoint=Vector2.new(.5,.5),Position=UDim2.fromScale(.5,.5),Size=UDim2.fromOffset(width,height),ZIndex=2,ClipsDescendants=true})
+        local panel=button(layer,"",{Name="Modal",BackgroundColor3=C.Panel,BackgroundTransparency=Glass.Popup,AnchorPoint=Vector2.new(.5,.5),Position=UDim2.fromScale(.5,.5),Size=UDim2.fromOffset(width,height),ZIndex=2,ClipsDescendants=true})
         round(panel,16); stroke(panel,Color3.fromRGB(66,66,66))
         label(panel,title,14,C.Text,{Position=UDim2.fromOffset(16,17),Size=UDim2.new(1,-62,0,22),Font=BOLD,TextTruncate=Enum.TextTruncate.AtEnd})
         local dismiss=button(panel,"×",{Position=UDim2.new(1,-50,0,7),Size=UDim2.fromOffset(40,40),TextSize=18}); round(dismiss,8)
@@ -1172,7 +1207,7 @@ function Nox:CreateWindow(options)
         openButton.Visible=shouldShow
         openButton.Active=shouldShow
         openButton.AutoButtonColor=shouldShow and (not ghosted)
-        openButton.BackgroundTransparency=ghosted and 1 or 0
+        openButton.BackgroundTransparency=ghosted and 1 or Glass.Button
         openLabel.TextTransparency=ghosted and 1 or 0
         openHint.TextTransparency=ghosted and 1 or 0
         if openStroke then openStroke.Transparency=ghosted and 1 or 0 end
@@ -1405,7 +1440,8 @@ function Nox:CreateWindow(options)
         for _,tab in ipairs(self.Tabs) do
             local selected=tab==target
             tab.Page.Visible=selected
-            tab.NavButton.BackgroundColor3=selected and C.Row or Color3.fromRGB(11,11,11)
+            tab.NavButton.BackgroundColor3=selected and C.Row or Color3.fromRGB(10,10,10)
+            tab.NavButton.BackgroundTransparency=selected and Glass.NavActive or Glass.NavIdle
             tab.NavTitle.TextColor3=selected and C.Text or C.Muted
             if tab.Number then tab.Number.TextColor3=selected and C.Text or C.Faint end
             if tab.SelectionBar then
@@ -1426,7 +1462,7 @@ function Nox:CreateWindow(options)
         local page=new("Frame",{Name=title,BackgroundTransparency=1,Size=UDim2.fromScale(1,1),Visible=false},pages)
         local list=scroll(page,{Name="Options",AutomaticCanvasSize=Enum.AutomaticSize.None}); vertical(list,5); padding(list,2,4)
         local empty=label(page,"Sin coincidencias. Prueba otra búsqueda.",12,C.Muted,{Position=UDim2.fromOffset(12,18),Size=UDim2.new(1,-24,0,50),TextWrapped=true,Visible=false})
-        local navButton=button(holder or nav,"",{Name=title,Size=UDim2.new(1,0,0,28),BackgroundColor3=Color3.fromRGB(10,10,10),LayoutOrder=index})
+        local navButton=button(holder or nav,"",{Name=title,Size=UDim2.new(1,0,0,28),BackgroundColor3=Color3.fromRGB(10,10,10),BackgroundTransparency=Glass.NavIdle,LayoutOrder=index})
         round(navButton,8)
         local selectionBar=new("Frame",{Name="Selected",Position=UDim2.fromOffset(1,5),Size=UDim2.fromOffset(2,18),
             BackgroundColor3=C.Text,BackgroundTransparency=0,Visible=false,ZIndex=3},navButton); round(selectionBar,2)
@@ -1436,8 +1472,18 @@ function Nox:CreateWindow(options)
         tab.Number=glyph:FindFirstChildOfClass("TextLabel"); tab.SelectionBar=selectionBar
         table.insert(self.Tabs,tab)
         connect(self,navButton.Activated,function() self:SelectTab(tab) end)
-        connect(self,navButton.MouseEnter,function() if self.CurrentTab~=tab then navButton.BackgroundColor3=Color3.fromRGB(18,18,18) end end)
-        connect(self,navButton.MouseLeave,function() if self.CurrentTab~=tab then navButton.BackgroundColor3=Color3.fromRGB(11,11,11) end end)
+        connect(self,navButton.MouseEnter,function()
+            if self.CurrentTab~=tab then
+                navButton.BackgroundColor3=Color3.fromRGB(18,18,18)
+                navButton.BackgroundTransparency=Glass.NavHover
+            end
+        end)
+        connect(self,navButton.MouseLeave,function()
+            if self.CurrentTab~=tab then
+                navButton.BackgroundColor3=Color3.fromRGB(10,10,10)
+                navButton.BackgroundTransparency=Glass.NavIdle
+            end
+        end)
         connect(self,list:GetPropertyChangedSignal("AbsoluteSize"),function() tab:_queueFilter() end)
         if not self.CurrentTab then self:SelectTab(tab) end
         return tab

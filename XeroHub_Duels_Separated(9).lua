@@ -203,7 +203,7 @@ runtime.Profiler = {
     Enabled = false,
     Samples = {},
     Labels = {},
-    DisplayOrder = {"Heartbeat", "Hitbox", "ESP", "AutoShoot", "SilentAim", "ESP2D", "ClonePose", "CloneMask"},
+    DisplayOrder = {"Heartbeat", "Hitbox", "ESP", "AutoShoot", "SilentAim", "ESP2D", "ClonePose", "CloneMask", "SpikeGuard"},
     DisplayNames = {
         Heartbeat = "Master",
         Hitbox = "Hitbox",
@@ -213,8 +213,9 @@ runtime.Profiler = {
         ESP2D = "ESP 2D",
         ClonePose = "Clone pose",
         CloneMask = "Clone mask",
+        SpikeGuard = "SpikeGuard",
     },
-    RootSamples = {Heartbeat = true, ESP2D = true, ClonePose = true, CloneMask = true},
+    RootSamples = {Heartbeat = true, ESP2D = true, ClonePose = true, CloneMask = true, SpikeGuard = true},
     Gui = nil,
     SummaryLabel = nil,
     Connection = nil,
@@ -3101,7 +3102,7 @@ end
 do
     local panel = Instance.new("Frame")
     panel.Name = "XeroProfiler"
-    panel.Size = UDim2.fromOffset(292, 246)
+    panel.Size = UDim2.fromOffset(292, 268)
     panel.AnchorPoint = Vector2.new(1, 0)
     panel.Position = UDim2.new(1, -12, 0, 64)
     panel.BackgroundColor3 = Color3.fromRGB(10, 10, 10)
@@ -11573,6 +11574,15 @@ local mState = {
     hbBlockedColor = Color3_fromRGB(255, 50, 50),
     hbByChar = setmetatable({}, {__mode = "k"}),
     hbAdornment = setmetatable({}, {__mode = "k"}),
+    -- XERO_SPIKE_GUARD: trabajo costoso de Instance creation/destruction se reparte
+    -- entre Heartbeats; el efecto se neutraliza inmediatamente al limpiar.
+    hbLegacyScanned = setmetatable({}, {__mode = "k"}),
+    hbCreateQueue = {},
+    hbCreatePending = setmetatable({}, {__mode = "k"}),
+    hbCleanupQueue = {},
+    hbCleanupPending = setmetatable({}, {__mode = "k"}),
+    hbSpikeWorkerRunning = false,
+    autoShootHeavyDue = false,
     charCore = setmetatable({}, {__mode = "k"}),
     enemySnapshot = {},
     enemySnapshotCount = 0,
@@ -11746,6 +11756,154 @@ end
 local enLobby = false
 local timerLobby = 0
 
+-- ==========================================
+-- XERO_SPIKE_GUARD · amortización de picos de Hitbox
+-- ==========================================
+-- Sólo escaneamos basura legacy una vez por Character. Antes, un enemigo inválido
+-- sin hitbox cacheada podía provocar GetChildren() cada 0.15 s.
+function runtime.GetCachedHitbox(char)
+    if not char then return nil end
+    local cached = mState.hbByChar[char]
+    if cached and cached.Parent == char then return cached end
+    mState.hbByChar[char] = nil
+
+    if mState.hbLegacyScanned[char] then return nil end
+    mState.hbLegacyScanned[char] = true
+    for _, child in ipairs(char:GetChildren()) do
+        if child:GetAttribute("EsAstraHitbox") then
+            mState.hbByChar[char] = child
+            return child
+        end
+    end
+    return nil
+end
+
+function runtime.QueueHitboxDestroy(hitbox)
+    if not hitbox or mState.hbCleanupPending[hitbox] then return end
+    mState.hbCleanupPending[hitbox] = true
+
+    -- La hitbox deja de afectar gameplay AHORA; Destroy puede esperar otro frame.
+    pcall(function()
+        local box = mState.hbAdornment[hitbox] or hitbox:FindFirstChild("AstraHitboxBox")
+        if box then box.Visible = false end
+        if hitbox:IsA("BasePart") then
+            hitbox.CanTouch = false
+            hitbox.CanQuery = false
+            hitbox.CanCollide = false
+            hitbox.Transparency = 1
+        end
+    end)
+    mState.hbCleanupQueue[#mState.hbCleanupQueue + 1] = hitbox
+    runtime.EnsureHitboxSpikeWorker()
+end
+
+function runtime.QueueHitboxCreate(targetPlayer, char, hrp)
+    if not targetPlayer or not char or not hrp or mState.hbCreatePending[char] then return end
+    if runtime.GetCachedHitbox(char) then return end
+    mState.hbCreatePending[char] = true
+    mState.hbCreateQueue[#mState.hbCreateQueue + 1] = {Player = targetPlayer, Character = char, HRP = hrp}
+    runtime.EnsureHitboxSpikeWorker()
+end
+
+function runtime.CreateQueuedHitbox(entry)
+    if not entry or not hitboxEnabled or enLobby then return nil end
+    local targetPlayer = entry.Player
+    local char = entry.Character
+    local hrp = entry.HRP
+    if not targetPlayer or targetPlayer.Character ~= char or not char or not char.Parent
+        or not hrp or hrp.Parent ~= char then return nil end
+
+    local core = getCharCore(char)
+    local humanoid = core and core.Humanoid
+    if not humanoid or humanoid.Health <= 0 or not isEnemy(targetPlayer) then return nil end
+
+    local existing = runtime.GetCachedHitbox(char)
+    if existing then return existing end
+
+    local targetSize = Vector3_new(hitboxSize, hitboxSize, hitboxSize)
+    local fakeHitbox = Instance.new("Part")
+    fakeHitbox.Name = "Torso"
+    fakeHitbox:SetAttribute("EsAstraHitbox", true)
+    fakeHitbox.Shape = Enum.PartType.Block
+    fakeHitbox.Size = targetSize
+    fakeHitbox.CFrame = hrp.CFrame
+    fakeHitbox.Massless = true
+    fakeHitbox.CanCollide = false
+    fakeHitbox.Anchored = false
+    fakeHitbox.Transparency = 1
+    fakeHitbox.Parent = char
+
+    local weld = Instance.new("WeldConstraint")
+    weld.Part0 = hrp
+    weld.Part1 = fakeHitbox
+    weld.Parent = fakeHitbox
+
+    local box = Instance.new("BoxHandleAdornment")
+    box.Name = "AstraHitboxBox"
+    box.Adornee = fakeHitbox
+    box.AlwaysOnTop = true
+    box.ZIndex = 5
+    box.Size = targetSize
+    box.Color3 = mState.hbBlockedColor
+    box.Transparency = hitboxInvisible and 1 or (hitboxTransparency or 0.6)
+    box.Visible = not hitboxInvisible
+    box.Parent = fakeHitbox
+
+    mState.hbByChar[char] = fakeHitbox
+    mState.hbAdornment[fakeHitbox] = box
+    return fakeHitbox
+end
+
+function runtime.EnsureHitboxSpikeWorker()
+    if mState.hbSpikeWorkerRunning then return end
+    mState.hbSpikeWorkerRunning = true
+
+    task.spawn(function()
+        while runtime.Alive and (#mState.hbCleanupQueue > 0 or #mState.hbCreateQueue > 0) do
+            RunService.Heartbeat:Wait()
+            if not runtime.Alive then break end
+            local profileStart = runtime.Profiler.Enabled and os.clock() or 0
+
+            -- Destrucción: el efecto ya fue neutralizado al encolar. Máximo 2 Instances/frame.
+            for _ = 1, 2 do
+                local index = #mState.hbCleanupQueue
+                if index == 0 then break end
+                local hitbox = mState.hbCleanupQueue[index]
+                mState.hbCleanupQueue[index] = nil
+                mState.hbCleanupPending[hitbox] = nil
+                mState.hbAdornment[hitbox] = nil
+                if hitbox and hitbox.Parent then pcall(function() hitbox:Destroy() end) end
+            end
+
+            -- Creación: una por frame y nunca pegada a un tick pesado de AutoShoot.
+            if #mState.hbCreateQueue > 0 and not mState.autoShootHeavyDue
+                and not ((autoShootEnabled or autoShootCuchilloEnabled) and mState.tAS >= 0.12) then
+                local index = #mState.hbCreateQueue
+                local entry = mState.hbCreateQueue[index]
+                mState.hbCreateQueue[index] = nil
+                if entry and entry.Character then mState.hbCreatePending[entry.Character] = nil end
+                runtime.CreateQueuedHitbox(entry)
+            end
+
+            if profileStart ~= 0 then runtime.ProfileAdd("SpikeGuard", os.clock() - profileStart) end
+        end
+
+        -- Las entradas que no llegaron a procesarse no deben bloquear una futura ronda.
+        for i = 1, #mState.hbCreateQueue do
+            local entry = mState.hbCreateQueue[i]
+            if entry and entry.Character then mState.hbCreatePending[entry.Character] = nil end
+        end
+        table.clear(mState.hbCreateQueue)
+        table.clear(mState.hbCleanupQueue)
+        mState.hbSpikeWorkerRunning = false
+
+        -- Si entró trabajo justo al salir del while, arranca otro worker.
+        if runtime.Alive and (#mState.hbCleanupQueue > 0 or #mState.hbCreateQueue > 0) then
+            runtime.EnsureHitboxSpikeWorker()
+        end
+    end)
+end
+
 runtime.Track(RunService.Heartbeat:Connect(function(deltaTime)
     local profileHeartbeatStart = runtime.Profiler.Enabled and os.clock() or 0
     local profileStart = 0
@@ -11773,6 +11931,12 @@ runtime.Track(RunService.Heartbeat:Connect(function(deltaTime)
         pcall(function() enLobby = estaEnLobby() end)
     end
 
+    -- AutoShoot tiene prioridad cuando ambas tareas de 0.15 s caen en el mismo frame.
+    -- Hitbox conserva su timer vencido y corre en el Heartbeat siguiente (~1 frame).
+    mState.autoShootHeavyDue = not enLobby
+        and (autoShootEnabled or autoShootCuchilloEnabled)
+        and (mState.tAS + deltaTime >= 0.15)
+
     -- ==========================================
     -- 1. HITBOX (0.15s) - FIX VISUAL + WELD
     -- ==========================================
@@ -11780,7 +11944,7 @@ runtime.Track(RunService.Heartbeat:Connect(function(deltaTime)
     if hitboxEnabled then
         mState.hbAct = true
         mState.tHB = mState.tHB + deltaTime
-        if mState.tHB >= 0.15 then
+        if mState.tHB >= 0.15 and not mState.autoShootHeavyDue then
             mState.tHB = 0
             if not enLobby then
                 local myChar = player.Character
@@ -11800,45 +11964,12 @@ runtime.Track(RunService.Heartbeat:Connect(function(deltaTime)
                     local targetHum = enemy.Humanoid
                     
                     if enemy.Alive and enemy.Enemy then
-                        -- 1. BUSCAMOS O CREAMOS EL BLOQUE FALSO
-                        local fakeHitbox = mState.hbByChar[targetChar]
-                        if not (fakeHitbox and fakeHitbox.Parent == targetChar) then
-                            fakeHitbox = nil
-                            for _, child in ipairs(targetChar:GetChildren()) do
-                                if child:GetAttribute("EsAstraHitbox") then
-                                    fakeHitbox = child
-                                    break
-                                end
-                            end
-                            mState.hbByChar[targetChar] = fakeHitbox
-                        end
-
+                        -- 1. Reutiliza el bloque existente. Crear 3-6 Instances de golpe
+                        -- era uno de los picos al empezar ronda; ahora se crea 1 enemigo/frame.
+                        local fakeHitbox = runtime.GetCachedHitbox(targetChar)
                         if not fakeHitbox then
-                            fakeHitbox = Instance.new("Part")
-                            fakeHitbox.Name = "Torso" -- 🔥 EL TRUCO: El juego lo acepta como cuerpo válido y el cuchillo NO rebota
-                            fakeHitbox:SetAttribute("EsAstraHitbox", true)
-                            fakeHitbox.Shape = Enum.PartType.Block
-                            fakeHitbox.Size = targetSize
-                            fakeHitbox.CFrame = hrp.CFrame 
-                            fakeHitbox.Massless = true
-                            fakeHitbox.CanCollide = false
-                            fakeHitbox.Anchored = false
-                            fakeHitbox.Transparency = 1 
-                            fakeHitbox.Parent = targetChar 
-                            
-                            local weld = Instance.new("WeldConstraint")
-                            weld.Part0 = hrp
-                            weld.Part1 = fakeHitbox
-                            weld.Parent = fakeHitbox
-                            
-                            local box = Instance.new("BoxHandleAdornment") 
-                            box.Name = "AstraHitboxBox" 
-                            box.Adornee = fakeHitbox 
-                            box.AlwaysOnTop = true 
-                            box.ZIndex = 5 
-                            box.Parent = fakeHitbox
-                            mState.hbByChar[targetChar] = fakeHitbox
-                            mState.hbAdornment[fakeHitbox] = box
+                            runtime.QueueHitboxCreate(v, targetChar, hrp)
+                            continue
                         end
                         
                         -- 2. ACTUALIZAMOS TAMAÑO FÍSICO
@@ -11875,30 +12006,20 @@ runtime.Track(RunService.Heartbeat:Connect(function(deltaTime)
                             if box.Visible ~= not hitboxInvisible then box.Visible = not hitboxInvisible end
                         end -- 🔥 AQUÍ ESTÁ EL END QUE FALTABA
                     elseif targetChar then
-                        -- Limpieza automática con caché; el escaneo queda sólo como fallback legacy.
-                        local cachedHitbox = mState.hbByChar[targetChar]
-                        if cachedHitbox and cachedHitbox.Parent then cachedHitbox:Destroy() end
+                        -- Neutraliza instantáneo y reparte Destroy entre frames.
+                        local cachedHitbox = runtime.GetCachedHitbox(targetChar)
+                        if cachedHitbox then runtime.QueueHitboxDestroy(cachedHitbox) end
                         mState.hbByChar[targetChar] = nil
-                        if not cachedHitbox then
-                            for _, child in ipairs(targetChar:GetChildren()) do
-                                if child:GetAttribute("EsAstraHitbox") then child:Destroy() end
-                            end
-                        end
                     end
                 end
             else
-                -- 🔥 LIMPIEZA LOBBY: BORRAMOS LAS HITBOXES QUE QUEDARON PEGADAS
+                -- LOBBY: desactiva todas inmediatamente; Destroy queda amortizado.
                 for i = 1, #listaJugadores do
                     local v = listaJugadores[i]
                     if v ~= player and v.Character then
-                        local cachedHitbox = mState.hbByChar[v.Character]
-                        if cachedHitbox and cachedHitbox.Parent then cachedHitbox:Destroy() end
+                        local cachedHitbox = runtime.GetCachedHitbox(v.Character)
+                        if cachedHitbox then runtime.QueueHitboxDestroy(cachedHitbox) end
                         mState.hbByChar[v.Character] = nil
-                        if not cachedHitbox then
-                            for _, child in ipairs(v.Character:GetChildren()) do
-                                if child:GetAttribute("EsAstraHitbox") then child:Destroy() end
-                            end
-                        end
                     end
                 end
             end
@@ -11906,18 +12027,13 @@ runtime.Track(RunService.Heartbeat:Connect(function(deltaTime)
     elseif mState.hbAct then
         mState.hbAct = false
         mState.tHB = 0
-        -- LIMPIEZA: Destruimos los bloques falsos cuando se apaga el Hitbox
+        -- LIMPIEZA: el efecto se apaga ya; las destrucciones se reparten.
         for i = 1, #listaJugadores do
             local v = listaJugadores[i]
             if v ~= player and v.Character then
-                local cachedHitbox = mState.hbByChar[v.Character]
-                if cachedHitbox and cachedHitbox.Parent then cachedHitbox:Destroy() end
+                local cachedHitbox = runtime.GetCachedHitbox(v.Character)
+                if cachedHitbox then runtime.QueueHitboxDestroy(cachedHitbox) end
                 mState.hbByChar[v.Character] = nil
-                if not cachedHitbox then
-                    for _, child in ipairs(v.Character:GetChildren()) do
-                        if child:GetAttribute("EsAstraHitbox") then child:Destroy() end
-                    end
-                end
                 
                 -- Limpieza por si quedó basura del script anterior
                 local hrp = v.Character:FindFirstChild("HumanoidRootPart")

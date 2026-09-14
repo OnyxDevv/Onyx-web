@@ -399,10 +399,12 @@ aimbotTargetPart = "Cabeza"
 
 local UIElements = {} -- Tabla para guardar referencias
 
--- XeroHub bilingual layer. Visible copy is translated; internal callback values stay untouched.
-local XERO_LANGUAGE_PREF = "XeroHub/Settings/language.txt"
-local XERO_LANGUAGE_PREF_FOLDER = "XeroHub/Settings"
-local XERO_EN_TRANSLATIONS = {
+-- XeroHub bilingual layer. Encapsulated so it does not consume main-chunk local slots.
+runtime.Localization = (function()
+    local L = {}
+    local PREF = "XeroHub/Settings/language.txt"
+    local PREF_FOLDER = "XeroHub/Settings"
+    local EN = {
     ["Seleccionar…"] = "Select…",
     ["Buscar una opción…"] = "Search an option…",
     ["Sin resultados"] = "No results",
@@ -745,7 +747,7 @@ local XERO_EN_TRANSLATIONS = {
     ["Creador de XeroHub\nTikTok: @kevzzx_"] = "XeroHub creator\nTikTok: @kevzzx_",
     ["ZONA MUERTA\n(Arrastrar)"] = "DEAD ZONE\n(Drag)",
 }
-local XERO_EN_PREFIXES = {
+    local PREFIXES = {
     ["Sonido de disparo desactivado · "] = "Gunshot sound disabled · ",
     ["Preparando sonido de muerte: "] = "Preparing death sound: ",
     ["Cargando vista previa: "] = "Loading preview: ",
@@ -772,94 +774,103 @@ local XERO_EN_PREFIXES = {
     ["Ya estás en "] = "You are already in ",
     ["Intentando ir a "] = "Trying to join ",
 }
-local XERO_EN_REVERSE = {}
-for source, translated in pairs(XERO_EN_TRANSLATIONS) do XERO_EN_REVERSE[translated] = source end
+    local REVERSE = {}
+    for source, translated in pairs(EN) do REVERSE[translated] = source end
 
-local function normalizeXeroLanguage(value)
-    local key=string.lower(tostring(value or "es"))
-    if key=="en" or key=="eng" or key=="english" or key=="ingles" or key=="inglés" then return "en" end
-    return "es"
-end
-
-local languageEnv=(getgenv and getgenv()) or _G
-local function loadXeroLanguagePreference()
-    local language=normalizeXeroLanguage(languageEnv.XERO_LANGUAGE or "es")
-    if type(isfile)=="function" and type(readfile)=="function" and isfile(XERO_LANGUAGE_PREF) then
-        local ok,data=pcall(readfile,XERO_LANGUAGE_PREF)
-        if ok and type(data)=="string" and data~="" then language=normalizeXeroLanguage(data) end
+    local function normalize(value)
+        local key=string.lower(tostring(value or "es"))
+        if key=="en" or key=="eng" or key=="english" or key=="ingles" or key=="inglés" then return "en" end
+        return "es"
     end
-    return language
-end
-local currentInterfaceLanguage=loadXeroLanguagePreference()
-languageEnv.XERO_LANGUAGE=currentInterfaceLanguage
-runtime.InterfaceLanguage=currentInterfaceLanguage
 
-local function saveXeroLanguagePreference(language)
-    language=normalizeXeroLanguage(language)
-    languageEnv.XERO_LANGUAGE=language
-    runtime.InterfaceLanguage=language
-    if type(writefile)~="function" then return end
-    pcall(function()
-        if type(makefolder)=="function" and (type(isfolder)~="function" or not isfolder("XeroHub")) then makefolder("XeroHub") end
-        if type(makefolder)=="function" and (type(isfolder)~="function" or not isfolder(XERO_LANGUAGE_PREF_FOLDER)) then makefolder(XERO_LANGUAGE_PREF_FOLDER) end
-        writefile(XERO_LANGUAGE_PREF,language)
-    end)
-end
-
-local function XeroT(text)
-    text=tostring(text or "")
-    if currentInterfaceLanguage~="en" then return text end
-    return XERO_EN_TRANSLATIONS[text] or text
-end
-
-local function XeroTranslateDynamic(text)
-    text=tostring(text or "")
-    if currentInterfaceLanguage~="en" then return text end
-    local exact=XERO_EN_TRANSLATIONS[text]
-    if exact then return exact end
-    local bestSource,bestTranslated=nil,nil
-    for source,translated in pairs(XERO_EN_PREFIXES) do
-        if text:sub(1,#source)==source and (not bestSource or #source>#bestSource) then
-            bestSource,bestTranslated=source,translated
+    local env=(getgenv and getgenv()) or _G
+    local function loadPreference()
+        local language=normalize(env.XERO_LANGUAGE or "es")
+        if type(isfile)=="function" and type(readfile)=="function" and isfile(PREF) then
+            local ok,data=pcall(readfile,PREF)
+            if ok and type(data)=="string" and data~="" then language=normalize(data) end
         end
+        return language
     end
-    if bestSource then return bestTranslated..text:sub(#bestSource+1) end
-    text=text:gsub(" activado$"," enabled"):gsub(" desactivado$"," disabled")
-    text=text:gsub(": ACTIVADO",": ENABLED"):gsub(": DESACTIVADO",": DISABLED")
-    return text
-end
 
-local function refreshLooseLocalizedText(root)
-    if not root or not root.Parent then return end
-    local objects={root}
-    for _,descendant in ipairs(root:GetDescendants()) do objects[#objects+1]=descendant end
-    for _,object in ipairs(objects) do
-        if object:IsA("TextLabel") or object:IsA("TextButton") or object:IsA("TextBox") then
-            local source=object:GetAttribute("XeroLangSource")
-            if not source then
-                local current=tostring(object.Text or "")
-                source=XERO_EN_REVERSE[current] or (XERO_EN_TRANSLATIONS[current] and current or nil)
-                if source then pcall(function() object:SetAttribute("XeroLangSource",source) end) end
+    L.En = EN
+    L.Normalize = normalize
+    L.Language = loadPreference()
+    env.XERO_LANGUAGE=L.Language
+    runtime.InterfaceLanguage=L.Language
+
+    function L.SetLanguage(language)
+        language=normalize(language)
+        L.Language=language
+        env.XERO_LANGUAGE=language
+        runtime.InterfaceLanguage=language
+        if type(writefile)=="function" then
+            pcall(function()
+                if type(makefolder)=="function" and (type(isfolder)~="function" or not isfolder("XeroHub")) then makefolder("XeroHub") end
+                if type(makefolder)=="function" and (type(isfolder)~="function" or not isfolder(PREF_FOLDER)) then makefolder(PREF_FOLDER) end
+                writefile(PREF,language)
+            end)
+        end
+        return language
+    end
+
+    function L.T(value)
+        local text=tostring(value or "")
+        if runtime.InterfaceLanguage~="en" then return text end
+        return EN[text] or text
+    end
+
+    function L.Dynamic(value)
+        local text=tostring(value or "")
+        if runtime.InterfaceLanguage~="en" then return text end
+        local exact=EN[text]
+        if exact then return exact end
+        local bestSource,bestTranslated=nil,nil
+        for source,translated in pairs(PREFIXES) do
+            if text:sub(1,#source)==source and (not bestSource or #source>#bestSource) then
+                bestSource,bestTranslated=source,translated
             end
-            if source then object.Text=XeroT(source) end
-            if object:IsA("TextBox") then
-                local placeholderSource=object:GetAttribute("XeroLangPlaceholderSource")
-                if not placeholderSource then
-                    local current=tostring(object.PlaceholderText or "")
-                    placeholderSource=XERO_EN_REVERSE[current] or (XERO_EN_TRANSLATIONS[current] and current or nil)
-                    if placeholderSource then pcall(function() object:SetAttribute("XeroLangPlaceholderSource",placeholderSource) end) end
+        end
+        if bestSource then return bestTranslated..text:sub(#bestSource+1) end
+        text=text:gsub(" activado$"," enabled"):gsub(" desactivado$"," disabled")
+        text=text:gsub(": ACTIVADO",": ENABLED"):gsub(": DESACTIVADO",": DISABLED")
+        return text
+    end
+
+    function L.RefreshRoot(root)
+        if not root or not root.Parent then return end
+        local objects={root}
+        for _,descendant in ipairs(root:GetDescendants()) do objects[#objects+1]=descendant end
+        for _,object in ipairs(objects) do
+            if object:IsA("TextLabel") or object:IsA("TextButton") or object:IsA("TextBox") then
+                local source=object:GetAttribute("XeroLangSource")
+                if not source then
+                    local current=tostring(object.Text or "")
+                    source=REVERSE[current] or (EN[current] and current or nil)
+                    if source then pcall(function() object:SetAttribute("XeroLangSource",source) end) end
                 end
-                if placeholderSource then object.PlaceholderText=XeroT(placeholderSource) end
+                if source then object.Text=L.T(source) end
+                if object:IsA("TextBox") then
+                    local placeholderSource=object:GetAttribute("XeroLangPlaceholderSource")
+                    if not placeholderSource then
+                        local current=tostring(object.PlaceholderText or "")
+                        placeholderSource=REVERSE[current] or (EN[current] and current or nil)
+                        if placeholderSource then pcall(function() object:SetAttribute("XeroLangPlaceholderSource",placeholderSource) end) end
+                    end
+                    if placeholderSource then object.PlaceholderText=L.T(placeholderSource) end
+                end
             end
         end
     end
-end
 
-local function refreshAllLooseLocalizedText()
-    for _,root in ipairs({runtime.ScreenGui,runtime.BodySelectorGui,runtime.AppearanceStudioGui,runtime.NotificationGui,runtime.StartupGui}) do
-        pcall(refreshLooseLocalizedText,root)
+    function L.RefreshAll()
+        for _,root in ipairs({runtime.ScreenGui,runtime.BodySelectorGui,runtime.AppearanceStudioGui,runtime.NotificationGui,runtime.StartupGui}) do
+            pcall(L.RefreshRoot,root)
+        end
     end
-end
+
+    return L
+end)()
 
 local playerGui = player:WaitForChild("PlayerGui")
 local previousOverlay = playerGui:FindFirstChild("XeroHub_Overlays") or playerGui:FindFirstChild("iLunXHub_Overlays")
@@ -944,7 +955,7 @@ do
     status.Size = UDim2.new(1, -48, 0, 22)
     status.Position = UDim2.new(0.5, 0, 0, 62)
     status.BackgroundTransparency = 1
-    status.Text = XeroT("Cargando XeroHub...")
+    status.Text = runtime.Localization.T("Cargando XeroHub...")
     status.TextColor3 = Color3.fromHex("#9B9B9B")
     status.Font = Enum.Font.GothamMedium
     status.TextSize = 13
@@ -985,7 +996,7 @@ function startupSplashState.Finish(message)
     -- Sólo los errores conservan un momento de lectura. La carga correcta
     -- termina inmediatamente, sin duración mínima ni esperar animaciones.
     if message and startupSplashState.Status then
-        startupSplashState.Status.Text = XeroTranslateDynamic(message)
+        startupSplashState.Status.Text = runtime.Localization.Dynamic(message)
         task.wait(0.65)
     end
     if startupSplashState.Progress then
@@ -1074,7 +1085,7 @@ end
 local WindUI
 -- UI separada: puedes ofuscar este archivo sin mezclar las ~1k líneas visuales.
 -- Orden de carga: archivo local XeroHub_UI.lua -> URL RAW oficial de XeroHub.
-local NOX_UI_URL = ((getgenv and getgenv()) or _G).NOX_UI_URL or "https://raw.githubusercontent.com/OnyxDevv/Onyx-web/refs/heads/main/main2.lua"
+local NOX_UI_URL = ((getgenv and getgenv()) or _G).NOX_UI_URL or "https://raw.githubusercontent.com/OnyxDevv/Onyx-web/refs/heads/main/main%20(3).lua"
 local ok, result = pcall(function()
     local source
     if isfile and readfile and isfile("XeroHub_UI.lua") then
@@ -1105,8 +1116,8 @@ end)
 
 if ok and result then
     WindUI = result
-    if WindUI.RegisterTranslations then WindUI:RegisterTranslations("en", XERO_EN_TRANSLATIONS) end
-    if WindUI.SetLanguage then WindUI:SetLanguage(currentInterfaceLanguage) end
+    if WindUI.RegisterTranslations then WindUI:RegisterTranslations("en", runtime.Localization.En) end
+    if WindUI.SetLanguage then WindUI:SetLanguage(runtime.InterfaceLanguage) end
 else
     warn("[XeroHub] No se pudo iniciar la UI: " .. tostring(result))
     startupSplashState.Finish("No se pudo cargar XeroHub")
@@ -1128,13 +1139,13 @@ local Window = WindUI:CreateWindow({
 -- La UI ya está cargada; el resto del arranque prepara sus controles.
 if startupSplashState.Progress then
     startupSplashState.Progress.Size = UDim2.fromScale(0.65, 1)
-    startupSplashState.Status.Text = XeroT("Preparando controles...")
+    startupSplashState.Status.Text = runtime.Localization.T("Preparando controles...")
 end
 
 pcall(function()
     Window:OnDestroy(runtime.Cleanup)
 end)
-task.defer(refreshAllLooseLocalizedText)
+task.defer(runtime.Localization.RefreshAll)
 
 
 -- ==========================================
@@ -1317,7 +1328,7 @@ sendNotification = function(text, options)
     if not runtime.Alive then return end
     if (not runtime.NotificationsReady or runtime.SuppressNotifications) and not options.force then return end
 
-    text = XeroTranslateDynamic(tostring(text or ""))
+    text = runtime.Localization.Dynamic(tostring(text or ""))
     if text == "" then return end
 
     -- El serial permite que los wrappers sepan que el callback ya avisó,
@@ -1337,7 +1348,7 @@ sendNotification = function(text, options)
 
     local payload = {
         text = text,
-        title = XeroTranslateDynamic(tostring(options.title or "XeroHub")),
+        title = runtime.Localization.Dynamic(tostring(options.title or "XeroHub")),
         icon = tostring(options.icon or "◇"),
         accent = Color3.fromHex("#E6E6E6"),
         duration = holdDuration,
@@ -1413,9 +1424,9 @@ for _, tab in pairs(Tabs) do
                         and (runtime.NotificationSerial or 0) == serialBefore then
                         local enabled = state == true
                         sendNotification(
-                            XeroT(title) .. (enabled and (currentInterfaceLanguage=="en" and " enabled" or " activado") or (currentInterfaceLanguage=="en" and " disabled" or " desactivado")),
+                            runtime.Localization.T(title) .. (enabled and (runtime.InterfaceLanguage=="en" and " enabled" or " activado") or (runtime.InterfaceLanguage=="en" and " disabled" or " desactivado")),
                             {
-                                title = XeroT("XeroHub · Ajuste"),
+                                title = runtime.Localization.T("XeroHub · Ajuste"),
                                 icon = enabled and "✓" or "–",
                                 accent = enabled and Color3.fromHex("#78D98B") or Color3.fromHex("#8E8E93"),
                                 key = "toggle:" .. title,
@@ -3692,7 +3703,7 @@ dzStroke.LineJoinMode = Enum.LineJoinMode.Round
 local dzLabel = Instance.new("TextLabel", deadZoneFrame)
 dzLabel.Size = UDim2.new(1, 0, 1, 0)
 dzLabel.BackgroundTransparency = 1
-dzLabel.Text = XeroT("ZONA MUERTA\n(Arrastrar)")
+dzLabel.Text = runtime.Localization.T("ZONA MUERTA\n(Arrastrar)")
 dzLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
 dzLabel.Font = Enum.Font.GothamBold
 dzLabel.TextSize = 14
@@ -4210,7 +4221,7 @@ function runtime.EnsureBodySelector()
     title.Size = UDim2.new(1, -88, 0, 24)
     title.Position = UDim2.fromOffset(18, 14)
     title.BackgroundTransparency = 1
-    title.Text = XeroT("Selector corporal")
+    title.Text = runtime.Localization.T("Selector corporal")
     title.TextColor3 = Color3.fromHex("#F7F8F9")
     title.Font = Enum.Font.GothamBold
     title.TextSize = 15
@@ -4240,7 +4251,7 @@ function runtime.EnsureBodySelector()
     subtitle.Size = UDim2.new(1, -36, 0, 28)
     subtitle.Position = UDim2.fromOffset(18, 39)
     subtitle.BackgroundTransparency = 1
-    subtitle.Text = XeroT("Toca varias zonas del cuerpo. Las partes activas se iluminan al instante.")
+    subtitle.Text = runtime.Localization.T("Toca varias zonas del cuerpo. Las partes activas se iluminan al instante.")
     subtitle.TextColor3 = Color3.fromHex("#9DA3AB")
     subtitle.Font = Enum.Font.Gotham
     subtitle.TextSize = 10
@@ -4530,7 +4541,7 @@ function runtime.OpenBodySelector(mode)
         runtime.BodySelectorGui.DisplayOrder = 2147483647
     end
     runtime.BodySelector.Mode = mode
-    runtime.BodySelector.Title.Text = XeroT("Selector corporal · ") .. (mode == "AutoShoot" and "Auto Shoot" or "Silent Aim")
+    runtime.BodySelector.Title.Text = runtime.Localization.T("Selector corporal · ") .. (mode == "AutoShoot" and "Auto Shoot" or "Silent Aim")
     runtime.BodySelector.Refresh()
     runtime.BodySelector.Overlay.Visible = true
 
@@ -9255,7 +9266,7 @@ function runtime.EnsureAppearanceStudio()
     title.BackgroundTransparency = 1
     title.Position = UDim2.fromOffset(22, 18)
     title.Size = UDim2.new(1, -96, 0, 26)
-    title.Text = XeroT("Editor visual de apariencia")
+    title.Text = runtime.Localization.T("Editor visual de apariencia")
     title.TextColor3 = Color3.fromRGB(244, 244, 244)
     title.Font = Enum.Font.GothamBold
     title.TextSize = 18
@@ -9267,7 +9278,7 @@ function runtime.EnsureAppearanceStudio()
     subtitle.BackgroundTransparency = 1
     subtitle.Position = UDim2.fromOffset(22, 44)
     subtitle.Size = UDim2.new(1, -120, 0, 18)
-    subtitle.Text = XeroT("Modelo independiente de tu avatar. Ajusta limiteds sin usar al personaje que está dentro del juego.")
+    subtitle.Text = runtime.Localization.T("Modelo independiente de tu avatar. Ajusta limiteds sin usar al personaje que está dentro del juego.")
     subtitle.TextColor3 = Color3.fromRGB(160, 160, 165)
     subtitle.Font = Enum.Font.Gotham
     subtitle.TextSize = 11
@@ -9314,7 +9325,7 @@ function runtime.EnsureAppearanceStudio()
     previewLabel.BackgroundTransparency = 1
     previewLabel.Position = UDim2.fromOffset(14, 9)
     previewLabel.Size = UDim2.new(1, -76, 0, 18)
-    previewLabel.Text = XeroT("Vista previa · avatar aislado")
+    previewLabel.Text = runtime.Localization.T("Vista previa · avatar aislado")
     previewLabel.TextColor3 = Color3.fromRGB(240, 240, 240)
     previewLabel.Font = Enum.Font.GothamBold
     previewLabel.TextSize = 12
@@ -9342,7 +9353,7 @@ function runtime.EnsureAppearanceStudio()
     previewHint.BackgroundTransparency = 1
     previewHint.Position = UDim2.fromOffset(14, 29)
     previewHint.Size = UDim2.new(1, -28, 0, 16)
-    previewHint.Text = XeroT("Arrastra: rotar  ·  rueda/pellizca: zoom  ·  clic derecho/2 dedos: mover")
+    previewHint.Text = runtime.Localization.T("Arrastra: rotar  ·  rueda/pellizca: zoom  ·  clic derecho/2 dedos: mover")
     previewHint.TextColor3 = Color3.fromRGB(126, 126, 132)
     previewHint.Font = Enum.Font.Gotham
     previewHint.TextSize = 9
@@ -9375,7 +9386,7 @@ function runtime.EnsureAppearanceStudio()
     targetTitle.BackgroundTransparency = 1
     targetTitle.Position = UDim2.fromOffset(0, 0)
     targetTitle.Size = UDim2.new(1, 0, 0, 22)
-    targetTitle.Text = XeroT("Limited activo")
+    targetTitle.Text = runtime.Localization.T("Limited activo")
     targetTitle.TextColor3 = Color3.fromRGB(244, 244, 244)
     targetTitle.Font = Enum.Font.GothamBold
     targetTitle.TextSize = 13
@@ -9403,7 +9414,7 @@ function runtime.EnsureAppearanceStudio()
     selectorButton.Size = UDim2.new(1, 0, 0, 36)
     selectorButton.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
     selectorButton.BorderSizePixel = 0
-    selectorButton.Text = XeroT("Seleccionar limited")
+    selectorButton.Text = runtime.Localization.T("Seleccionar limited")
     selectorButton.TextColor3 = Color3.fromRGB(240, 240, 240)
     selectorButton.Font = Enum.Font.GothamMedium
     selectorButton.TextSize = 11
@@ -9470,7 +9481,7 @@ function runtime.EnsureAppearanceStudio()
     controlTitle.BackgroundTransparency = 1
     controlTitle.Position = UDim2.fromOffset(0, 168)
     controlTitle.Size = UDim2.new(1, 0, 0, 20)
-    controlTitle.Text = XeroT("Ajustes")
+    controlTitle.Text = runtime.Localization.T("Ajustes")
     controlTitle.TextColor3 = Color3.fromRGB(244, 244, 244)
     controlTitle.Font = Enum.Font.GothamBold
     controlTitle.TextSize = 13
@@ -9510,7 +9521,7 @@ function runtime.EnsureAppearanceStudio()
     resetButton.Position = UDim2.new(0, 0, 1, -38)
     resetButton.BackgroundColor3 = Color3.fromRGB(24, 24, 24)
     resetButton.BorderSizePixel = 0
-    resetButton.Text = XeroT("Restablecer")
+    resetButton.Text = runtime.Localization.T("Restablecer")
     resetButton.TextColor3 = Color3.fromRGB(235, 235, 235)
     resetButton.Font = Enum.Font.GothamBold
     resetButton.TextSize = 10
@@ -9524,7 +9535,7 @@ function runtime.EnsureAppearanceStudio()
     saveButton.Position = UDim2.new(0.30, 3, 1, -38)
     saveButton.BackgroundColor3 = Color3.fromRGB(236, 236, 236)
     saveButton.BorderSizePixel = 0
-    saveButton.Text = XeroT("Guardar")
+    saveButton.Text = runtime.Localization.T("Guardar")
     saveButton.TextColor3 = Color3.fromRGB(14, 14, 14)
     saveButton.Font = Enum.Font.GothamBold
     saveButton.TextSize = 11
@@ -9538,7 +9549,7 @@ function runtime.EnsureAppearanceStudio()
     doneButton.Position = UDim2.new(0.64, 3, 1, -38)
     doneButton.BackgroundColor3 = Color3.fromRGB(24, 24, 24)
     doneButton.BorderSizePixel = 0
-    doneButton.Text = XeroT("Cerrar")
+    doneButton.Text = runtime.Localization.T("Cerrar")
     doneButton.TextColor3 = Color3.fromRGB(235, 235, 235)
     doneButton.Font = Enum.Font.GothamBold
     doneButton.TextSize = 11
@@ -9567,7 +9578,7 @@ function runtime.EnsureAppearanceStudio()
     noActive.BackgroundTransparency = 1
     noActive.Position = UDim2.fromOffset(0, 80)
     noActive.Size = UDim2.new(1, 0, 0, 32)
-    noActive.Text = XeroT("Activa al menos un limited para editarlo aquí.")
+    noActive.Text = runtime.Localization.T("Activa al menos un limited para editarlo aquí.")
     noActive.TextColor3 = Color3.fromRGB(168, 168, 173)
     noActive.Font = Enum.Font.Gotham
     noActive.TextSize = 11
@@ -9807,7 +9818,7 @@ function runtime.EnsureAppearanceStudio()
 
             studio.TargetTitle.Position = UDim2.fromOffset(0, 0)
             studio.TargetTitle.Size = UDim2.new(1, 0, 0, 18)
-            studio.TargetTitle.Text = XeroT("Limited activo")
+            studio.TargetTitle.Text = runtime.Localization.T("Limited activo")
             studio.TargetTitle.TextSize = sideW < 250 and 10 or 12
             studio.TargetHint.Visible = false
 
@@ -9872,7 +9883,7 @@ function runtime.EnsureAppearanceStudio()
 
             studio.TargetTitle.Position = UDim2.fromOffset(0, 0)
             studio.TargetTitle.Size = UDim2.new(1, 0, 0, 18)
-            studio.TargetTitle.Text = XeroT("Limited activo")
+            studio.TargetTitle.Text = runtime.Localization.T("Limited activo")
             studio.TargetTitle.TextSize = 11
             studio.TargetHint.Visible = false
 
@@ -11595,7 +11606,7 @@ function runtime.RefreshAppearanceStudio()
     if studio.SelectedKey then
         local asset = runtime.AppearanceCatalog[studio.SelectedKey]
         local state = runtime.GetAppearanceOffset(studio.SelectedKey)
-        studio.TargetTitle.Text = XeroT("Limited activo")
+        studio.TargetTitle.Text = runtime.Localization.T("Limited activo")
         studio.AccessorySelector.Text = asset and asset.Name or studio.SelectedKey
         studio.AccessorySelector.TextColor3 = Color3.fromRGB(240, 240, 240)
         local values = {
@@ -11614,8 +11625,8 @@ function runtime.RefreshAppearanceStudio()
             end
         end
     else
-        studio.TargetTitle.Text = XeroT("Limited activo")
-        studio.AccessorySelector.Text = XeroT("Sin limiteds activos")
+        studio.TargetTitle.Text = runtime.Localization.T("Limited activo")
+        studio.AccessorySelector.Text = runtime.Localization.T("Sin limiteds activos")
         studio.AccessorySelector.TextColor3 = Color3.fromRGB(132, 132, 138)
         for component, control in pairs(studio.Controls) do
             control:Set(component == "SCALE" and 1 or 0, true)
@@ -17711,23 +17722,21 @@ local themeDropdown = Tabs.Config:Dropdown({
 })
 UIElements.ThemeDropdown = themeDropdown
 
-local languageDropdown = Tabs.Config:Dropdown({
+UIElements.LanguageDropdown = Tabs.Config:Dropdown({
     Title = "Idioma",
     Desc = "Cambia el idioma visible del hub sin modificar los valores internos de tus ajustes.",
     Values = {"Español", "English"},
-    Value = currentInterfaceLanguage == "en" and "English" or "Español",
+    Value = runtime.InterfaceLanguage == "en" and "English" or "Español",
     Callback = function(Value)
         local targetLanguage = (Value == "English") and "en" or "es"
-        if targetLanguage == currentInterfaceLanguage then return end
-        currentInterfaceLanguage = targetLanguage
-        saveXeroLanguagePreference(targetLanguage)
+        if targetLanguage == runtime.InterfaceLanguage then return end
+        runtime.Localization.SetLanguage(targetLanguage)
         if Window and Window.SetLanguage then Window:SetLanguage(targetLanguage)
         elseif WindUI and WindUI.SetLanguage then WindUI:SetLanguage(targetLanguage) end
-        refreshAllLooseLocalizedText()
+        runtime.Localization.RefreshAll()
         showBottomMessage(targetLanguage == "en" and "Language changed to English." or "Idioma cambiado a Español.", {force=true})
     end
 })
-UIElements.LanguageDropdown = languageDropdown
 
 Tabs.Config:Toggle({
     Title = "Ocultar Botón Flotante",
@@ -18093,4 +18102,4 @@ end)
 startupSplashState.Finish()
 runtime.NotificationsReady = true
 -- XERO_FULL_GENERAL_OPTIMIZATION_2026_09_13
--- XERO_GENERAL_OPTIMIZATION_2026_09_14
+-- XERO_GENERAL_OPTIMIZATION_2026_09_14v

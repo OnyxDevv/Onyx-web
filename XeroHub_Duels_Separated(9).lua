@@ -14852,12 +14852,23 @@ UIElements.TogEspLines = Tabs.Vis:Toggle({
 -- ==========================================
 -- DIBUJADO EN PANTALLA 2D (FOV, Tracers, Box y Vida) - UN SOLO RENDER
 -- ==========================================
+-- FOV XeroHub: aro principal + contorno oscuro para mantener contraste
+-- sobre mapas claros u oscuros sin volverlo visualmente pesado.
+local FOVCircleBack = runtime.TrackDrawing(Drawing.new("Circle"))
+FOVCircleBack.Filled = false
+FOVCircleBack.Color = Color3.fromRGB(0, 0, 0)
+FOVCircleBack.Visible = false
+FOVCircleBack.Thickness = 5
+FOVCircleBack.Transparency = 0.55
+FOVCircleBack.NumSides = 96
+
 local FOVCircle = runtime.TrackDrawing(Drawing.new("Circle"))
 FOVCircle.Filled = false
 FOVCircle.Color = Color3.fromRGB(255, 255, 255)
 FOVCircle.Visible = false
-FOVCircle.Thickness = 1.7
-FOVCircle.NumSides = 64
+FOVCircle.Thickness = 2.6
+FOVCircle.Transparency = 1
+FOVCircle.NumSides = 96
 
 local tracerLines = {}
 local tracersLimpios = true
@@ -14936,6 +14947,7 @@ function runtime.RenderESP2D(deltaTime)
     local wantsESP2D = espEnabled and (espSettings.Box or espSettings.HealthBar)
     if not fovVisiblePreference and not espLinesEnabled and not wantsESP2D then
         if FOVCircle.Visible then FOVCircle.Visible = false end
+        if FOVCircleBack.Visible then FOVCircleBack.Visible = false end
         hideTracersOnce()
         runtime.HideAllESP2D()
         return
@@ -14949,12 +14961,19 @@ function runtime.RenderESP2D(deltaTime)
     end
 
     if fovVisiblePreference then
+        -- El aro trasero actúa como outline y hace que el FOV no desaparezca
+        -- visualmente sobre paredes blancas, cielos o zonas muy iluminadas.
+        FOVCircleBack.Position = centroVector
+        FOVCircleBack.Radius = fovRadius
+        FOVCircleBack.Visible = true
+
         FOVCircle.Position = centroVector
         FOVCircle.Radius = fovRadius
         FOVCircle.Visible = true
         FOVCircle.Color = aimHookState.Target and fovTargetColor or fovIdleColor
-    elseif FOVCircle.Visible then
-        FOVCircle.Visible = false
+    else
+        if FOVCircle.Visible then FOVCircle.Visible = false end
+        if FOVCircleBack.Visible then FOVCircleBack.Visible = false end
     end
 
     if not espEnabled or enLobby then
@@ -15104,6 +15123,7 @@ function runtime.UpdateESP2DRenderConnection()
     end
     tracerAccumulator = 0
     if FOVCircle.Visible then FOVCircle.Visible = false end
+    if FOVCircleBack.Visible then FOVCircleBack.Visible = false end
     hideTracersOnce()
     runtime.HideAllESP2D()
 end

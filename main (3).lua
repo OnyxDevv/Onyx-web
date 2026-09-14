@@ -1511,7 +1511,13 @@ function Nox:CreateWindow(options)
         footer.Text=self.Title
 
         local active=self.Title:match("(%d+)%s+activos")
-        local baseTitle=self.Title:gsub("%s*[·|%-]?%s*%d+%s+activos%s*$","")
+        -- Quita primero el contador y después el separador. No metas el punto medio
+        -- UTF-8 dentro de una clase [] de patrones Lua: puede comerse sólo un byte
+        -- y dejar el carácter de reemplazo que se ve como "?" junto al nombre del juego.
+        local baseTitle=self.Title:gsub("%s*%d+%s+activos%s*$","")
+        baseTitle=baseTitle:gsub("%s*·%s*$","")
+        baseTitle=baseTitle:gsub("%s*%-%s*$","")
+        baseTitle=baseTitle:gsub("%s+$","")
         if baseTitle=="" then baseTitle="XeroHub" end
         self._brandBaseTitle=baseTitle
 

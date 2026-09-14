@@ -12,6 +12,92 @@ local Input = game:GetService("UserInputService")
 local Workspace = game:GetService("Workspace")
 local RunService = game:GetService("RunService")
 local TextService = game:GetService("TextService")
+
+-- XeroHub anime background --------------------------------------------------
+-- Sube la imagen a: Onyx-web/assets/backgrounds/xero_anime.png
+-- Puedes cambiar la URL sin editar este archivo con getgenv().XERO_BACKGROUND_URL.
+local XeroEnv = (getgenv and getgenv()) or _G
+local XERO_BACKGROUND_URL = tostring(XeroEnv.XERO_BACKGROUND_URL or
+    "https://raw.githubusercontent.com/OnyxDevv/Onyx-web/refs/heads/main/assets/backgrounds/xero_anime.png")
+local XERO_BACKGROUND_FOLDER = "XeroHub/Assets"
+-- Cambia v1 -> v2 si reemplazas la imagen y quieres forzar una caché nueva.
+local XERO_BACKGROUND_CACHE = "XeroHub/Assets/xero_anime_v1.png"
+
+local function isPngPayload(data)
+    return type(data) == "string"
+        and #data > 1024
+        and data:sub(1, 8) == "\137PNG\r\n\26\n"
+end
+
+local function ensureFolderTree(path)
+    if type(makefolder) ~= "function" then return end
+    local current = ""
+    for part in tostring(path):gmatch("[^/]+") do
+        current = current == "" and part or (current .. "/" .. part)
+        local exists = type(isfolder) == "function" and isfolder(current)
+        if not exists then pcall(makefolder, current) end
+    end
+end
+
+local function customAssetFunction()
+    local fn = getcustomasset or getsynasset
+    return type(fn) == "function" and fn or nil
+end
+
+local function cachedBackgroundAsset()
+    local assetFn = customAssetFunction()
+    if not assetFn or type(isfile) ~= "function" or not isfile(XERO_BACKGROUND_CACHE) then
+        return nil
+    end
+
+    -- Si readfile existe, evita reutilizar un archivo incompleto/corrupto.
+    if type(readfile) == "function" then
+        local okRead, data = pcall(readfile, XERO_BACKGROUND_CACHE)
+        if not okRead or not isPngPayload(data) then return nil end
+    end
+
+    local okAsset, asset = pcall(assetFn, XERO_BACKGROUND_CACHE)
+    if okAsset and type(asset) == "string" and asset ~= "" then return asset end
+    return nil
+end
+
+local function downloadBackgroundAsset()
+    local assetFn = customAssetFunction()
+    if not assetFn or type(writefile) ~= "function" then return nil end
+
+    local body
+    local req = (syn and syn.request) or (http and http.request) or http_request or request
+    if type(req) == "function" then
+        local okRequest, response = pcall(req, {
+            Url = XERO_BACKGROUND_URL,
+            Method = "GET",
+            Headers = { ["User-Agent"] = "XeroHub/2.9" },
+        })
+        if okRequest and response then
+            local status = tonumber(response.StatusCode or response.Status)
+            if status and status >= 200 and status < 300 and isPngPayload(response.Body) then
+                body = response.Body
+            end
+        end
+    end
+
+    -- Fallback para ejecutores donde sólo game:HttpGet puede bajar el RAW.
+    if not body then
+        local okHttp, data = pcall(function()
+            return game:HttpGet(XERO_BACKGROUND_URL)
+        end)
+        if okHttp and isPngPayload(data) then body = data end
+    end
+
+    if not body then return nil end
+    ensureFolderTree(XERO_BACKGROUND_FOLDER)
+    local okWrite = pcall(writefile, XERO_BACKGROUND_CACHE, body)
+    if not okWrite then return nil end
+
+    local okAsset, asset = pcall(assetFn, XERO_BACKGROUND_CACHE)
+    if okAsset and type(asset) == "string" and asset ~= "" then return asset end
+    return nil
+end
 local Nox = { Version = "2.9.0", Brand = "XeroHub", Creator = "Kev", UIScale = 1 }
 local C = {
     Window = Color3.fromRGB(9,9,9), Panel = Color3.fromRGB(14,14,14),
@@ -844,7 +930,32 @@ function Nox:CreateWindow(options)
     })},root)
     local scale=new("UIScale",{Scale=1},root); self.UIScaleObj=scale
 
-    -- Fondo Xero: geométrico, monocromo y más contenido para no invadir el panel.
+    -- Fondo anime: usa caché local si ya existe; si no, se baja en segundo plano.
+    -- El fondo geométrico original queda como fallback si el ejecutor no soporta
+    -- archivos/asset local o si GitHub no responde.
+    local animeImage=new("ImageLabel",{
+        Name="AnimeBackground",BackgroundTransparency=1,AnchorPoint=Vector2.new(.5,.5),
+        Position=UDim2.fromScale(.5,.5),Size=UDim2.fromScale(1,1),Image="",
+        ImageTransparency=.06,ScaleType=Enum.ScaleType.Crop,Visible=false,ZIndex=1,
+    },root)
+    round(animeImage,20)
+
+    local animeShade=new("Frame",{
+        Name="AnimeShade",BackgroundColor3=Color3.fromRGB(0,0,0),BackgroundTransparency=.55,
+        Size=UDim2.fromScale(1,1),Visible=false,ZIndex=2,
+    },root)
+    round(animeShade,20)
+    -- Un poco más oscuro del lado de navegación/contenido y más libre a la derecha.
+    new("UIGradient",{
+        Rotation=0,
+        Transparency=NumberSequence.new({
+            NumberSequenceKeypoint.new(0,.00),
+            NumberSequenceKeypoint.new(.58,.10),
+            NumberSequenceKeypoint.new(1,.30),
+        })
+    },animeShade)
+
+    -- Fondo Xero geométrico: sólo se usa como respaldo mientras no haya imagen.
     local backdrop=new("Frame",{Name="NoxBackdrop",BackgroundTransparency=1,Size=UDim2.fromScale(1,1),ZIndex=1},root)
     local glowA=new("Frame",{Name="SoftGlowA",AnchorPoint=Vector2.new(.5,.5),Position=UDim2.fromScale(.68,.34),
         Size=UDim2.fromScale(.54,.62),BackgroundColor3=Color3.fromRGB(26,26,28),BackgroundTransparency=.58,Rotation=-16,ZIndex=1},backdrop)
@@ -865,6 +976,25 @@ function Nox:CreateWindow(options)
         local h=new("Frame",{Name="GridH",Position=UDim2.new(0,0,i/5,0),Size=UDim2.new(1,0,0,1),
             BackgroundColor3=Color3.fromRGB(255,255,255),BackgroundTransparency=.962,ZIndex=1},backdrop)
     end
+
+    local function applyAnimeBackground(asset)
+        if not root.Parent or type(asset) ~= "string" or asset == "" then return end
+        animeImage.Image=asset
+        animeImage.Visible=true
+        animeShade.Visible=true
+        backdrop.Visible=false
+    end
+
+    local cachedAnimeAsset=cachedBackgroundAsset()
+    if cachedAnimeAsset then
+        applyAnimeBackground(cachedAnimeAsset)
+    else
+        task.spawn(function()
+            local asset=downloadBackgroundAsset()
+            if asset then applyAnimeBackground(asset) end
+        end)
+    end
+
     local top=new("Frame",{Name="Topbar",BackgroundTransparency=1,Size=UDim2.new(1,0,0,58),ZIndex=5},root)
     local logo=mark(top,28); logo.Position=UDim2.fromOffset(16,12)
 

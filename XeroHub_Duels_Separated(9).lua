@@ -11861,8 +11861,8 @@ runtime.Track(RunService.Heartbeat:Connect(function(deltaTime)
                                     highlight.FillTransparency = 0.6
                                     highlight.OutlineTransparency = 1 
                                     highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop 
-                                    highlight.Adornee = char
-                                    highlight.Parent = char
+                                    highlight.Adornee = char 
+                                    highlight.Parent = espFolder
                                     
                                     local billboard = Instance.new("BillboardGui") 
                                     billboard.Name = p.Name.."_Tag" 
@@ -14823,22 +14823,12 @@ UIElements.TogEspLines = Tabs.Vis:Toggle({
 -- ==========================================
 -- DIBUJADO EN PANTALLA 2D (FOV, Tracers, Box y Vida) - UN SOLO RENDER
 -- ==========================================
--- FOV XeroHub: contorno oscuro + aro principal más grueso y redondo.
-local FOVCircleBack = runtime.TrackDrawing(Drawing.new("Circle"))
-FOVCircleBack.Filled = false
-FOVCircleBack.Color = Color3.fromRGB(0, 0, 0)
-FOVCircleBack.Visible = false
-FOVCircleBack.Thickness = 5.5
-FOVCircleBack.Transparency = 0.45
-FOVCircleBack.NumSides = 128
-
 local FOVCircle = runtime.TrackDrawing(Drawing.new("Circle"))
 FOVCircle.Filled = false
 FOVCircle.Color = Color3.fromRGB(255, 255, 255)
 FOVCircle.Visible = false
-FOVCircle.Thickness = 3.0
-FOVCircle.Transparency = 1
-FOVCircle.NumSides = 128
+FOVCircle.Thickness = 1.7
+FOVCircle.NumSides = 64
 
 local tracerLines = {}
 local tracersLimpios = true
@@ -14917,7 +14907,6 @@ function runtime.RenderESP2D(deltaTime)
     local wantsESP2D = espEnabled and (espSettings.Box or espSettings.HealthBar)
     if not fovVisiblePreference and not espLinesEnabled and not wantsESP2D then
         if FOVCircle.Visible then FOVCircle.Visible = false end
-        if FOVCircleBack.Visible then FOVCircleBack.Visible = false end
         hideTracersOnce()
         runtime.HideAllESP2D()
         return
@@ -14931,17 +14920,12 @@ function runtime.RenderESP2D(deltaTime)
     end
 
     if fovVisiblePreference then
-        FOVCircleBack.Position = centroVector
-        FOVCircleBack.Radius = fovRadius
-        FOVCircleBack.Visible = true
-
         FOVCircle.Position = centroVector
         FOVCircle.Radius = fovRadius
         FOVCircle.Visible = true
         FOVCircle.Color = aimHookState.Target and fovTargetColor or fovIdleColor
-    else
-        if FOVCircle.Visible then FOVCircle.Visible = false end
-        if FOVCircleBack.Visible then FOVCircleBack.Visible = false end
+    elseif FOVCircle.Visible then
+        FOVCircle.Visible = false
     end
 
     if not espEnabled or enLobby then
@@ -15091,7 +15075,6 @@ function runtime.UpdateESP2DRenderConnection()
     end
     tracerAccumulator = 0
     if FOVCircle.Visible then FOVCircle.Visible = false end
-    if FOVCircleBack.Visible then FOVCircleBack.Visible = false end
     hideTracersOnce()
     runtime.HideAllESP2D()
 end
@@ -15468,6 +15451,13 @@ UIElements.ToggleSaBtn = Tabs.Aim:Toggle({
     end
 })
 
+
+UIElements.SliderGhostSpeed = Tabs.Mov:Slider({
+    Title = "Velocidad Fantasma", 
+    Step = 1, 
+    Value = {Min = 10, Max = 150, Default = 40}, 
+    Callback = function(Value) invisFlySpeed = Value end 
+})
 
 runtime.Track(player.CharacterAdded:Connect(function()
     isInvisible = false

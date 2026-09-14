@@ -10966,47 +10966,82 @@ runtime.RefreshAppearanceControls()
 
 local aimHookState = runtimeEnv.__ILUNX_AIM_HOOK_STATE
 if not aimHookState then
-    aimHookState = {Target = nil, Mouse = mouse, Owner = runtime}
+    aimHookState = {Target = nil, Mouse = mouse, Owner = runtime, HooksAvailable = false}
     runtimeEnv.__ILUNX_AIM_HOOK_STATE = aimHookState
 
-    local oldNamecall
-    oldNamecall = hookmetamethod(game, "__namecall", function(self, ...)
-        local target = aimHookState.Target
-        if not checkcaller() and target then
-            -- 🔥 FIX: Quitamos IsDescendantOf, que era lo que crasheaba el juego
-            if target.Parent then 
-                local method = getnamecallmethod()
-                if self == workspace then
-                    if method == "Raycast" then
-                        local origin, direction, p3 = ...
-                        if typeof(direction) == "Vector3" and direction.Magnitude > 5 and (origin - workspace.CurrentCamera.CFrame.Position).Magnitude > 1 then
-                            local newDir = (target.Position - origin).Unit * 5000
-                            return oldNamecall(self, origin, newDir, p3)
+    -- Compatibilidad de executor: estas APIs no existen en todos los entornos.
+    -- Si faltan, XeroHub sigue arrancando; únicamente se omite el hook de Silent Aim.
+    local hookMeta = type(hookmetamethod) == "function" and hookmetamethod or nil
+    local callerCheck = type(checkcaller) == "function" and checkcaller or function() return false end
+    local namecallGetter = type(getnamecallmethod) == "function" and getnamecallmethod or function() return nil end
+
+    if hookMeta then
+        local hookOk, hookErr = pcall(function()
+            local oldNamecall
+            oldNamecall = hookMeta(game, "__namecall", function(self, ...)
+                local target = aimHookState.Target
+                if not callerCheck() and target then
+                    if target.Parent then
+                        local method = namecallGetter()
+                        if self == workspace then
+                            if method == "Raycast" then
+                                local origin, direction, p3 = ...
+                                if typeof(direction) == "Vector3"
+                                    and direction.Magnitude > 5
+                                    and workspace.CurrentCamera
+                                    and (origin - workspace.CurrentCamera.CFrame.Position).Magnitude > 1 then
+
+                                    local delta = target.Position - origin
+                                    if delta.Magnitude > 0 then
+                                        local newDir = delta.Unit * 5000
+                                        return oldNamecall(self, origin, newDir, p3)
+                                    end
+                                end
+                            elseif method == "FindPartOnRay" or method == "FindPartOnRayWithIgnoreList" then
+                                local ray, p2, p3, p4 = ...
+                                if typeof(ray) == "Ray"
+                                    and ray.Direction.Magnitude > 5
+                                    and workspace.CurrentCamera
+                                    and (ray.Origin - workspace.CurrentCamera.CFrame.Position).Magnitude > 1 then
+
+                                    local delta = target.Position - ray.Origin
+                                    if delta.Magnitude > 0 then
+                                        local newRay = Ray.new(ray.Origin, delta.Unit * 5000)
+                                        return oldNamecall(self, newRay, p2, p3, p4)
+                                    end
+                                end
+                            end
                         end
-                    elseif method == "FindPartOnRay" or method == "FindPartOnRayWithIgnoreList" then
-                        local ray, p2, p3, p4 = ...
-                        if typeof(ray) == "Ray" and ray.Direction.Magnitude > 5 and (ray.Origin - workspace.CurrentCamera.CFrame.Position).Magnitude > 1 then
-                            local newRay = Ray.new(ray.Origin, (target.Position - ray.Origin).Unit * 5000)
-                            return oldNamecall(self, newRay, p2, p3, p4)
-                        end
+                    else
+                        aimHookState.Target = nil
                     end
                 end
-            else
-                aimHookState.Target = nil
-            end
-        end
-        return oldNamecall(self, ...)
-    end)
+                return oldNamecall(self, ...)
+            end)
 
-    local oldIndex
-    oldIndex = hookmetamethod(game, "__index", function(t, k)
-        local target = aimHookState.Target
-        if not checkcaller() and t == aimHookState.Mouse and target and target.Parent then
-            if k == "Hit" or k == "hit" then return target.CFrame
-            elseif k == "Target" or k == "target" then return target end
+            local oldIndex
+            oldIndex = hookMeta(game, "__index", function(t, k)
+                local target = aimHookState.Target
+                if not callerCheck() and t == aimHookState.Mouse and target and target.Parent then
+                    if k == "Hit" or k == "hit" then
+                        return target.CFrame
+                    elseif k == "Target" or k == "target" then
+                        return target
+                    end
+                end
+                return oldIndex(t, k)
+            end)
+
+            aimHookState.HooksAvailable = true
+        end)
+
+        if not hookOk then
+            aimHookState.HooksAvailable = false
+            warn("[XeroHub] Hooks de Silent Aim no disponibles: " .. tostring(hookErr))
         end
-        return oldIndex(t, k)
-    end)
+    else
+        warn("[XeroHub] Este executor no incluye hookmetamethod; XeroHub continuará sin el hook de Silent Aim.")
+    end
 else
     aimHookState.Target = nil
     aimHookState.Mouse = mouse
@@ -14268,7 +14303,25 @@ UIElements.TogEspLines = Tabs.Vis:Toggle({
 -- ==========================================
 -- DIBUJADO EN PANTALLA 2D (FOV, Tracers, Box y Vida) - UN SOLO RENDER
 -- ==========================================
-local FOVCircle = runtime.TrackDrawing(Drawing.new("Circle"))
+local function createTrackedDrawingSafe(kind)
+    local drawingNew = Drawing and Drawing.new
+    if type(drawingNew) == "function" then
+        local ok, drawing = pcall(drawingNew, kind)
+        if ok and drawing then
+            return runtime.TrackDrawing(drawing)
+        end
+    end
+
+    -- Fallback no-op: evita que la ausencia de Drawing tumbe TODO el hub.
+    -- Las funciones 2D quedan simplemente sin renderizar en ese executor.
+    local dummy = {Visible = false}
+    function dummy:Remove()
+        self.Visible = false
+    end
+    return dummy
+end
+
+local FOVCircle = createTrackedDrawingSafe("Circle")
 FOVCircle.Filled = false
 FOVCircle.Color = Color3.fromRGB(255, 255, 255)
 FOVCircle.Visible = false
@@ -14316,14 +14369,14 @@ function runtime.GetESP2DEntry(p)
         entry.Box = box
     end
 
-    local healthBg = runtime.TrackDrawing(Drawing.new("Line"))
+    local healthBg = createTrackedDrawingSafe("Line")
     healthBg.Thickness = 4
     healthBg.Transparency = 0.65
     healthBg.Color = Color3.fromRGB(0, 0, 0)
     healthBg.Visible = false
     entry.HealthBg = healthBg
 
-    local health = runtime.TrackDrawing(Drawing.new("Line"))
+    local health = createTrackedDrawingSafe("Line")
     health.Thickness = 2
     health.Transparency = 1
     health.Visible = false
@@ -14412,7 +14465,7 @@ runtime.Track(RunService.RenderStepped:Connect(function(deltaTime)
             local tLine = tracerLines[p]
             if espLinesEnabled and valid then
                 if not tLine then
-                    tLine = runtime.TrackDrawing(Drawing.new("Line"))
+                    tLine = createTrackedDrawingSafe("Line")
                     tLine.Thickness = 1.35
                     tLine.Transparency = 0.92
                     tLine.Visible = false
@@ -15793,12 +15846,12 @@ end
 end -- graphics scope
 
 Tabs.Farm:Section({Title = "Farmeo de Evento"})
-getgenv().AutoEventFarm = false
+runtimeEnv.AutoEventFarm = false
 local Networking = game:GetService("ReplicatedStorage"):WaitForChild("Packages"):WaitForChild("Networking")
 local RemoteFarm = Networking:FindFirstChild("RE/Events/CollectEventSpawnable")
 
 Tabs.Farm:Toggle({Title = "Auto Farmear Evento", Callback = function(s)
-    getgenv().AutoEventFarm = s
+    runtimeEnv.AutoEventFarm = s
     if s then 
         showBottomMessage("Auto Farm activado...")
         task.spawn(function()
@@ -15838,7 +15891,7 @@ Tabs.Farm:Toggle({Title = "Auto Farmear Evento", Callback = function(s)
                 end)
             end
 
-            while runtime.Alive and getgenv().AutoEventFarm do
+            while runtime.Alive and runtimeEnv.AutoEventFarm do
                 local char = player.Character
                 local hrp = char and char:FindFirstChild("HumanoidRootPart")
                 
@@ -17049,3 +17102,4 @@ startupSplashState.Finish()
 runtime.NotificationsReady = true
 -- XERO_FULL_GENERAL_OPTIMIZATION_2026_09_13
 -- XERO_FULL_GENERAL_OPTIMIZATION_2026_09_14_V2 · full source, no loader
+-- XERO_NIL_CALL_COMPAT_FIX_2026_09_14

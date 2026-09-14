@@ -11255,64 +11255,38 @@ if not aimHookState then
     local oldNamecall
     oldNamecall = hookmetamethod(game, "__namecall", function(self, ...)
         local target = aimHookState.Target
-
-        -- XERO_AIM_HOOK_FASTPATH:
-        -- Los hooks son globales. Primero descartamos el 99% de llamadas baratas y
-        -- sólo entonces consultamos checkcaller/getnamecallmethod. Durante un disparo
-        -- el juego hace muchas llamadas seguidas, así que este orden evita micro-picos.
-        if target and self == workspace and not checkcaller() then
-            if not target.Parent then
-                aimHookState.Target = nil
-                return oldNamecall(self, ...)
-            end
-
-            local method = getnamecallmethod()
-            local currentCamera = workspace.CurrentCamera
-            local cameraPosition = currentCamera and currentCamera.CFrame.Position
-
-            if cameraPosition and method == "Raycast" then
-                local origin, direction, p3 = ...
-                if typeof(direction) == "Vector3" and direction:Dot(direction) > 25 then
-                    local cameraDelta = origin - cameraPosition
-                    if cameraDelta:Dot(cameraDelta) > 1 then
-                        local targetDelta = target.Position - origin
-                        if targetDelta:Dot(targetDelta) > 0.0001 then
-                            local newDir = targetDelta.Unit * 5000
+        if not checkcaller() and target then
+            -- 🔥 FIX: Quitamos IsDescendantOf, que era lo que crasheaba el juego
+            if target.Parent then 
+                local method = getnamecallmethod()
+                if self == workspace then
+                    if method == "Raycast" then
+                        local origin, direction, p3 = ...
+                        if typeof(direction) == "Vector3" and direction.Magnitude > 5 and (origin - workspace.CurrentCamera.CFrame.Position).Magnitude > 1 then
+                            local newDir = (target.Position - origin).Unit * 5000
                             return oldNamecall(self, origin, newDir, p3)
                         end
-                    end
-                end
-            elseif cameraPosition and (method == "FindPartOnRay" or method == "FindPartOnRayWithIgnoreList") then
-                local ray, p2, p3, p4 = ...
-                if typeof(ray) == "Ray" and ray.Direction:Dot(ray.Direction) > 25 then
-                    local cameraDelta = ray.Origin - cameraPosition
-                    if cameraDelta:Dot(cameraDelta) > 1 then
-                        local targetDelta = target.Position - ray.Origin
-                        if targetDelta:Dot(targetDelta) > 0.0001 then
-                            local newRay = Ray.new(ray.Origin, targetDelta.Unit * 5000)
+                    elseif method == "FindPartOnRay" or method == "FindPartOnRayWithIgnoreList" then
+                        local ray, p2, p3, p4 = ...
+                        if typeof(ray) == "Ray" and ray.Direction.Magnitude > 5 and (ray.Origin - workspace.CurrentCamera.CFrame.Position).Magnitude > 1 then
+                            local newRay = Ray.new(ray.Origin, (target.Position - ray.Origin).Unit * 5000)
                             return oldNamecall(self, newRay, p2, p3, p4)
                         end
                     end
                 end
+            else
+                aimHookState.Target = nil
             end
         end
-
         return oldNamecall(self, ...)
     end)
 
     local oldIndex
     oldIndex = hookmetamethod(game, "__index", function(t, k)
         local target = aimHookState.Target
-        -- Igual que arriba: no llames checkcaller() en cada __index del juego.
-        if target and t == aimHookState.Mouse then
-            if not checkcaller() then
-                if target.Parent then
-                    if k == "Hit" or k == "hit" then return target.CFrame
-                    elseif k == "Target" or k == "target" then return target end
-                else
-                    aimHookState.Target = nil
-                end
-            end
+        if not checkcaller() and t == aimHookState.Mouse and target and target.Parent then
+            if k == "Hit" or k == "hit" then return target.CFrame
+            elseif k == "Target" or k == "target" then return target end
         end
         return oldIndex(t, k)
     end)
@@ -12055,10 +12029,7 @@ runtime.Track(RunService.Heartbeat:Connect(function(deltaTime)
     if silentAimPistolaEnabled or silentAimCuchilloEnabled then
         mState.saAct = true
         mState.tSA = mState.tSA + deltaTime
-        -- Si AutoShoot va a disparar en ESTE Heartbeat ya hizo su propia adquisición
-        -- de target. No repetimos aquí otro barrido completo + raycasts en el mismo frame.
-        -- Dejamos tSA vencido para que Silent Aim refresque en el Heartbeat siguiente.
-        if mState.tSA >= 0.03 and not mState.autoShootHeavyDue then
+        if mState.tSA >= 0.03 then
             mState.tSA = 0
             if not enLobby then
                 local char = player.Character
@@ -15273,8 +15244,6 @@ local loopHeartbeat = nil
 local isHidden = false
 local offsetDistance = 5000 -- Distancia estable: evita el error de precisión que aparece a 100k studs.
 local ghostEnabled = false
-
-
 runtime.GhostOriginalTransparency = setmetatable({}, {__mode = "k"})
 
 function runtime.RestoreGhostTransparency(char)
@@ -15483,6 +15452,12 @@ UIElements.ToggleSaBtn = Tabs.Aim:Toggle({
 })
 
 
+UIElements.SliderGhostSpeed = Tabs.Mov:Slider({
+    Title = "Velocidad Fantasma", 
+    Step = 1, 
+    Value = {Min = 10, Max = 150, Default = 40}, 
+    Callback = function(Value) invisFlySpeed = Value end 
+})
 
 runtime.Track(player.CharacterAdded:Connect(function()
     isInvisible = false
@@ -16081,7 +16056,6 @@ UIElements.TogTokyowami = modes.toggle("Tokyowami", {
 -- ==========================================
 -- 2. SHADERS NOCTURNOS (CUSTOM PBR)
 -- ==========================================
-
 UIElements.TogNight = modes.toggle("Noche", {
     Title = "Modo Noche",
     Desc = "Modo noche ajustable.",

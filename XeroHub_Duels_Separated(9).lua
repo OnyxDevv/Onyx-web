@@ -15273,6 +15273,8 @@ local loopHeartbeat = nil
 local isHidden = false
 local offsetDistance = 5000 -- Distancia estable: evita el error de precisión que aparece a 100k studs.
 local ghostEnabled = false
+
+
 runtime.GhostOriginalTransparency = setmetatable({}, {__mode = "k"})
 
 function runtime.RestoreGhostTransparency(char)

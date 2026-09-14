@@ -21,7 +21,7 @@ local XERO_BACKGROUND_URL = tostring(XeroEnv.XERO_BACKGROUND_URL or
     "https://raw.githubusercontent.com/OnyxDevv/Onyx-web/refs/heads/main/assets/backgrounds/xero_anime.png")
 local XERO_BACKGROUND_FOLDER = "XeroHub/Assets"
 -- Cambia v1 -> v2 si reemplazas la imagen y quieres forzar una caché nueva.
-local XERO_BACKGROUND_CACHE = "XeroHub/Assets/xero_anime_v2.png"
+local XERO_BACKGROUND_CACHE = "XeroHub/Assets/xero_anime_v1.png"
 
 local function isPngPayload(data)
     return type(data) == "string"

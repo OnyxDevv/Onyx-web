@@ -188,77 +188,67 @@ local runtime = {
     Alive = true,
     Connections = {},
     Drawings = {},
-    DrawingIndex = setmetatable({}, {__mode = "k"}),
-    ConnectionSweepCounter = 0,
-    InfectedTexts = {},
+    InfectedTexts = setmetatable({}, {__mode = "k"}),
 }
 
--- Mantiene el registro global pequeño incluso en sesiones largas con respawns,
--- toggles y jugadores entrando/saliendo. Las conexiones desconectadas ya no
--- permanecen referenciadas hasta reejecutar el hub.
-function runtime.CompactConnections(force)
+runtime.NextConnectionPruneAt = 96
+
+function runtime.PruneConnections()
     local list = runtime.Connections
-    if not force and #list < 192 then return end
+    local writeIndex = 1
 
-    runtime.ConnectionSweepCounter = (runtime.ConnectionSweepCounter or 0) + 1
-    if not force and runtime.ConnectionSweepCounter < 48 then return end
-    runtime.ConnectionSweepCounter = 0
-
-    local write = 1
-    for read = 1, #list do
-        local connection = list[read]
+    for readIndex = 1, #list do
+        local connection = list[readIndex]
         local connected = false
         if connection then
             pcall(function() connected = connection.Connected == true end)
         end
+
         if connected then
-            list[write] = connection
-            write += 1
+            list[writeIndex] = connection
+            writeIndex = writeIndex + 1
         end
     end
-    for i = #list, write, -1 do list[i] = nil end
+
+    for index = #list, writeIndex, -1 do
+        list[index] = nil
+    end
+
+    -- No barremos en cada Track: sólo después de crecer otra tanda razonable.
+    runtime.NextConnectionPruneAt = #list + 64
 end
 
 function runtime.Track(connection)
     if connection then
-        table.insert(runtime.Connections, connection)
-        runtime.CompactConnections(false)
+        local list = runtime.Connections
+        list[#list + 1] = connection
+        if #list >= (runtime.NextConnectionPruneAt or 96) then
+            runtime.PruneConnections()
+        end
     end
     return connection
 end
 
-function runtime.ReleaseConnection(connection, disconnect)
-    if not connection then return end
-    if disconnect ~= false then pcall(function() connection:Disconnect() end) end
-    local list = runtime.Connections
+function runtime.TrackDrawing(drawing)
+    if drawing then table.insert(runtime.Drawings, drawing) end
+    return drawing
+end
+
+function runtime.UntrackDrawing(drawing)
+    if not drawing then return end
+    local list = runtime.Drawings
     for i = #list, 1, -1 do
-        if list[i] == connection then
+        if list[i] == drawing then
             list[i] = list[#list]
             list[#list] = nil
-            break
+            return
         end
     end
 end
 
-function runtime.TrackDrawing(drawing)
-    if drawing and not runtime.DrawingIndex[drawing] then
-        runtime.Drawings[#runtime.Drawings + 1] = drawing
-        runtime.DrawingIndex[drawing] = #runtime.Drawings
-    end
-    return drawing
-end
-
-function runtime.RemoveTrackedDrawing(drawing)
+function runtime.RemoveDrawing(drawing)
     if not drawing then return end
-    local index = runtime.DrawingIndex[drawing]
-    if index then
-        local list = runtime.Drawings
-        local last = list[#list]
-        list[index] = last
-        list[#list] = nil
-        runtime.DrawingIndex[drawing] = nil
-        if last and last ~= drawing then runtime.DrawingIndex[last] = index end
-    end
+    runtime.UntrackDrawing(drawing)
     pcall(function() drawing:Remove() end)
 end
 
@@ -282,7 +272,6 @@ function runtime.Cleanup()
     for i = #runtime.Drawings, 1, -1 do
         local drawing = runtime.Drawings[i]
         pcall(function() drawing:Remove() end)
-        runtime.DrawingIndex[drawing] = nil
         runtime.Drawings[i] = nil
     end
 
@@ -3317,31 +3306,37 @@ runtime.Track(player:GetPropertyChangedSignal("Team"):Connect(updateTeamCache))
 updateTeamCache() -- Escaneo inicial
 
 -- 2. Actualiza el caché SOLO cuando te ponen o quitan un campo de fuerza.
--- Las conexiones pertenecen al Character actual; se liberan al respawn para no
--- acumular dos closures por ronda durante sesiones largas.
-local lobbyCharacterConnections = {}
-local function clearLobbyCharacterConnections()
-    for i = #lobbyCharacterConnections, 1, -1 do
-        runtime.ReleaseConnection(lobbyCharacterConnections[i], true)
-        lobbyCharacterConnections[i] = nil
+-- Reutilizamos sólo dos listeners del Character actual; los de la ronda anterior
+-- se desconectan en el acto para no dejar cierres/referencias vivas entre respawns.
+runtime.BindForceFieldCache = function(char)
+    if runtime.ForceFieldAddedConnection then
+        pcall(function() runtime.ForceFieldAddedConnection:Disconnect() end)
+        runtime.ForceFieldAddedConnection = nil
     end
-end
+    if runtime.ForceFieldRemovedConnection then
+        pcall(function() runtime.ForceFieldRemovedConnection:Disconnect() end)
+        runtime.ForceFieldRemovedConnection = nil
+    end
 
-local function bindLobbyCharacter(char)
-    clearLobbyCharacterConnections()
     hasForceField = char and char:FindFirstChildOfClass("ForceField") ~= nil or false
-    if not char then return end
+    if not char then
+        runtime.PruneConnections()
+        return
+    end
 
-    lobbyCharacterConnections[1] = runtime.Track(char.ChildAdded:Connect(function(child)
+    runtime.ForceFieldAddedConnection = runtime.Track(char.ChildAdded:Connect(function(child)
         if child:IsA("ForceField") then hasForceField = true end
     end))
-    lobbyCharacterConnections[2] = runtime.Track(char.ChildRemoved:Connect(function(child)
+    runtime.ForceFieldRemovedConnection = runtime.Track(char.ChildRemoved:Connect(function(child)
         if child:IsA("ForceField") then hasForceField = false end
     end))
+    runtime.PruneConnections()
 end
 
-runtime.Track(player.CharacterAdded:Connect(bindLobbyCharacter))
-if player.Character then bindLobbyCharacter(player.Character) end
+runtime.Track(player.CharacterAdded:Connect(function(char)
+    runtime.BindForceFieldCache(char)
+end))
+runtime.BindForceFieldCache(player.Character)
 
 -- 3. La función maestra ahora es 1000x más rápida
 function estaEnLobby()
@@ -3476,27 +3471,27 @@ runtime.Track(player:GetPropertyChangedSignal("TeamColor"):Connect(updateMyTeam)
 runtime.Track(player:GetAttributeChangedSignal("Team"):Connect(updateMyTeam))
 runtime.Track(player:GetAttributeChangedSignal("team"):Connect(updateMyTeam))
 
-local enemyEventConnections = setmetatable({}, {__mode = "k"})
+runtime.EnemyEventConnections = setmetatable({}, {__mode = "k"})
 
-local function clearPlayerEvents(p)
-    local bundle = enemyEventConnections[p]
+runtime.ClearEnemyPlayerEvents = function(p)
+    local bundle = runtime.EnemyEventConnections[p]
     if not bundle then return end
-    enemyEventConnections[p] = nil
-    for i = #bundle, 1, -1 do
-        runtime.ReleaseConnection(bundle[i], true)
-        bundle[i] = nil
+    runtime.EnemyEventConnections[p] = nil
+    for i = 1, #bundle do
+        pcall(function() bundle[i]:Disconnect() end)
     end
 end
 
 function setupPlayerEvents(p)
-    if not p or p == player then return end
-    clearPlayerEvents(p)
-    local bundle = {}
-    enemyEventConnections[p] = bundle
-    bundle[#bundle + 1] = runtime.Track(p:GetPropertyChangedSignal("Team"):Connect(function() updateEnemy(p) end))
-    bundle[#bundle + 1] = runtime.Track(p:GetPropertyChangedSignal("TeamColor"):Connect(function() updateEnemy(p) end))
-    bundle[#bundle + 1] = runtime.Track(p:GetAttributeChangedSignal("Team"):Connect(function() updateEnemy(p) end))
-    bundle[#bundle + 1] = runtime.Track(p:GetAttributeChangedSignal("team"):Connect(function() updateEnemy(p) end))
+    runtime.ClearEnemyPlayerEvents(p)
+    local bundle = {
+        p:GetPropertyChangedSignal("Team"):Connect(function() updateEnemy(p) end),
+        p:GetPropertyChangedSignal("TeamColor"):Connect(function() updateEnemy(p) end),
+        p:GetAttributeChangedSignal("Team"):Connect(function() updateEnemy(p) end),
+        p:GetAttributeChangedSignal("team"):Connect(function() updateEnemy(p) end),
+    }
+    runtime.EnemyEventConnections[p] = bundle
+    for i = 1, #bundle do runtime.Track(bundle[i]) end
 end
 
 for _, p in ipairs(listaJugadores) do
@@ -3504,8 +3499,9 @@ for _, p in ipairs(listaJugadores) do
 end
 runtime.Track(Players.PlayerAdded:Connect(function(p) setupPlayerEvents(p) end))
 runtime.Track(Players.PlayerRemoving:Connect(function(p)
-    clearPlayerEvents(p)
+    runtime.ClearEnemyPlayerEvents(p)
     updateEnemy(p)
+    runtime.PruneConnections()
 end))
 
 function isEnemy(targetPlayer)
@@ -3650,7 +3646,6 @@ end
 
 function runtime.CollectTargetParts(char, mode, out, seen)
     table.clear(out)
-    table.clear(seen)
     if not char then return out end
 
     local modeCache = runtime.TargetPartCache[mode]
@@ -3669,6 +3664,7 @@ function runtime.CollectTargetParts(char, mode, out, seen)
     end
 
     local partNames = runtime.TargetPartNameCache[mode] or runtime.RebuildTargetPartNameCache(mode)
+    table.clear(seen)
     for i = 1, #partNames do
         local part = ffc(char, partNames[i])
         if part and part:IsA("BasePart") and not seen[part] then
@@ -4243,9 +4239,6 @@ runtime.Appearance = {
         RespawnMaskTopologyConnection = nil,
         RespawnMaskGeneration = nil,
         RespawnMaskPending = false,
-        RespawnWorkerGeneration = nil,
-        RespawnWorkerRunning = false,
-        LastFastAppearanceGeneration = nil,
         VisualContainer = nil,
         SelectedServerPlayer = nil,
         UsernameInput = "",
@@ -4660,7 +4653,7 @@ function runtime.EnsureFaceClassicSync()
         if not anyLive then
             local conn = runtime.Appearance.FaceClassicSyncConnection
             runtime.Appearance.FaceClassicSyncConnection = nil
-            if conn then runtime.ReleaseConnection(conn, true) end
+            if conn then pcall(function() conn:Disconnect() end) end
         end
     end))
 end
@@ -5808,19 +5801,6 @@ function runtime.AvatarCloneBuildNativeTransparencyMap(char, overlay)
 
     if not char or not char.Parent or not overlay or not overlay.Parent then return false end
 
-    -- isHairAccessory puede revisar AccessoryType/Handle. Lo resolvemos una vez por
-    -- accesorio al construir el mapa, no por cada visual en cada RenderStep.
-    local hairCache = setmetatable({}, {__mode = "k"})
-    local function cachedIsHair(accessory)
-        if not accessory then return false end
-        local cached = hairCache[accessory]
-        if cached == nil then
-            cached = isHairAccessory(accessory) == true
-            hairCache[accessory] = cached
-        end
-        return cached
-    end
-
     -- CameraModule no necesita leer el LTM del Character real para calcular el fade:
     -- usa únicamente la distancia cámara <-> Focus. Por eso cacheamos sólo los
     -- visuales DEL CLON y conservamos su LTM base para combinarlo con Headless/Korblox.
@@ -5831,7 +5811,6 @@ function runtime.AvatarCloneBuildNativeTransparencyMap(char, overlay)
             state.NativeTransparencyPairs[#state.NativeTransparencyPairs + 1] = {
                 ClonePart = object,
                 Accessory = accessory,
-                IsHair = cachedIsHair(accessory),
                 BaseLTM = original and tonumber(original.LocalTransparencyModifier)
                     or tonumber(object.LocalTransparencyModifier)
                     or 0,
@@ -5843,7 +5822,6 @@ function runtime.AvatarCloneBuildNativeTransparencyMap(char, overlay)
             state.NativeEffectPairs[#state.NativeEffectPairs + 1] = {
                 Effect = object,
                 Accessory = accessory,
-                IsHair = cachedIsHair(accessory),
                 BaseEnabled = original and original.Enabled ~= false or object.Enabled,
             }
         end
@@ -5866,7 +5844,7 @@ function runtime.AvatarCloneNativeLayerHidden(pair)
         return true
     end
 
-    if runtime.Appearance.Enabled.HideHair and pair.IsHair then
+    if runtime.Appearance.Enabled.HideHair and pair.Accessory and isHairAccessory(pair.Accessory) then
         return true
     end
 
@@ -5891,14 +5869,8 @@ function runtime.AvatarCloneSyncNativeTransparency(char, overlay, dt)
     -- XeroHub lo mantiene en 1 para esconderlo debajo del overlay.
     local transparency = 0
     if cameraOwnsCharacter and currentCamera then
-        local cameraDelta = currentCamera.Focus.Position - currentCamera.CFrame.Position
-        local distanceSq = cameraDelta:Dot(cameraDelta)
-        if distanceSq < 4 then
-            local distance = math.sqrt(distanceSq)
-            transparency = 1 - (distance - 0.5) / 1.5
-        else
-            transparency = 0
-        end
+        local distance = (currentCamera.Focus.Position - currentCamera.CFrame.Position).Magnitude
+        transparency = (distance < 2) and (1 - (distance - 0.5) / 1.5) or 0
         if transparency < 0.5 then
             transparency = 0
         end
@@ -5931,7 +5903,8 @@ function runtime.AvatarCloneSyncNativeTransparency(char, overlay, dt)
         local pair = state.NativeEffectPairs[i]
         local effect = pair.Effect
         if effect and effect.Parent then
-            local hiddenByLayer = runtime.Appearance.Enabled.HideHair and pair.IsHair == true
+            local hiddenByLayer = runtime.Appearance.Enabled.HideHair
+                and pair.Accessory and isHairAccessory(pair.Accessory)
             local desired = pair.BaseEnabled == true and transparency < 0.95 and not hiddenByLayer
             if effect.Enabled ~= desired then effect.Enabled = desired end
         end
@@ -7269,16 +7242,19 @@ function runtime.BeginAvatarCloneRespawnMask(char, generation)
             return nil, nil
         end
 
-        local function findJointMotor(model, part0Name, part1Name)
-            for _, object in ipairs(model:GetDescendants()) do
-                if object:IsA("Motor6D")
-                    and object.Part0 and object.Part1
-                    and object.Part0.Name == part0Name
-                    and object.Part1.Name == part1Name then
-                    return object
+        -- XERO_PERF_CLONE_MOTOR_INDEX: antes cada joint hacía su propio
+        -- overlay:GetDescendants(). R15 podía recorrer el mismo modelo 15 veces
+        -- durante cada respawn. Indexamos los Motor6D en una sola pasada.
+        local cloneMotorIndex = {}
+        for _, object in ipairs(overlay:GetDescendants()) do
+            if object:IsA("Motor6D") and object.Part0 and object.Part1 then
+                local row = cloneMotorIndex[object.Part0.Name]
+                if not row then
+                    row = {}
+                    cloneMotorIndex[object.Part0.Name] = row
                 end
+                row[object.Part1.Name] = object
             end
-            return nil
         end
 
         -- Sólo cacheamos geometría DEL CLON, porque esa no cambia durante el respawn.
@@ -7291,7 +7267,8 @@ function runtime.BeginAvatarCloneRespawnMask(char, generation)
             if cloneParent and cloneParent:IsA("BasePart")
                 and cloneChild and cloneChild:IsA("BasePart") then
 
-                local cloneMotor = findJointMotor(overlay, parentName, childName)
+                local motorRow = cloneMotorIndex[parentName]
+                local cloneMotor = motorRow and motorRow[childName] or nil
                 local cloneC0, cloneC1
 
                 if cloneMotor then
@@ -7538,9 +7515,6 @@ end
 
 function runtime.AvatarCloneResetForRespawn(char, generation)
     local state = runtime.Appearance.AvatarClone
-    state.RespawnWorkerRunning = false
-    state.RespawnWorkerGeneration = nil
-    state.LastFastAppearanceGeneration = nil
 
     -- Desconectamos la pose vieja, pero conservamos el overlay si el clon debe
     -- sobrevivir al respawn. Ese mismo overlay cubre el Character nuevo mientras
@@ -7658,23 +7632,24 @@ function runtime.BindAppearanceAccessoryGuard(char, generation)
     end))
 end
 
-local AVATAR_CLONE_R15_PARTS = {
-    "HumanoidRootPart", "LowerTorso", "UpperTorso", "Head",
-    "LeftUpperArm", "LeftLowerArm", "LeftHand",
-    "RightUpperArm", "RightLowerArm", "RightHand",
-    "LeftUpperLeg", "LeftLowerLeg", "LeftFoot",
-    "RightUpperLeg", "RightLowerLeg", "RightFoot",
-}
-local AVATAR_CLONE_R6_PARTS = {
-    "HumanoidRootPart", "Torso", "Head",
-    "Left Arm", "Right Arm", "Left Leg", "Right Leg",
-}
-
 function runtime.AvatarCloneRigReady(char, humanoid)
     if not char or not humanoid then return false end
 
-    local requiredParts = humanoid.RigType == Enum.HumanoidRigType.R15
-        and AVATAR_CLONE_R15_PARTS or AVATAR_CLONE_R6_PARTS
+    local requiredParts
+    if humanoid.RigType == Enum.HumanoidRigType.R15 then
+        requiredParts = {
+            "HumanoidRootPart", "LowerTorso", "UpperTorso", "Head",
+            "LeftUpperArm", "LeftLowerArm", "LeftHand",
+            "RightUpperArm", "RightLowerArm", "RightHand",
+            "LeftUpperLeg", "LeftLowerLeg", "LeftFoot",
+            "RightUpperLeg", "RightLowerLeg", "RightFoot",
+        }
+    else
+        requiredParts = {
+            "HumanoidRootPart", "Torso", "Head",
+            "Left Arm", "Right Arm", "Left Leg", "Right Leg",
+        }
+    end
 
     for i = 1, #requiredParts do
         local part = char:FindFirstChild(requiredParts[i])
@@ -7751,8 +7726,7 @@ function runtime.WaitForAvatarCloneSpawnStable(char, humanoid, generation, maxWa
         local sameRoot = lastRoot == nil or lastRoot == root
         local teleported = false
         if lastPosition and sameRoot then
-            local moveDelta = root.Position - lastPosition
-            teleported = moveDelta:Dot(moveDelta) > 100
+            teleported = (root.Position - lastPosition).Magnitude > 10
         end
 
         if root.Anchored or blockedState or airborneSpawnWindow or not sameRoot or teleported then
@@ -7866,62 +7840,66 @@ function runtime.GuardAvatarCloneAfterRespawn(char, generation)
 end
 
 function runtime.FastRestoreAppearanceOnRespawn(char, generation)
-    if not runtime.Alive or not char or not char.Parent then return false end
+    if not runtime.Alive or not char or not char.Parent then return end
 
     local humanoid = char:FindFirstChildOfClass("Humanoid")
     if not humanoid then
         humanoid = char:WaitForChild("Humanoid", 0.35)
     end
-    if not runtime.Alive or not humanoid or not char.Parent then return false end
-    if generation and generation ~= runtime.Appearance.RespawnGeneration then return false end
+    if not runtime.Alive or not humanoid or not char.Parent then return end
+    if generation and generation ~= runtime.Appearance.RespawnGeneration then return end
 
     if runtime.Appearance.Enabled.Headless or runtime.GetActiveFaceKey() or hasEnabledAppearanceAccessory() then
-        if not char:FindFirstChild("Head") then char:WaitForChild("Head", 0.35) end
+        if not char:FindFirstChild("Head") then
+            char:WaitForChild("Head", 0.35)
+        end
     end
     if runtime.Appearance.Enabled.Korblox and humanoid.RigType == Enum.HumanoidRigType.R15 then
-        if not char:FindFirstChild("RightUpperLeg") then char:WaitForChild("RightUpperLeg", 0.35) end
+        if not char:FindFirstChild("RightUpperLeg") then
+            char:WaitForChild("RightUpperLeg", 0.35)
+        end
     end
 
-    if not runtime.Alive or not char.Parent then return false end
-    if generation and generation ~= runtime.Appearance.RespawnGeneration then return false end
+    if not runtime.Alive or not char.Parent then return end
+    if generation and generation ~= runtime.Appearance.RespawnGeneration then return end
+
+    -- XERO_FAST_LIMITEDS_RESPAWN:
+    -- Los limiteds de Xero llevan iLunXAppearanceKey y AvatarCloneHideBase los excluye
+    -- expresamente del ocultado. Por eso no necesitan esperar los 4.5-7 s usados para
+    -- estabilizar el overlay del clon. Los reaplicamos en cuanto existen Head/attachments;
+    -- el apply definitivo del clon podrá repetir esta pasada después como protección.
+    runtime.ReapplyAppearanceLayers(char)
 
     local cloneState = runtime.Appearance.AvatarClone
+    if cloneState.Active
+        and cloneState.KeepOnRespawn
+        and cloneState.Template then
 
-    -- XERO_FAST_APPEARANCE_RESPAWN:
-    -- Limiteds/Headless/Korblox/cara se restauran TAN PRONTO existe el rig mínimo.
-    -- Antes esta llamada ocurría después de esperar hasta 7 s a que Duels terminara
-    -- su freeze/teleport del clon, que era el retraso visible de los limiteds.
-    runtime.Appearance.AttachmentCache[char] = nil
-    runtime.ReapplyAppearanceLayers(char)
-    cloneState.LastFastAppearanceGeneration = generation
-
-    if cloneState.Active and cloneState.KeepOnRespawn and cloneState.Template then
-        -- El clon definitivo sigue esperando estabilidad, pero la máscara visual y
-        -- las capas independientes ya están presentes desde el principio.
+        -- Durante el freeze de inicio NO mostramos el Character real. Una máscara
+        -- visual 100% anclada sigue al root desde el primer frame, mientras el apply
+        -- definitivo espera a que el rig/teleport de Duels estén estables.
         runtime.BeginAvatarCloneRespawnMask(char, generation)
-    end
 
-    return true
-end
-
-function runtime.ScheduleAvatarCloneRespawnGuard(char, generation)
-    local state = runtime.Appearance.AvatarClone
-    if not state or not state.Active or not state.KeepOnRespawn or not state.Template then return end
-    if not char or not char.Parent or player.Character ~= char then return end
-
-    if state.RespawnWorkerRunning and state.RespawnWorkerGeneration == generation then
-        return
-    end
-
-    state.RespawnWorkerRunning = true
-    state.RespawnWorkerGeneration = generation
-    task.spawn(function()
-        runtime.GuardAvatarCloneAfterRespawn(char, generation)
-        if state.RespawnWorkerGeneration == generation then
-            state.RespawnWorkerRunning = false
-            state.RespawnWorkerGeneration = nil
+        if not runtime.WaitForAvatarCloneRigReady(char, humanoid, generation, 1.8) then
+            return
         end
-    end)
+        if not runtime.WaitForAvatarCloneSpawnStable(char, humanoid, generation, 7) then
+            return
+        end
+    end
+
+    if cloneState.Active
+        and cloneState.KeepOnRespawn
+        and cloneState.Template
+        and not cloneState.Applying then
+
+        local ok = runtime.ApplyAvatarCloneTemplate(char, cloneState.Template)
+        if not ok then
+            runtime.AvatarCloneRestoreBase(char)
+            runtime.ReapplyAppearanceLayers(char)
+        end
+        if generation and generation ~= runtime.Appearance.RespawnGeneration then return end
+    end
 end
 
 function runtime.SetAppearance(key, state)
@@ -8157,9 +8135,11 @@ runtime.Track(player.CharacterAdded:Connect(function(char)
 
     task.spawn(function()
         runtime.FastRestoreAppearanceOnRespawn(char, generation)
-        -- El clon espera la salida real del freeze en SU worker, sin bloquear la
-        -- restauración inmediata de limiteds/capas.
-        runtime.ScheduleAvatarCloneRespawnGuard(char, generation)
+
+        -- El primer apply puede coincidir con el freeze/teleport de inicio de ronda.
+        -- La guardia de 10 s corrige cualquier reconstrucción tardía sin que el
+        -- usuario tenga que pulsar "Clonar" de nuevo.
+        runtime.GuardAvatarCloneAfterRespawn(char, generation)
     end)
 end))
 
@@ -8181,15 +8161,18 @@ pcall(function()
                     -- iLunX_LocalAvatarClones. La comprobación anterior contra
                     -- Overlay.Parent == char siempre daba false y provocaba un
                     -- segundo apply innecesario justo cuando terminaba el respawn.
-                    -- Roblox puede terminar de cargar la apariencia DESPUÉS del
-                    -- CharacterAdded y pisar limiteds/capas. Reparamos inmediatamente.
-                    runtime.FastRestoreAppearanceOnRespawn(char, generation)
                     if runtime.AvatarCloneIsBoundToCharacter(char) then
+                        runtime.ReapplyAppearanceLayers(char)
                         runtime.AvatarCloneHideBase(char)
                         runtime.UpdateAvatarCloneLayers()
                     else
+                        -- CharacterAppearanceLoaded puede disparar DURANTE el countdown.
+                        -- Conservamos/recreamos la máscara visual; el guard espera el
+                        -- estado físico estable para hacer el bind definitivo.
                         runtime.BeginAvatarCloneRespawnMask(char, generation)
-                        runtime.ScheduleAvatarCloneRespawnGuard(char, generation)
+                        task.spawn(function()
+                            runtime.GuardAvatarCloneAfterRespawn(char, generation)
+                        end)
                     end
                 else
                     runtime.ReapplyAppearanceLayers(char)
@@ -10966,82 +10949,47 @@ runtime.RefreshAppearanceControls()
 
 local aimHookState = runtimeEnv.__ILUNX_AIM_HOOK_STATE
 if not aimHookState then
-    aimHookState = {Target = nil, Mouse = mouse, Owner = runtime, HooksAvailable = false}
+    aimHookState = {Target = nil, Mouse = mouse, Owner = runtime}
     runtimeEnv.__ILUNX_AIM_HOOK_STATE = aimHookState
 
-    -- Compatibilidad de executor: estas APIs no existen en todos los entornos.
-    -- Si faltan, XeroHub sigue arrancando; únicamente se omite el hook de Silent Aim.
-    local hookMeta = type(hookmetamethod) == "function" and hookmetamethod or nil
-    local callerCheck = type(checkcaller) == "function" and checkcaller or function() return false end
-    local namecallGetter = type(getnamecallmethod) == "function" and getnamecallmethod or function() return nil end
-
-    if hookMeta then
-        local hookOk, hookErr = pcall(function()
-            local oldNamecall
-            oldNamecall = hookMeta(game, "__namecall", function(self, ...)
-                local target = aimHookState.Target
-                if not callerCheck() and target then
-                    if target.Parent then
-                        local method = namecallGetter()
-                        if self == workspace then
-                            if method == "Raycast" then
-                                local origin, direction, p3 = ...
-                                if typeof(direction) == "Vector3"
-                                    and direction.Magnitude > 5
-                                    and workspace.CurrentCamera
-                                    and (origin - workspace.CurrentCamera.CFrame.Position).Magnitude > 1 then
-
-                                    local delta = target.Position - origin
-                                    if delta.Magnitude > 0 then
-                                        local newDir = delta.Unit * 5000
-                                        return oldNamecall(self, origin, newDir, p3)
-                                    end
-                                end
-                            elseif method == "FindPartOnRay" or method == "FindPartOnRayWithIgnoreList" then
-                                local ray, p2, p3, p4 = ...
-                                if typeof(ray) == "Ray"
-                                    and ray.Direction.Magnitude > 5
-                                    and workspace.CurrentCamera
-                                    and (ray.Origin - workspace.CurrentCamera.CFrame.Position).Magnitude > 1 then
-
-                                    local delta = target.Position - ray.Origin
-                                    if delta.Magnitude > 0 then
-                                        local newRay = Ray.new(ray.Origin, delta.Unit * 5000)
-                                        return oldNamecall(self, newRay, p2, p3, p4)
-                                    end
-                                end
-                            end
+    local oldNamecall
+    oldNamecall = hookmetamethod(game, "__namecall", function(self, ...)
+        local target = aimHookState.Target
+        if not checkcaller() and target then
+            -- 🔥 FIX: Quitamos IsDescendantOf, que era lo que crasheaba el juego
+            if target.Parent then 
+                local method = getnamecallmethod()
+                if self == workspace then
+                    if method == "Raycast" then
+                        local origin, direction, p3 = ...
+                        if typeof(direction) == "Vector3" and direction.Magnitude > 5 and (origin - workspace.CurrentCamera.CFrame.Position).Magnitude > 1 then
+                            local newDir = (target.Position - origin).Unit * 5000
+                            return oldNamecall(self, origin, newDir, p3)
                         end
-                    else
-                        aimHookState.Target = nil
+                    elseif method == "FindPartOnRay" or method == "FindPartOnRayWithIgnoreList" then
+                        local ray, p2, p3, p4 = ...
+                        if typeof(ray) == "Ray" and ray.Direction.Magnitude > 5 and (ray.Origin - workspace.CurrentCamera.CFrame.Position).Magnitude > 1 then
+                            local newRay = Ray.new(ray.Origin, (target.Position - ray.Origin).Unit * 5000)
+                            return oldNamecall(self, newRay, p2, p3, p4)
+                        end
                     end
                 end
-                return oldNamecall(self, ...)
-            end)
-
-            local oldIndex
-            oldIndex = hookMeta(game, "__index", function(t, k)
-                local target = aimHookState.Target
-                if not callerCheck() and t == aimHookState.Mouse and target and target.Parent then
-                    if k == "Hit" or k == "hit" then
-                        return target.CFrame
-                    elseif k == "Target" or k == "target" then
-                        return target
-                    end
-                end
-                return oldIndex(t, k)
-            end)
-
-            aimHookState.HooksAvailable = true
-        end)
-
-        if not hookOk then
-            aimHookState.HooksAvailable = false
-            warn("[XeroHub] Hooks de Silent Aim no disponibles: " .. tostring(hookErr))
+            else
+                aimHookState.Target = nil
+            end
         end
-    else
-        warn("[XeroHub] Este executor no incluye hookmetamethod; XeroHub continuará sin el hook de Silent Aim.")
-    end
+        return oldNamecall(self, ...)
+    end)
+
+    local oldIndex
+    oldIndex = hookmetamethod(game, "__index", function(t, k)
+        local target = aimHookState.Target
+        if not checkcaller() and t == aimHookState.Mouse and target and target.Parent then
+            if k == "Hit" or k == "hit" then return target.CFrame
+            elseif k == "Target" or k == "target" then return target end
+        end
+        return oldIndex(t, k)
+    end)
 else
     aimHookState.Target = nil
     aimHookState.Mouse = mouse
@@ -11347,6 +11295,7 @@ runtime.Track(RunService.Heartbeat:Connect(function(deltaTime)
                             local distSq = delta:Dot(delta)
                             
                             if distSq <= mState.maxEspDistanceSq then
+                                local dist = math.sqrt(distSq)
                                 if activeESPs[p] and activeESPs[p].Char ~= char then cleanESP(p) end
 
                                 -- Duels puede reconstruir Head/partes dentro del MISMO Character.
@@ -11415,7 +11364,7 @@ runtime.Track(RunService.Heartbeat:Connect(function(deltaTime)
                                     espObj.LastDistance = -1
                                 end
                                 
-                                local distanceInt = espSettings.Distance and math_floor(math.sqrt(distSq)) or -1
+                                local distanceInt = math_floor(dist)
                                 if espObj.LastDistance ~= distanceInt
                                     or espObj.LastNameEnabled ~= espSettings.Name
                                     or espObj.LastDistanceEnabled ~= espSettings.Distance
@@ -12061,9 +12010,15 @@ local function estaVulnerableKillAll(
     end
 
 
-    local core = getCharCore(char)
-    local hum = core and core.Humanoid
-    local hrp = core and core.HRP
+    local hum =
+        char:FindFirstChildOfClass(
+            "Humanoid"
+        )
+
+    local hrp =
+        char:FindFirstChild(
+            "HumanoidRootPart"
+        )
 
 
     if not hum or not hrp then
@@ -12180,8 +12135,6 @@ local KNIFE_WORDS = {
     "dagger",
     "kunai"
 }
-local killAllKnifeCache = setmetatable({}, {__mode = "k"})
-local killAllHandleCache = setmetatable({}, {__mode = "k"})
 
 
 local function esCuchilloKillAll(tool)
@@ -12193,8 +12146,6 @@ local function esCuchilloKillAll(tool)
         return false
     end
 
-
-    if killAllKnifeCache[tool] then return true end
 
     if tool:FindFirstChild(
         "KnifeClient",
@@ -12213,7 +12164,6 @@ local function esCuchilloKillAll(tool)
             true
         )
     then
-        killAllKnifeCache[tool] = true
         return true
     end
 
@@ -12236,7 +12186,6 @@ local function esCuchilloKillAll(tool)
             1,
             true
         ) then
-            killAllKnifeCache[tool] = true
             return true
         end
     end
@@ -12369,10 +12318,6 @@ local function obtenerHandleKillAll(
         return nil
     end
 
-    local cached = killAllHandleCache[arma]
-    if cached and cached.Parent and cached:IsDescendantOf(arma) then
-        return cached
-    end
 
     local handle =
         arma:FindFirstChild(
@@ -12386,7 +12331,6 @@ local function obtenerHandleKillAll(
             "BasePart"
         )
     then
-        killAllHandleCache[arma] = handle
         return handle
     end
 
@@ -12400,7 +12344,6 @@ local function obtenerHandleKillAll(
         if object:IsA(
             "BasePart"
         ) then
-            killAllHandleCache[arma] = object
             return object
         end
     end
@@ -12832,8 +12775,11 @@ local function esperarContactoKillAll(
         and os.clock() < deadline
     do
 
-        local enemyCore = getCharCore(enemyChar)
-        local enemyHum = enemyCore and enemyCore.Humanoid
+        local enemyHum =
+            enemyChar:
+                FindFirstChildOfClass(
+                    "Humanoid"
+                )
 
 
         if not enemyHum
@@ -12929,8 +12875,12 @@ local function holdAntesGolpeKillAll(
         ) < PRE_HIT_HOLD_TIME
     do
 
-        local enemyCore = enemyChar and getCharCore(enemyChar) or nil
-        local enemyHum = enemyCore and enemyCore.Humanoid
+        local enemyHum =
+            enemyChar
+            and enemyChar:
+                FindFirstChildOfClass(
+                    "Humanoid"
+                )
 
 
         if not enemyHum
@@ -14106,7 +14056,7 @@ UIElements.SliHitboxTrans = Tabs.Aim:Slider({
 
 local spoofLoop = nil
 local isWorkspaceLooping = false
-local originalData = {}
+local originalData = setmetatable({}, {__mode = "k"})
 
 function safeReplace(str, find, replace) local safeFind = find:gsub("[%-%^%$%(%)%%%.%[%]%*%+%?]", "%%%1") return (str:gsub(safeFind, replace)) end
 function processText(v, myName, myDisp)
@@ -14222,6 +14172,7 @@ function updateSystem()
         
         for _, conn in ipairs(visualConnections) do conn:Disconnect() end
         visualConnections = {}
+        runtime.PruneConnections()
         
         local char = player.Character if char then local hum = char:FindFirstChild("Humanoid") if hum then hum.DisplayDistanceType = Enum.HumanoidDisplayDistanceType.Viewer end end
         
@@ -14303,25 +14254,7 @@ UIElements.TogEspLines = Tabs.Vis:Toggle({
 -- ==========================================
 -- DIBUJADO EN PANTALLA 2D (FOV, Tracers, Box y Vida) - UN SOLO RENDER
 -- ==========================================
-local function createTrackedDrawingSafe(kind)
-    local drawingNew = Drawing and Drawing.new
-    if type(drawingNew) == "function" then
-        local ok, drawing = pcall(drawingNew, kind)
-        if ok and drawing then
-            return runtime.TrackDrawing(drawing)
-        end
-    end
-
-    -- Fallback no-op: evita que la ausencia de Drawing tumbe TODO el hub.
-    -- Las funciones 2D quedan simplemente sin renderizar en ese executor.
-    local dummy = {Visible = false}
-    function dummy:Remove()
-        self.Visible = false
-    end
-    return dummy
-end
-
-local FOVCircle = createTrackedDrawingSafe("Circle")
+local FOVCircle = runtime.TrackDrawing(Drawing.new("Circle"))
 FOVCircle.Filled = false
 FOVCircle.Color = Color3.fromRGB(255, 255, 255)
 FOVCircle.Visible = false
@@ -14369,14 +14302,14 @@ function runtime.GetESP2DEntry(p)
         entry.Box = box
     end
 
-    local healthBg = createTrackedDrawingSafe("Line")
+    local healthBg = runtime.TrackDrawing(Drawing.new("Line"))
     healthBg.Thickness = 4
     healthBg.Transparency = 0.65
     healthBg.Color = Color3.fromRGB(0, 0, 0)
     healthBg.Visible = false
     entry.HealthBg = healthBg
 
-    local health = createTrackedDrawingSafe("Line")
+    local health = runtime.TrackDrawing(Drawing.new("Line"))
     health.Thickness = 2
     health.Transparency = 1
     health.Visible = false
@@ -14424,14 +14357,6 @@ runtime.Track(RunService.RenderStepped:Connect(function(deltaTime)
         FOVCircle.Visible = false
     end
 
-    -- Si sólo está activo el ESP 3D (Glow/Nombre/Distancia), ese trabajo ya lo
-    -- hace el Heartbeat de 4 Hz. No volvemos a recorrer todos los jugadores a 30 Hz.
-    if not espLinesEnabled and not wantsESP2D then
-        hideTracersOnce()
-        runtime.HideAllESP2D()
-        return
-    end
-
     if not espEnabled or enLobby then
         hideTracersOnce()
         runtime.HideAllESP2D()
@@ -14465,7 +14390,7 @@ runtime.Track(RunService.RenderStepped:Connect(function(deltaTime)
             local tLine = tracerLines[p]
             if espLinesEnabled and valid then
                 if not tLine then
-                    tLine = createTrackedDrawingSafe("Line")
+                    tLine = runtime.TrackDrawing(Drawing.new("Line"))
                     tLine.Thickness = 1.35
                     tLine.Transparency = 0.92
                     tLine.Visible = false
@@ -14539,10 +14464,7 @@ runtime.Track(RunService.RenderStepped:Connect(function(deltaTime)
                         if not entry.HealthBg.Visible then entry.HealthBg.Visible = true end
                         entry.Health.From = Vector2_new(bx, byBottom)
                         entry.Health.To = Vector2_new(bx, byHealth)
-                        if entry.LastHealthRatio ~= ratio then
-                            entry.Health.Color = Color3.fromHSV(ratio * 0.33, 0.92, 1)
-                            entry.LastHealthRatio = ratio
-                        end
+                        entry.Health.Color = Color3.fromHSV(ratio * 0.33, 0.92, 1)
                         if not entry.Health.Visible then entry.Health.Visible = true end
                     else
                         if entry.HealthBg.Visible then entry.HealthBg.Visible = false end
@@ -14559,16 +14481,15 @@ runtime.Track(RunService.RenderStepped:Connect(function(deltaTime)
 end))
 
 runtime.Track(Players.PlayerRemoving:Connect(function(p)
-    local tracer = tracerLines[p]
-    if tracer then
-        runtime.RemoveTrackedDrawing(tracer)
+    if tracerLines[p] then
+        runtime.RemoveDrawing(tracerLines[p])
         tracerLines[p] = nil
     end
     local entry = runtime.ESP2D[p]
     if entry then
-        if entry.Box then runtime.RemoveTrackedDrawing(entry.Box) end
-        if entry.HealthBg then runtime.RemoveTrackedDrawing(entry.HealthBg) end
-        if entry.Health then runtime.RemoveTrackedDrawing(entry.Health) end
+        runtime.RemoveDrawing(entry.Box)
+        runtime.RemoveDrawing(entry.HealthBg)
+        runtime.RemoveDrawing(entry.Health)
         runtime.ESP2D[p] = nil
     end
     cleanESP(p)
@@ -15846,12 +15767,12 @@ end
 end -- graphics scope
 
 Tabs.Farm:Section({Title = "Farmeo de Evento"})
-runtimeEnv.AutoEventFarm = false
+getgenv().AutoEventFarm = false
 local Networking = game:GetService("ReplicatedStorage"):WaitForChild("Packages"):WaitForChild("Networking")
 local RemoteFarm = Networking:FindFirstChild("RE/Events/CollectEventSpawnable")
 
 Tabs.Farm:Toggle({Title = "Auto Farmear Evento", Callback = function(s)
-    runtimeEnv.AutoEventFarm = s
+    getgenv().AutoEventFarm = s
     if s then 
         showBottomMessage("Auto Farm activado...")
         task.spawn(function()
@@ -15891,7 +15812,7 @@ Tabs.Farm:Toggle({Title = "Auto Farmear Evento", Callback = function(s)
                 end)
             end
 
-            while runtime.Alive and runtimeEnv.AutoEventFarm do
+            while runtime.Alive and getgenv().AutoEventFarm do
                 local char = player.Character
                 local hrp = char and char:FindFirstChild("HumanoidRootPart")
                 
@@ -16690,7 +16611,7 @@ task.spawn(function()
     if tabsFrame then
         for _, tabBtn in ipairs(tabsFrame:GetChildren()) do
             if tabBtn:IsA("ImageButton") then
-                runtime.Track(tabBtn.MouseButton1Click:Connect(function()
+                tabBtn.MouseButton1Click:Connect(function()
                     _G.CurrentSpoofTab = tabBtn.Name -- Actualizamos la memoria
                     
                     task.wait() 
@@ -16706,7 +16627,7 @@ task.spawn(function()
                             end
                         end
                     end
-                end))
+                end)
             end
         end
     end
@@ -17101,5 +17022,4 @@ end)
 startupSplashState.Finish()
 runtime.NotificationsReady = true
 -- XERO_FULL_GENERAL_OPTIMIZATION_2026_09_13
--- XERO_FULL_GENERAL_OPTIMIZATION_2026_09_14_V2 · full source, no loader
--- XERO_NIL_CALL_COMPAT_FIX_2026_09_14
+-- XERO_GENERAL_OPTIMIZATION_2026_09_14

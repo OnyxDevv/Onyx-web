@@ -264,6 +264,7 @@ function runtime.Cleanup()
     runtime.Alive = false
     if runtime.GraphicsCleanup then pcall(runtime.GraphicsCleanup) end
     if runtime.SoundCleanup then pcall(runtime.SoundCleanup) end
+    if runtime.WalkSpeedCleanup then pcall(runtime.WalkSpeedCleanup) end
 
     for i = #runtime.Connections, 1, -1 do
         local connection = runtime.Connections[i]
@@ -15275,11 +15276,74 @@ local offsetDistance = 5000 -- Distancia estable: evita el error de precisión q
 local ghostEnabled = false
 
 -- XERO_WALK_SPEED_SLIDER_BEGIN
--- Velocidad visual/locomoción sin modificar Humanoid.WalkSpeed ni la cadencia base.
--- El Humanoid sigue caminando de forma nativa; sólo añadimos desplazamiento horizontal
--- equivalente a la diferencia entre la velocidad objetivo del slider y su WalkSpeed real.
+-- V3: boost físico horizontal con LinearVelocity. No cambia Humanoid.WalkSpeed,
+-- no teletransporta por CFrame y se desmonta por completo al desactivar/respawn.
 local walkSpeedValue = 16
 local walkSpeedConnection = nil
+local walkSpeedAttachment = nil
+local walkSpeedVelocity = nil
+local walkSpeedRoot = nil
+local walkSpeedCurrentExtra = 0
+local WALK_SPEED_ACCEL = 110
+local WALK_SPEED_DECEL = 180
+
+local function DestroyWalkSpeedActuator()
+    local velocity = walkSpeedVelocity
+    local attachment = walkSpeedAttachment
+    walkSpeedVelocity = nil
+    walkSpeedAttachment = nil
+    walkSpeedRoot = nil
+
+    if velocity then pcall(function() velocity:Destroy() end) end
+    if attachment then pcall(function() attachment:Destroy() end) end
+end
+
+local function disableWalkSpeedActuator(resetRamp)
+    if walkSpeedVelocity then
+        pcall(function()
+            walkSpeedVelocity.PlaneVelocity = Vector2_new(0, 0)
+            walkSpeedVelocity.Enabled = false
+        end)
+    end
+    if resetRamp then walkSpeedCurrentExtra = 0 end
+end
+
+local function ensureWalkSpeedActuator(hrp)
+    if walkSpeedVelocity and walkSpeedAttachment and walkSpeedRoot == hrp
+        and walkSpeedVelocity.Parent == hrp and walkSpeedAttachment.Parent == hrp then
+        return walkSpeedVelocity
+    end
+
+    DestroyWalkSpeedActuator()
+    if not hrp or not hrp.Parent then return nil end
+
+    -- Limpia restos de una ejecución anterior si el executor cortó el script sin Cleanup.
+    local staleVelocity = hrp:FindFirstChild("XeroSpeedVelocity")
+    if staleVelocity then pcall(function() staleVelocity:Destroy() end) end
+    local staleAttachment = hrp:FindFirstChild("XeroSpeedAttachment")
+    if staleAttachment then pcall(function() staleAttachment:Destroy() end) end
+
+    local attachment = Instance.new("Attachment")
+    attachment.Name = "XeroSpeedAttachment"
+    attachment.Parent = hrp
+
+    local velocity = Instance.new("LinearVelocity")
+    velocity.Name = "XeroSpeedVelocity"
+    velocity.Attachment0 = attachment
+    velocity.RelativeTo = Enum.ActuatorRelativeTo.World
+    velocity.VelocityConstraintMode = Enum.VelocityConstraintMode.Plane
+    velocity.PrimaryTangentAxis = Vector3_new(1, 0, 0)
+    velocity.SecondaryTangentAxis = Vector3_new(0, 0, 1)
+    velocity.PlaneVelocity = Vector2_new(0, 0)
+    velocity.ForceLimitsEnabled = false
+    velocity.Enabled = false
+    velocity.Parent = hrp
+
+    walkSpeedAttachment = attachment
+    walkSpeedVelocity = velocity
+    walkSpeedRoot = hrp
+    return velocity
+end
 
 local function stopWalkSpeedLoop()
     if walkSpeedConnection then
@@ -15287,6 +15351,14 @@ local function stopWalkSpeedLoop()
         walkSpeedConnection = nil
         runtime.PruneConnections()
     end
+    walkSpeedCurrentExtra = 0
+    DestroyWalkSpeedActuator()
+end
+
+local function approachSpeed(current, target, maxDelta)
+    if current < target then return math.min(current + maxDelta, target) end
+    if current > target then return math.max(current - maxDelta, target) end
+    return target
 end
 
 local function ensureWalkSpeedLoop()
@@ -15298,53 +15370,85 @@ local function ensureWalkSpeedLoop()
 
     walkSpeedConnection = runtime.Track(RunService.Heartbeat:Connect(function(deltaTime)
         if not runtime.Alive or walkSpeedValue <= 16 then return end
-        if ghostEnabled then return end
+
+        local dt = tonumber(deltaTime) or 0
+        if dt <= 0 then return end
+        if dt > 0.05 then dt = 0.05 end
+
+        if ghostEnabled then
+            disableWalkSpeedActuator(true)
+            return
+        end
 
         local char = player.Character
         local core = char and getCharCore(char) or nil
         local hum = core and core.Humanoid
         local hrp = core and core.HRP
-        if not hum or not hrp or hum.Health <= 0 then return end
+        if not hum or not hrp or hum.Health <= 0 then
+            disableWalkSpeedActuator(true)
+            return
+        end
 
-        -- El juego conserva control completo de estas propiedades/estados.
-        -- Sólo leemos WalkSpeed para saber cuánto desplazamiento EXTRA falta.
+        -- WalkSpeed sólo se LEE. El juego conserva sus propiedades y estados normales.
         local nativeSpeed = tonumber(hum.WalkSpeed) or 0
-        if nativeSpeed <= 0 then return end -- freeze de ronda / movimiento bloqueado
-        if hum.Sit or hum.FloorMaterial == Enum.Material.Air then return end
+        if nativeSpeed <= 0 or hum.Sit or hum.FloorMaterial == Enum.Material.Air then
+            disableWalkSpeedActuator(true)
+            return
+        end
 
         local moveDirection = hum.MoveDirection
         local horizontal = Vector3_new(moveDirection.X, 0, moveDirection.Z)
         local magnitude = horizontal.Magnitude
-        if magnitude <= 0.001 then return end
+        if magnitude <= 0.001 then
+            walkSpeedCurrentExtra = approachSpeed(walkSpeedCurrentExtra, 0, WALK_SPEED_DECEL * dt)
+            disableWalkSpeedActuator(walkSpeedCurrentExtra <= 0.01)
+            return
+        end
 
-        local extraSpeed = walkSpeedValue - hum.WalkSpeed
-        if extraSpeed <= 0 then return end
+        local targetExtra = math.max(walkSpeedValue - nativeSpeed, 0)
+        walkSpeedCurrentExtra = approachSpeed(
+            walkSpeedCurrentExtra,
+            targetExtra,
+            (walkSpeedCurrentExtra < targetExtra and WALK_SPEED_ACCEL or WALK_SPEED_DECEL) * dt
+        )
+
+        if walkSpeedCurrentExtra <= 0.01 then
+            disableWalkSpeedActuator(true)
+            return
+        end
 
         horizontal = horizontal / magnitude
-        local dt = tonumber(deltaTime) or 0
-        if dt <= 0 then return end
-        -- Evita un salto enorme tras un freeze/hitch excepcional sin afectar FPS normales.
-        if dt > 0.10 then dt = 0.10 end
+        local targetHorizontalSpeed = nativeSpeed + walkSpeedCurrentExtra
+        local velocity = ensureWalkSpeedActuator(hrp)
+        if not velocity then return end
 
-        -- No escribimos WalkSpeed ni AssemblyLinearVelocity: la animación/pasos siguen
-        -- siendo los del movimiento nativo y este bloque sólo suma distancia X/Z.
-        hrp.CFrame = hrp.CFrame + (horizontal * extraSpeed * dt)
+        -- Plane mode sólo controla X/Z; gravedad/salto siguen totalmente libres en Y.
+        velocity.PlaneVelocity = Vector2_new(
+            horizontal.X * targetHorizontalSpeed,
+            horizontal.Z * targetHorizontalSpeed
+        )
+        velocity.Enabled = true
     end))
 end
 
 Tabs.Mov:Section({Title = "Velocidad"})
 UIElements.SliderWalkSpeed = Tabs.Mov:Slider({
     Title = "Velocidad",
-    Desc = "Aumenta el desplazamiento sin cambiar WalkSpeed ni las animaciones base.",
+    Desc = "Boost físico suave sin cambiar WalkSpeed.",
     Step = 1,
-    Value = {Min = 16, Max = 150, Default = 16},
+    Value = {Min = 16, Max = 120, Default = 16},
     Callback = function(Value)
-        walkSpeedValue = math.clamp(tonumber(Value) or 16, 16, 150)
+        walkSpeedValue = math.clamp(tonumber(Value) or 16, 16, 120)
         ensureWalkSpeedLoop()
     end,
 })
 
--- Cada Character empieza limpio para no arrastrar el boost entre rondas/respawns.
+runtime.WalkSpeedCleanup = function()
+    walkSpeedValue = 16
+    stopWalkSpeedLoop()
+end
+
+-- Cada Character empieza limpio para no arrastrar fuerzas entre rondas/respawns.
 runtime.Track(player.CharacterAdded:Connect(function()
     walkSpeedValue = 16
     stopWalkSpeedLoop()

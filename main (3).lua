@@ -13,15 +13,222 @@ local Workspace = game:GetService("Workspace")
 local RunService = game:GetService("RunService")
 local TextService = game:GetService("TextService")
 
--- XeroHub anime background --------------------------------------------------
--- Sube la imagen a: Onyx-web/assets/backgrounds/xero_anime.png
--- Puedes cambiar la URL sin editar este archivo con getgenv().XERO_BACKGROUND_URL.
+-- XeroHub themes + backgrounds --------------------------------------------
 local XeroEnv = (getgenv and getgenv()) or _G
-local XERO_BACKGROUND_URL = tostring(XeroEnv.XERO_BACKGROUND_URL or
-    "https://raw.githubusercontent.com/OnyxDevv/Onyx-web/refs/heads/main/assets/backgrounds/xero_anime.png")
 local XERO_BACKGROUND_FOLDER = "XeroHub/Assets"
--- Cambia v1 -> v2 si reemplazas la imagen y quieres forzar una caché nueva.
-local XERO_BACKGROUND_CACHE = "XeroHub/Assets/xero_anime_v2.png"
+
+local function canonicalThemeName(name)
+    local key = string.lower(tostring(name or ""))
+    if key == "blanco" or key == "white" or key == "light" or key == "claro" then
+        return "Blanco"
+    end
+    return "Xero"
+end
+
+local THEME_BACKGROUNDS = {
+    Xero = {
+        URL = tostring(XeroEnv.XERO_BACKGROUND_URL or
+            "https://raw.githubusercontent.com/OnyxDevv/Onyx-web/refs/heads/main/assets/backgrounds/xero_anime.png"),
+        CACHE = tostring(XeroEnv.XERO_BACKGROUND_CACHE or "XeroHub/Assets/xero_anime_v2.png"),
+    },
+    Blanco = {
+        URL = tostring(XeroEnv.XERO_BACKGROUND_LIGHT_URL or XeroEnv.XERO_BACKGROUND_WHITE_URL or
+            "https://raw.githubusercontent.com/OnyxDevv/Onyx-web/refs/heads/main/assets/backgrounds/xero_anime_white.png"),
+        CACHE = tostring(XeroEnv.XERO_BACKGROUND_LIGHT_CACHE or XeroEnv.XERO_BACKGROUND_WHITE_CACHE or
+            "XeroHub/Assets/xero_anime_white_v1.png"),
+    },
+}
+
+local THEMES = {
+    Xero = {
+        Name = "Xero",
+        Colors = {
+            Window = Color3.fromRGB(9,9,9), Panel = Color3.fromRGB(14,14,14),
+            Row = Color3.fromRGB(20,20,20), Field = Color3.fromRGB(11,11,11),
+            Hover = Color3.fromRGB(29,29,29), Border = Color3.fromRGB(42,42,42),
+            Text = Color3.fromRGB(242,242,242), Muted = Color3.fromRGB(157,157,157),
+            Faint = Color3.fromRGB(103,103,103), White = Color3.fromRGB(255,255,255),
+        },
+        Glass = {
+            Root = 0.04,
+            Sidebar = 0.18,
+            Row = 0.26,
+            Field = 0.30,
+            Button = 0.24,
+            NavIdle = 0.34,
+            NavHover = 0.20,
+            NavActive = 0.12,
+            Popup = 0.12,
+        },
+        Visuals = {
+            RootBase = Color3.fromRGB(7,7,7),
+            RootStroke = Color3.fromRGB(48,48,48),
+            RootGradient = {
+                Color3.fromRGB(5,5,5),
+                Color3.fromRGB(10,10,10),
+                Color3.fromRGB(4,4,4),
+            },
+            AnimeImageTransparency = 0.06,
+            AnimeShadeColor = Color3.fromRGB(0,0,0),
+            AnimeShadeTransparency = 0.64,
+            AnimeShadeStops = {0.00, 0.10, 0.30},
+            SidebarBase = Color3.fromRGB(10,10,10),
+            SidebarStroke = Color3.fromRGB(28,28,28),
+            SearchStroke = Color3.fromRGB(32,32,32),
+            OpenStroke = Color3.fromRGB(66,66,66),
+            OpenButtonBase = Color3.fromRGB(9,9,9),
+            BackdropGlowA = Color3.fromRGB(26,26,28),
+            BackdropGlowB = Color3.fromRGB(20,20,24),
+            BackdropWatermarkTransparency = 0.974,
+            GridColor = Color3.fromRGB(255,255,255),
+            GridVTransparency = 0.952,
+            GridHTransparency = 0.962,
+            NavButtonIdle = Color3.fromRGB(10,10,10),
+            NavButtonHover = Color3.fromRGB(18,18,18),
+            ResizeGuideTransparency = 0.32,
+            ControlStroke = Color3.fromRGB(31,31,31),
+            FieldStroke = Color3.fromRGB(30,30,30),
+            ButtonBase = Color3.fromRGB(14,14,14),
+            ButtonStroke = Color3.fromRGB(30,30,30),
+            DropdownStroke = Color3.fromRGB(28,28,28),
+            PopupStroke = Color3.fromRGB(66,66,66),
+            GothicShell = Color3.fromRGB(255,255,255),
+            GothicShellStroke = Color3.fromRGB(72,72,78),
+            GothicGlow = Color3.fromRGB(26,26,32),
+            GothicBar = Color3.fromRGB(64,64,72),
+            GothicCorner = Color3.fromRGB(86,86,92),
+            GothicWatermark = Color3.fromRGB(255,255,255),
+            GothicWatermarkTransparency = 0.952,
+            GothicRow = Color3.fromRGB(11,11,14),
+            GothicStroke = Color3.fromRGB(42,42,48),
+            GothicDesc = Color3.fromRGB(178,178,178),
+            GothicBadgeText = Color3.fromRGB(252,252,252),
+            GothicBadgeBackground = Color3.fromRGB(18,18,18),
+            GothicBadgeStroke = Color3.fromRGB(54,54,58),
+            SliderValueBackground = Color3.fromRGB(11,11,11),
+            SliderValueText = Color3.fromRGB(242,242,242),
+            SliderValueStroke = Color3.fromRGB(42,42,42),
+            SliderRail = Color3.fromRGB(18,18,18),
+            SliderRailStroke = Color3.fromRGB(37,37,40),
+            SliderTrack = Color3.fromRGB(43,43,46),
+            SliderTrackGradient = {Color3.fromRGB(36,36,39),Color3.fromRGB(48,48,51),Color3.fromRGB(36,36,39)},
+            SliderFill = Color3.fromRGB(232,232,232),
+            SliderFillGradient = {Color3.fromRGB(255,255,255),Color3.fromRGB(200,200,204)},
+            SliderHalo = Color3.fromRGB(255,255,255),
+            SliderThumb = Color3.fromRGB(248,248,248),
+            SliderThumbStroke = Color3.fromRGB(72,72,76),
+        },
+    },
+    Blanco = {
+        Name = "Blanco",
+        Colors = {
+            Window = Color3.fromRGB(248,248,250), Panel = Color3.fromRGB(241,241,244),
+            Row = Color3.fromRGB(232,232,236), Field = Color3.fromRGB(252,252,255),
+            Hover = Color3.fromRGB(223,223,228), Border = Color3.fromRGB(201,201,208),
+            Text = Color3.fromRGB(20,20,24), Muted = Color3.fromRGB(88,88,98),
+            Faint = Color3.fromRGB(122,122,132), White = Color3.fromRGB(255,255,255),
+        },
+        Glass = {
+            Root = 0.02,
+            Sidebar = 0.08,
+            Row = 0.12,
+            Field = 0.04,
+            Button = 0.08,
+            NavIdle = 0.08,
+            NavHover = 0.02,
+            NavActive = 0.00,
+            Popup = 0.04,
+        },
+        Visuals = {
+            RootBase = Color3.fromRGB(250,250,252),
+            RootStroke = Color3.fromRGB(210,210,216),
+            RootGradient = {
+                Color3.fromRGB(255,255,255),
+                Color3.fromRGB(245,245,248),
+                Color3.fromRGB(236,236,240),
+            },
+            AnimeImageTransparency = 0.02,
+            AnimeShadeColor = Color3.fromRGB(255,255,255),
+            AnimeShadeTransparency = 0.48,
+            AnimeShadeStops = {0.00, 0.08, 0.22},
+            SidebarBase = Color3.fromRGB(244,244,247),
+            SidebarStroke = Color3.fromRGB(214,214,220),
+            SearchStroke = Color3.fromRGB(206,206,212),
+            OpenStroke = Color3.fromRGB(190,190,198),
+            OpenButtonBase = Color3.fromRGB(247,247,250),
+            BackdropGlowA = Color3.fromRGB(225,225,230),
+            BackdropGlowB = Color3.fromRGB(234,234,239),
+            BackdropWatermarkTransparency = 0.94,
+            GridColor = Color3.fromRGB(30,30,35),
+            GridVTransparency = 0.965,
+            GridHTransparency = 0.972,
+            NavButtonIdle = Color3.fromRGB(238,238,242),
+            NavButtonHover = Color3.fromRGB(229,229,234),
+            ResizeGuideTransparency = 0.42,
+            ControlStroke = Color3.fromRGB(198,198,205),
+            FieldStroke = Color3.fromRGB(202,202,209),
+            ButtonBase = Color3.fromRGB(246,246,249),
+            ButtonStroke = Color3.fromRGB(202,202,209),
+            DropdownStroke = Color3.fromRGB(202,202,209),
+            PopupStroke = Color3.fromRGB(190,190,198),
+            GothicShell = Color3.fromRGB(255,255,255),
+            GothicShellStroke = Color3.fromRGB(202,202,210),
+            GothicGlow = Color3.fromRGB(226,226,232),
+            GothicBar = Color3.fromRGB(194,194,203),
+            GothicCorner = Color3.fromRGB(184,184,194),
+            GothicWatermark = Color3.fromRGB(28,28,34),
+            GothicWatermarkTransparency = 0.90,
+            GothicRow = Color3.fromRGB(238,238,242),
+            GothicStroke = Color3.fromRGB(198,198,206),
+            GothicDesc = Color3.fromRGB(92,92,102),
+            GothicBadgeText = Color3.fromRGB(32,32,38),
+            GothicBadgeBackground = Color3.fromRGB(233,233,238),
+            GothicBadgeStroke = Color3.fromRGB(198,198,206),
+            SliderValueBackground = Color3.fromRGB(252,252,255),
+            SliderValueText = Color3.fromRGB(20,20,24),
+            SliderValueStroke = Color3.fromRGB(198,198,205),
+            SliderRail = Color3.fromRGB(225,225,231),
+            SliderRailStroke = Color3.fromRGB(190,190,199),
+            SliderTrack = Color3.fromRGB(207,207,215),
+            SliderTrackGradient = {Color3.fromRGB(198,198,207),Color3.fromRGB(217,217,224),Color3.fromRGB(198,198,207)},
+            SliderFill = Color3.fromRGB(50,50,56),
+            SliderFillGradient = {Color3.fromRGB(20,20,24),Color3.fromRGB(78,78,86)},
+            SliderHalo = Color3.fromRGB(20,20,24),
+            SliderThumb = Color3.fromRGB(250,250,252),
+            SliderThumbStroke = Color3.fromRGB(118,118,128),
+        },
+    },
+}
+
+local CURRENT_THEME_NAME = canonicalThemeName(XeroEnv.XERO_THEME or "Xero")
+local CURRENT_THEME = THEMES[CURRENT_THEME_NAME] or THEMES.Xero
+local Nox = { Version = "3.0.0", Brand = "XeroHub", SupportsGameLabels = true, Creator = "Kev", UIScale = 1 }
+local C, Glass = {}, {}
+
+local function overwriteTable(target, source)
+    for key in pairs(target) do target[key] = nil end
+    for key, value in pairs(source or {}) do target[key] = value end
+end
+
+local function applyThemeDefinition(themeName)
+    local resolved = canonicalThemeName(themeName)
+    CURRENT_THEME_NAME = resolved
+    CURRENT_THEME = THEMES[resolved] or THEMES.Xero
+    overwriteTable(C, CURRENT_THEME.Colors)
+    overwriteTable(Glass, CURRENT_THEME.Glass)
+    XeroEnv.XERO_THEME = resolved
+    return CURRENT_THEME
+end
+
+local function getThemeDefinition(themeName)
+    return THEMES[canonicalThemeName(themeName)] or THEMES.Xero
+end
+
+applyThemeDefinition(CURRENT_THEME_NAME)
+
+local function backgroundSource(themeName)
+    return THEME_BACKGROUNDS[canonicalThemeName(themeName)] or THEME_BACKGROUNDS.Xero
+end
 
 local function isPngPayload(data)
     return type(data) == "string"
@@ -44,34 +251,35 @@ local function customAssetFunction()
     return type(fn) == "function" and fn or nil
 end
 
-local function cachedBackgroundAsset()
+local function cachedBackgroundAsset(themeName)
     local assetFn = customAssetFunction()
-    if not assetFn or type(isfile) ~= "function" or not isfile(XERO_BACKGROUND_CACHE) then
+    local source = backgroundSource(themeName)
+    if not assetFn or type(isfile) ~= "function" or not isfile(source.CACHE) then
         return nil
     end
 
-    -- Si readfile existe, evita reutilizar un archivo incompleto/corrupto.
     if type(readfile) == "function" then
-        local okRead, data = pcall(readfile, XERO_BACKGROUND_CACHE)
+        local okRead, data = pcall(readfile, source.CACHE)
         if not okRead or not isPngPayload(data) then return nil end
     end
 
-    local okAsset, asset = pcall(assetFn, XERO_BACKGROUND_CACHE)
+    local okAsset, asset = pcall(assetFn, source.CACHE)
     if okAsset and type(asset) == "string" and asset ~= "" then return asset end
     return nil
 end
 
-local function downloadBackgroundAsset()
+local function downloadBackgroundAsset(themeName)
     local assetFn = customAssetFunction()
+    local source = backgroundSource(themeName)
     if not assetFn or type(writefile) ~= "function" then return nil end
 
     local body
     local req = (syn and syn.request) or (http and http.request) or http_request or request
     if type(req) == "function" then
         local okRequest, response = pcall(req, {
-            Url = XERO_BACKGROUND_URL,
+            Url = source.URL,
             Method = "GET",
-            Headers = { ["User-Agent"] = "XeroHub/2.9" },
+            Headers = { ["User-Agent"] = "XeroHub/3.0" },
         })
         if okRequest and response then
             local status = tonumber(response.StatusCode or response.Status)
@@ -81,42 +289,88 @@ local function downloadBackgroundAsset()
         end
     end
 
-    -- Fallback para ejecutores donde sólo game:HttpGet puede bajar el RAW.
     if not body then
         local okHttp, data = pcall(function()
-            return game:HttpGet(XERO_BACKGROUND_URL)
+            return game:HttpGet(source.URL)
         end)
         if okHttp and isPngPayload(data) then body = data end
     end
 
     if not body then return nil end
     ensureFolderTree(XERO_BACKGROUND_FOLDER)
-    local okWrite = pcall(writefile, XERO_BACKGROUND_CACHE, body)
+    local okWrite = pcall(writefile, source.CACHE, body)
     if not okWrite then return nil end
 
-    local okAsset, asset = pcall(assetFn, XERO_BACKGROUND_CACHE)
+    local okAsset, asset = pcall(assetFn, source.CACHE)
     if okAsset and type(asset) == "string" and asset ~= "" then return asset end
     return nil
 end
-local Nox = { Version = "2.9.0", Brand = "XeroHub", SupportsGameLabels = true, Creator = "Kev", UIScale = 1 }
-local C = {
-    Window = Color3.fromRGB(9,9,9), Panel = Color3.fromRGB(14,14,14),
-    Row = Color3.fromRGB(20,20,20), Field = Color3.fromRGB(11,11,11),
-    Hover = Color3.fromRGB(29,29,29), Border = Color3.fromRGB(42,42,42),
-    Text = Color3.fromRGB(242,242,242), Muted = Color3.fromRGB(157,157,157),
-    Faint = Color3.fromRGB(103,103,103), White = Color3.fromRGB(255,255,255),
-}
-local Glass = {
-    Root = 0.04,
-    Sidebar = 0.18,
-    Row = 0.26,
-    Field = 0.30,
-    Button = 0.24,
-    NavIdle = 0.34,
-    NavHover = 0.20,
-    NavActive = 0.12,
-    Popup = 0.12,
-}
+
+local function colorEquals(left, right)
+    return typeof(left) == "Color3" and typeof(right) == "Color3"
+        and math.abs(left.R - right.R) < 0.0001
+        and math.abs(left.G - right.G) < 0.0001
+        and math.abs(left.B - right.B) < 0.0001
+end
+
+local function themeRoleFromColor(color)
+    if typeof(color) ~= "Color3" then return nil end
+    for role, value in pairs(C) do
+        if colorEquals(color, value) then return role end
+    end
+    return nil
+end
+
+local function setThemeRole(object, suffix, role)
+    if object and role and type(object.SetAttribute) == "function" then
+        object:SetAttribute("XeroTheme" .. suffix, role)
+    end
+end
+
+local function detectAndTagThemeRoles(object)
+    if not object or type(object.IsA) ~= "function" then return end
+    if object:IsA("GuiObject") then
+        setThemeRole(object, "Background", themeRoleFromColor(object.BackgroundColor3))
+    end
+    if object:IsA("TextLabel") or object:IsA("TextButton") or object:IsA("TextBox") then
+        setThemeRole(object, "Text", themeRoleFromColor(object.TextColor3))
+    end
+    if object:IsA("TextBox") then
+        setThemeRole(object, "Placeholder", themeRoleFromColor(object.PlaceholderColor3))
+    end
+    if object:IsA("UIStroke") then
+        setThemeRole(object, "Stroke", themeRoleFromColor(object.Color))
+    end
+end
+
+local function applyThemeRolesToObject(object)
+    if not object or type(object.GetAttribute) ~= "function" then return end
+    local bgRole = object:GetAttribute("XeroThemeBackground")
+    if bgRole and object:IsA("GuiObject") and C[bgRole] then
+        object.BackgroundColor3 = C[bgRole]
+    end
+    local textRole = object:GetAttribute("XeroThemeText")
+    if textRole and (object:IsA("TextLabel") or object:IsA("TextButton") or object:IsA("TextBox")) and C[textRole] then
+        object.TextColor3 = C[textRole]
+    end
+    local placeholderRole = object:GetAttribute("XeroThemePlaceholder")
+    if placeholderRole and object:IsA("TextBox") and C[placeholderRole] then
+        object.PlaceholderColor3 = C[placeholderRole]
+    end
+    local strokeRole = object:GetAttribute("XeroThemeStroke")
+    if strokeRole and object:IsA("UIStroke") and C[strokeRole] then
+        object.Color = C[strokeRole]
+    end
+end
+
+local function applyThemeRolesRecursive(root)
+    if not root then return end
+    applyThemeRolesToObject(root)
+    for _, descendant in ipairs(root:GetDescendants()) do
+        applyThemeRolesToObject(descendant)
+    end
+end
+
 local FONT = Enum.Font.Gotham
 local MEDIUM = Enum.Font.GothamMedium
 local BOLD = Enum.Font.GothamBold
@@ -131,6 +385,7 @@ local function new(class, props, parent)
     end
     if object:IsA("GuiButton") then object.AutoButtonColor = false end
     for key, value in pairs(props or {}) do object[key] = value end
+    detectAndTagThemeRoles(object)
     object.Parent = parent
     return object
 end
@@ -203,12 +458,15 @@ local function hover(window, target, baseColor, baseTransparency, hoverColor, ho
         overTransparency = math.max(0, idleTransparency - 0.10)
     end
 
+    local idleRole = themeRoleFromColor(idleColor)
+    local hoverRole = themeRoleFromColor(overColor)
+
     connect(window, target.MouseEnter, function()
-        target.BackgroundColor3 = overColor
+        target.BackgroundColor3 = hoverRole and C[hoverRole] or overColor
         target.BackgroundTransparency = overTransparency
     end)
     connect(window, target.MouseLeave, function()
-        target.BackgroundColor3 = idleColor
+        target.BackgroundColor3 = idleRole and C[idleRole] or idleColor
         target.BackgroundTransparency = idleTransparency
     end)
 end
@@ -338,6 +596,32 @@ function Tab:_layout()
     self.Content.CanvasPosition=Vector2.new(0,math.clamp(self.Content.CanvasPosition.Y,0,math.max(0,canvasHeight-viewportHeight)))
 end
 
+function Control:ApplyTheme()
+    if self.Destroyed then return self end
+    local light = (self.Window and self.Window.ThemeName == "Blanco") or CURRENT_THEME_NAME == "Blanco"
+    if self.ElementFrame and self.ElementFrame.Parent then
+        self.ElementFrame.BackgroundColor3 = light and (self.LightColor or C.Row) or (self.DarkColor or C.Row)
+    end
+    if self.RowStroke and self.RowStroke.Parent then
+        self.RowStroke.Color = light and (self.LightStrokeColor or C.Border) or (self.DarkStrokeColor or THEMES.Xero.Visuals.ControlStroke)
+    end
+    if self.TitleLabel and self.TitleLabel.Parent then
+        if self.Locked then
+            self.TitleLabel.TextColor3 = C.Faint
+        else
+            self.TitleLabel.TextColor3 = light and (self.LightTitleColor or C.Text) or (self.DarkTitleColor or C.Text)
+        end
+    end
+    if self.DescLabel and self.DescLabel.Parent then
+        self.DescLabel.TextColor3 = light and (self.LightDescColor or C.Muted) or (self.DarkDescColor or C.Muted)
+    end
+    if self.PictureStroke and self.PictureStroke.Parent then
+        self.PictureStroke.Color = light and (self.LightImageStrokeColor or C.Border) or (self.DarkImageStrokeColor or C.Text)
+    end
+    if self._applyThemeExtras then self:_applyThemeExtras(light) end
+    return self
+end
+
 function Control:SetTitle(value)
     self.Title = plain(value); self.TitleLabel.Text = self.Title
     self.Tab:_queueFilter(); return self
@@ -413,11 +697,16 @@ end
 function Tab:_control(kind, options)
     local o = options or {}
     self._order += 1
+    local lightTheme = self.Window.ThemeName == "Blanco"
+    local darkColor = o.Color or THEMES.Xero.Colors.Row
+    local lightColor = o.LightColor or THEMES.Blanco.Colors.Row
+    local darkStrokeColor = o.StrokeColor or THEMES.Xero.Visuals.ControlStroke
+    local lightStrokeColor = o.LightStrokeColor or THEMES.Blanco.Visuals.ControlStroke
     local slot = new("Frame", {Name="Slot",BackgroundTransparency=1,
         Size=UDim2.new(1,-4,0,0),LayoutOrder=self._order},self.Content)
-    local row = new("Frame", {Name=kind,BackgroundColor3=o.Color or C.Row,BackgroundTransparency=Glass.Row,
+    local row = new("Frame", {Name=kind,BackgroundColor3=lightTheme and lightColor or darkColor,BackgroundTransparency=Glass.Row,
         Size=UDim2.new(1,0,0,0),LayoutOrder=self._order,ClipsDescendants=true},slot)
-    round(row,11); local rowStroke=stroke(row,o.StrokeColor or Color3.fromRGB(31,31,31)); rowStroke.Transparency=.18
+    round(row,11); local rowStroke=stroke(row,lightTheme and lightStrokeColor or darkStrokeColor); rowStroke.Transparency=.18
     local head = new("Frame", {Name="Heading",BackgroundTransparency=1,
         Size=UDim2.new(1,0,0,0),LayoutOrder=1},row)
     local copy = new("Frame", {Name="Copy",BackgroundTransparency=1,
@@ -428,7 +717,9 @@ function Tab:_control(kind, options)
         Size=UDim2.new(1,0,0,0),LayoutOrder=2,Visible=o.Desc ~= nil and o.Desc ~= ""})
     local control = setmetatable({Title=plain(o.Title or kind),Desc=plain(o.Desc),__type=kind,
         Window=self.Window,Tab=self,ElementFrame=row,Slot=slot,Head=head,Copy=copy,RowStroke=rowStroke,
-        TitleLabel=title,DescLabel=desc,Callback=o.Callback,GroupTitle=self._groupTitle,Locked=false},Control)
+        TitleLabel=title,DescLabel=desc,Callback=o.Callback,GroupTitle=self._groupTitle,Locked=false,
+        DarkColor=darkColor,LightColor=lightColor,DarkStrokeColor=darkStrokeColor,LightStrokeColor=lightStrokeColor,
+        DarkTitleColor=o.TitleColor,LightTitleColor=o.LightTitleColor,DarkDescColor=o.DescColor,LightDescColor=o.LightDescColor},Control)
     desc.AutomaticSize=Enum.AutomaticSize.None; desc.TextYAlignment=Enum.TextYAlignment.Top
     table.insert(self.Elements,control)
     connect(self.Window,row:GetPropertyChangedSignal("Visible"),function() self:_queueFilter() end)
@@ -442,7 +733,8 @@ function Tab:Section(options)
     self._groupTitle = plain(o.Title)
     local c = self:_control("Section",o)
     c.ElementFrame.BackgroundTransparency = 1
-    c.ElementFrame.UIStroke:Destroy()
+    c.ElementFrame.UIStroke:Destroy(); c.RowStroke=nil
+    c.DarkTitleColor=THEMES.Xero.Colors.Muted; c.LightTitleColor=THEMES.Blanco.Colors.Muted
     c.TitleLabel.TextColor3=C.Muted; c.TitleLabel.TextSize=10; c.TitleLabel.Font=BOLD
     local rule = new("Frame",{Size=UDim2.new(1,0,0,1),BackgroundColor3=C.Border,LayoutOrder=3},c.ElementFrame)
     c.Rule = rule
@@ -464,50 +756,77 @@ function Tab:Paragraph(options)
         local picture=new("ImageLabel",{Name="Thumbnail",Image=o.Image,BackgroundColor3=C.Field,
             Position=UDim2.new(1,-pictureSize,0,0),Size=UDim2.fromOffset(pictureSize,pictureSize),ScaleType=Enum.ScaleType.Crop},c.Head)
         round(picture,o.CircleImage and math.floor(pictureSize/2) or 10)
-        stroke(picture,o.ImageStrokeColor or Color3.fromRGB(238,238,238),o.ImageStrokeThickness or 1)
+        local darkImageStroke=o.ImageStrokeColor or Color3.fromRGB(238,238,238)
+        local lightImageStroke=o.LightImageStrokeColor or THEMES.Blanco.Colors.Border
+        local pictureStroke=stroke(picture,(c.Window.ThemeName=="Blanco") and lightImageStroke or darkImageStroke,o.ImageStrokeThickness or 1)
         c.Thumbnail=picture
+        c.PictureStroke=pictureStroke
+        c.DarkImageStrokeColor=darkImageStroke
+        c.LightImageStrokeColor=lightImageStroke
     end
     if o.Gothic then
         local decor=new("Frame",{Name="Decor",BackgroundTransparency=1,Size=UDim2.fromScale(1,1),ZIndex=0},c.ElementFrame)
-        local shell=new("Frame",{Name="Shell",BackgroundColor3=Color3.fromRGB(255,255,255),BackgroundTransparency=.985,
+        local gothicVisuals = c.Window.ThemeDef.Visuals
+        local shell=new("Frame",{Name="Shell",BackgroundColor3=gothicVisuals.GothicShell,BackgroundTransparency=.985,
             Position=UDim2.fromOffset(1,1),Size=UDim2.new(1,-2,1,-2),ZIndex=0},decor)
-        round(shell,10); stroke(shell,Color3.fromRGB(72,72,78),1)
+        round(shell,10); local shellStroke=stroke(shell,gothicVisuals.GothicShellStroke,1)
         local glow=new("Frame",{AnchorPoint=Vector2.new(1,.5),Position=UDim2.fromScale(.985,.5),Size=UDim2.fromScale(.38,.92),
-            BackgroundColor3=Color3.fromRGB(26,26,32),BackgroundTransparency=.54,Rotation=-8,ZIndex=0},decor)
+            BackgroundColor3=gothicVisuals.GothicGlow,BackgroundTransparency=.54,Rotation=-8,ZIndex=0},decor)
         round(glow,22)
         new("UIGradient",{Rotation=28,Transparency=NumberSequence.new({NumberSequenceKeypoint.new(0,.16),NumberSequenceKeypoint.new(1,1)})},glow)
-        local bar=line(decor,18,14,1,200,0,Color3.fromRGB(64,64,72)); bar.BackgroundTransparency=.58; bar.ZIndex=0
-        local corner=line(decor,18,14,42,1,0,Color3.fromRGB(86,86,92)); corner.BackgroundTransparency=.48; corner.ZIndex=0
-        local wm=label(decor,o.DecorText or "XERO",28,Color3.fromRGB(255,255,255),{AnchorPoint=Vector2.new(1,1),Position=UDim2.fromScale(.968,.9),
-            Size=UDim2.fromScale(.46,.30),Font=BOLD,TextTransparency=.952,TextXAlignment=Enum.TextXAlignment.Right,TextYAlignment=Enum.TextYAlignment.Bottom,ZIndex=0})
-        c.ElementFrame.BackgroundColor3=o.Color or Color3.fromRGB(11,11,14)
-        c.RowStroke.Color=o.StrokeColor or Color3.fromRGB(42,42,48)
+        local bar=line(decor,18,14,1,200,0,gothicVisuals.GothicBar); bar.BackgroundTransparency=.58; bar.ZIndex=0
+        local corner=line(decor,18,14,42,1,0,gothicVisuals.GothicCorner); corner.BackgroundTransparency=.48; corner.ZIndex=0
+        local wm=label(decor,o.DecorText or "XERO",28,gothicVisuals.GothicWatermark,{AnchorPoint=Vector2.new(1,1),Position=UDim2.fromScale(.968,.9),
+            Size=UDim2.fromScale(.46,.30),Font=BOLD,TextTransparency=gothicVisuals.GothicWatermarkTransparency,TextXAlignment=Enum.TextXAlignment.Right,TextYAlignment=Enum.TextYAlignment.Bottom,ZIndex=0})
+        c.DarkColor=o.Color or THEMES.Xero.Visuals.GothicRow
+        c.LightColor=o.LightColor or THEMES.Blanco.Visuals.GothicRow
+        c.DarkStrokeColor=o.StrokeColor or THEMES.Xero.Visuals.GothicStroke
+        c.LightStrokeColor=o.LightStrokeColor or THEMES.Blanco.Visuals.GothicStroke
+        c.DarkDescColor=o.DescColor or THEMES.Xero.Visuals.GothicDesc
+        c.LightDescColor=o.LightDescColor or THEMES.Blanco.Visuals.GothicDesc
         c.TitleLabel.Font=BOLD
         c.TitleLabel.TextSize=math.max(c.TitleLabel.TextSize,14)
         c.DescLabel.TextSize=math.max(c.DescLabel.TextSize,11)
-        c.DescLabel.TextColor3=o.DescColor or Color3.fromRGB(178,178,178)
         if c.Thumbnail then
             -- La foto ya lleva su propio stroke. No añadimos un halo separado:
             -- al relayout quedaba como un círculo vacío a la derecha del perfil.
             c.HeadMinimum=math.max(c.HeadMinimum or 0,(c.ThumbnailSize or 36)+8)
             c.Thumbnail.ZIndex=2
         end
+        local badge, badgeStroke
         if o.BadgeText then
-            local badge=label(c.Head,string.upper(plain(o.BadgeText)),9,Color3.fromRGB(252,252,252),{
+            badge=label(c.Head,string.upper(plain(o.BadgeText)),9,gothicVisuals.GothicBadgeText,{
                 AnchorPoint=Vector2.new(1,0),Position=UDim2.new(1,-4,0,0),Size=UDim2.fromOffset(82,22),
-                TextXAlignment=Enum.TextXAlignment.Center,Font=Enum.Font.Code,BackgroundColor3=Color3.fromRGB(18,18,18),BackgroundTransparency=.05,ZIndex=3})
-            round(badge,9); stroke(badge,Color3.fromRGB(54,54,58),1)
+                TextXAlignment=Enum.TextXAlignment.Center,Font=Enum.Font.Code,BackgroundColor3=gothicVisuals.GothicBadgeBackground,BackgroundTransparency=.05,ZIndex=3})
+            round(badge,9); badgeStroke=stroke(badge,gothicVisuals.GothicBadgeStroke,1)
         end
+        c._applyThemeExtras=function(self)
+            local v=self.Window.ThemeDef.Visuals
+            shell.BackgroundColor3=v.GothicShell
+            shellStroke.Color=v.GothicShellStroke
+            glow.BackgroundColor3=v.GothicGlow
+            bar.BackgroundColor3=v.GothicBar
+            corner.BackgroundColor3=v.GothicCorner
+            wm.TextColor3=v.GothicWatermark
+            wm.TextTransparency=v.GothicWatermarkTransparency
+            if badge then
+                badge.TextColor3=v.GothicBadgeText
+                badge.BackgroundColor3=v.GothicBadgeBackground
+                if badgeStroke then badgeStroke.Color=v.GothicBadgeStroke end
+            end
+        end
+        c:ApplyTheme()
     end
+    c:ApplyTheme()
     function c:Set(value) return self:SetDesc(value) end
     return c
 end
 function Tab:Button(options)
     local c = self:_control("Button",options)
     c.Reserve=34; c.HeadMinimum=28
-    local hit = button(c.Head,"→",{Name="Action",BackgroundColor3=Color3.fromRGB(14,14,14),BackgroundTransparency=Glass.Button,TextSize=14,
+    local hit = button(c.Head,"→",{Name="Action",BackgroundColor3=C.Panel,BackgroundTransparency=Glass.Button,TextSize=14,
         Position=UDim2.new(1,-26,0,0),Size=UDim2.fromOffset(26,26)})
-    round(hit,8); stroke(hit,Color3.fromRGB(30,30,30)); hover(c.Window,hit,C.Field)
+    round(hit,8); stroke(hit,C.Border); hover(c.Window,hit,C.Field)
     -- The title and description are clickable too; nested field controls are separate.
     local titleHit=button(c.Copy,"",{Name="Activate",BackgroundTransparency=1,Size=UDim2.fromScale(1,1),ZIndex=3})
     local function activate() if not c.Locked and not c.Destroyed then invoke(c.Callback) end end
@@ -538,6 +857,7 @@ function Tab:Toggle(options)
         if changed and not silent then invoke(self.Callback,value) end
         return self
     end
+    c._applyThemeExtras=function(self) self:Set(self.Value,true) end
     c:Set(o.Value == true,true)
     connect(c.Window,target.Activated,function() if not c.Locked then c:Set(not c.Value) end end)
     return c
@@ -546,7 +866,7 @@ local function field(parent, placeholder)
     local box=new("TextBox",{Name="Field",Text="",PlaceholderText=placeholder or "",
         PlaceholderColor3=C.Faint,BackgroundColor3=C.Field,BackgroundTransparency=Glass.Field,ClearTextOnFocus=false,
         TextXAlignment=Enum.TextXAlignment.Left,TextSize=11,Size=UDim2.new(1,0,0,28),LayoutOrder=2},parent)
-    round(box,8); stroke(box,Color3.fromRGB(30,30,30)); padding(box,9,0)
+    round(box,8); stroke(box,C.Border); padding(box,9,0)
     return box
 end
 function Tab:Input(options)
@@ -580,55 +900,78 @@ function Tab:Slider(options)
     c.Reserve=70; c.HeadMinimum=28
     c.SliderAreaHeight=30; c.SliderLimitsGap=1
 
+    local sliderVisuals=c.Window.ThemeDef.Visuals
     local box=field(c.Head,"")
     box.Name="Value"
     box.Size=UDim2.fromOffset(58,26)
     box.Position=UDim2.new(1,-58,0,0)
     box.TextXAlignment=Enum.TextXAlignment.Center
-    box.BackgroundColor3=Color3.fromRGB(11,11,11)
-    box.TextColor3=Color3.fromRGB(242,242,242)
+    box.BackgroundColor3=sliderVisuals.SliderValueBackground
+    box.TextColor3=sliderVisuals.SliderValueText
     box.Font=MEDIUM
     box.TextSize=10
     if box:FindFirstChildOfClass("UICorner") then box:FindFirstChildOfClass("UICorner").CornerRadius=UDim.new(0,9) end
     local boxStroke=box:FindFirstChildOfClass("UIStroke")
-    if boxStroke then boxStroke.Color=Color3.fromRGB(42,42,42); boxStroke.Transparency=.12 end
+    if boxStroke then boxStroke.Color=sliderVisuals.SliderValueStroke; boxStroke.Transparency=.12 end
 
     local area=button(c.ElementFrame,"",{Name="SliderArea",BackgroundTransparency=1,
         Size=UDim2.new(1,0,0,30),LayoutOrder=2})
 
-    -- Rail oscuro + carril interior. El área táctil sigue siendo toda la fila.
     local rail=new("Frame",{Name="Rail",Position=UDim2.new(0,8,.5,-5),Size=UDim2.new(1,-16,0,10),
-        BackgroundColor3=Color3.fromRGB(18,18,18)},area)
-    round(rail,7); stroke(rail,Color3.fromRGB(37,37,40),1)
+        BackgroundColor3=sliderVisuals.SliderRail},area)
+    round(rail,7); local railStroke=stroke(rail,sliderVisuals.SliderRailStroke,1)
 
     local track=new("Frame",{Name="Track",Position=UDim2.new(0,6,.5,-3),Size=UDim2.new(1,-12,0,6),
-        BackgroundColor3=Color3.fromRGB(43,43,46)},rail)
+        BackgroundColor3=sliderVisuals.SliderTrack},rail)
     round(track,4)
     local trackGradient=new("UIGradient",{Color=ColorSequence.new({
-        ColorSequenceKeypoint.new(0,Color3.fromRGB(36,36,39)),
-        ColorSequenceKeypoint.new(.5,Color3.fromRGB(48,48,51)),
-        ColorSequenceKeypoint.new(1,Color3.fromRGB(36,36,39))
+        ColorSequenceKeypoint.new(0,sliderVisuals.SliderTrackGradient[1]),
+        ColorSequenceKeypoint.new(.5,sliderVisuals.SliderTrackGradient[2]),
+        ColorSequenceKeypoint.new(1,sliderVisuals.SliderTrackGradient[3])
     })},track)
 
-    local fill=new("Frame",{Name="Fill",Size=UDim2.fromScale(0,1),BackgroundColor3=Color3.fromRGB(232,232,232)},track)
+    local fill=new("Frame",{Name="Fill",Size=UDim2.fromScale(0,1),BackgroundColor3=sliderVisuals.SliderFill},track)
     round(fill,4)
-    new("UIGradient",{Color=ColorSequence.new({
-        ColorSequenceKeypoint.new(0,Color3.fromRGB(255,255,255)),
-        ColorSequenceKeypoint.new(1,Color3.fromRGB(200,200,204))
+    local fillGradient=new("UIGradient",{Color=ColorSequence.new({
+        ColorSequenceKeypoint.new(0,sliderVisuals.SliderFillGradient[1]),
+        ColorSequenceKeypoint.new(1,sliderVisuals.SliderFillGradient[2])
     })},fill)
 
     local halo=new("Frame",{Name="ThumbHalo",AnchorPoint=Vector2.new(.5,.5),Position=UDim2.fromScale(0,.5),
-        Size=UDim2.fromOffset(20,20),BackgroundColor3=Color3.fromRGB(255,255,255),BackgroundTransparency=.88,ZIndex=3},track)
+        Size=UDim2.fromOffset(20,20),BackgroundColor3=sliderVisuals.SliderHalo,BackgroundTransparency=.88,ZIndex=3},track)
     round(halo,10)
     local thumb=new("Frame",{Name="Thumb",AnchorPoint=Vector2.new(.5,.5),Position=UDim2.fromScale(0,.5),
-        Size=UDim2.fromOffset(13,13),BackgroundColor3=Color3.fromRGB(248,248,248),ZIndex=4},track)
-    round(thumb,7); local thumbStroke=stroke(thumb,Color3.fromRGB(72,72,76),1); thumbStroke.Transparency=.05
+        Size=UDim2.fromOffset(13,13),BackgroundColor3=sliderVisuals.SliderThumb,ZIndex=4},track)
+    round(thumb,7); local thumbStroke=stroke(thumb,sliderVisuals.SliderThumbStroke,1); thumbStroke.Transparency=.05
 
     local limits=new("Frame",{Name="Limits",BackgroundTransparency=1,Size=UDim2.new(1,0,0,10),LayoutOrder=3},c.ElementFrame)
     c.SliderArea=area; c.Limits=limits
     label(limits,tostring(low),8,C.Faint,{Size=UDim2.fromScale(.5,1),Font=Enum.Font.Code})
     label(limits,tostring(high),8,C.Faint,{Size=UDim2.fromScale(.5,1),Position=UDim2.fromScale(.5,0),
         TextXAlignment=Enum.TextXAlignment.Right,Font=Enum.Font.Code})
+
+    c._applyThemeExtras=function(self)
+        local v=self.Window.ThemeDef.Visuals
+        box.BackgroundColor3=v.SliderValueBackground
+        box.TextColor3=v.SliderValueText
+        if boxStroke then boxStroke.Color=v.SliderValueStroke end
+        rail.BackgroundColor3=v.SliderRail
+        railStroke.Color=v.SliderRailStroke
+        track.BackgroundColor3=v.SliderTrack
+        trackGradient.Color=ColorSequence.new({
+            ColorSequenceKeypoint.new(0,v.SliderTrackGradient[1]),
+            ColorSequenceKeypoint.new(.5,v.SliderTrackGradient[2]),
+            ColorSequenceKeypoint.new(1,v.SliderTrackGradient[3])
+        })
+        fill.BackgroundColor3=v.SliderFill
+        fillGradient.Color=ColorSequence.new({
+            ColorSequenceKeypoint.new(0,v.SliderFillGradient[1]),
+            ColorSequenceKeypoint.new(1,v.SliderFillGradient[2])
+        })
+        halo.BackgroundColor3=v.SliderHalo
+        thumb.BackgroundColor3=v.SliderThumb
+        thumbStroke.Color=v.SliderThumbStroke
+    end
 
     local function format(value) return string.format("%." .. decimals .. "f",value) end
     function c:Set(value,silent)
@@ -661,13 +1004,14 @@ function Tab:Slider(options)
     end)
     c.Interactive=area
     c:Set(range.Default or (type(o.Value)=="number" and o.Value) or o.Default or low,true)
+    c:ApplyTheme()
     return c
 end
 function Tab:Dropdown(options)
     local o=options or {}; local c=self:_control("Dropdown",o)
     c.Values=table.clone(o.Values or {}); c.Multi=o.Multi==true or o.MultiSelect==true
     local hit=button(c.ElementFrame,"",{Name="Dropdown",BackgroundColor3=C.Field,BackgroundTransparency=Glass.Field,
-        Size=UDim2.new(1,0,0,28),LayoutOrder=2}); round(hit,8); stroke(hit,Color3.fromRGB(28,28,28))
+        Size=UDim2.new(1,0,0,28),LayoutOrder=2}); round(hit,8); stroke(hit,C.Border)
     local valueLabel=label(hit,"",11,C.Text,{Position=UDim2.fromOffset(8,0),Size=UDim2.new(1,-30,1,0),TextWrapped=true})
     label(hit,"⌄",14,C.Muted,{Position=UDim2.new(1,-24,0,0),Size=UDim2.new(0,16,1,0),TextXAlignment=Enum.TextXAlignment.Center})
     c.Interactive=hit; c.BodyField=hit; c.ValueLabel=valueLabel
@@ -750,7 +1094,7 @@ function Tab:Colorpicker(options)
     local o=options or {}; local c=self:_control("Colorpicker",o)
     c.Reserve=62; c.HeadMinimum=44
     local hit=button(c.Head,"",{Name="Color",Position=UDim2.new(1,-46,0,0),Size=UDim2.fromOffset(46,44)})
-    round(hit,9); local hitStroke=stroke(hit,Color3.fromRGB(54,54,58),1); hitStroke.Transparency=.08
+    round(hit,9); local hitStroke=stroke(hit,C.Border,1); hitStroke.Transparency=.08
     c.Interactive=hit
 
     function c:Set(value,silent)
@@ -774,7 +1118,7 @@ function Tab:Colorpicker(options)
 
         local current=new("Frame",{Name="Current",Position=UDim2.fromOffset(0,0),Size=UDim2.fromOffset(44,34),
             BackgroundColor3=self.Value},body)
-        round(current,9); stroke(current,Color3.fromRGB(70,70,74),1)
+        round(current,9); stroke(current,C.Border,1)
 
         local hex=field(body,"#FFFFFF")
         hex.Position=UDim2.fromOffset(54,0); hex.Size=UDim2.new(1,-54,0,34)
@@ -785,7 +1129,7 @@ function Tab:Colorpicker(options)
 
         local palette=button(body,"",{Name="RGBPalette",Position=UDim2.fromOffset(0,58),
             Size=UDim2.new(1,0,0,220),BackgroundColor3=Color3.fromHSV(state.H,1,1),ClipsDescendants=true})
-        round(palette,11); local paletteStroke=stroke(palette,Color3.fromRGB(58,58,62),1); paletteStroke.Transparency=.08
+        round(palette,11); local paletteStroke=stroke(palette,C.Border,1); paletteStroke.Transparency=.08
 
         -- Izquierda = blanco, derecha = color puro.
         local whiteLayer=new("Frame",{Name="WhiteBlend",Size=UDim2.fromScale(1,1),BackgroundColor3=Color3.new(1,1,1),
@@ -809,7 +1153,7 @@ function Tab:Colorpicker(options)
 
         local hueBar=button(body,"",{Name="Hue",Position=UDim2.fromOffset(0,290),Size=UDim2.new(1,0,0,18),
             BackgroundColor3=Color3.new(1,1,1),ClipsDescendants=false})
-        round(hueBar,9); local hueStroke=stroke(hueBar,Color3.fromRGB(58,58,62),1); hueStroke.Transparency=.1
+        round(hueBar,9); local hueStroke=stroke(hueBar,C.Border,1); hueStroke.Transparency=.1
         new("UIGradient",{Color=ColorSequence.new({
             ColorSequenceKeypoint.new(0.00,Color3.fromRGB(255,0,0)),
             ColorSequenceKeypoint.new(0.17,Color3.fromRGB(255,255,0)),
@@ -883,7 +1227,7 @@ function Tab:Colorpicker(options)
 
         for index,color in ipairs(presetColors) do
             local swatch=button(presets,"",{Name="Preset"..index,Size=UDim2.fromOffset(24,24),BackgroundColor3=color,LayoutOrder=index})
-            round(swatch,7); local ss=stroke(swatch,Color3.fromRGB(78,78,82),1); ss.Transparency=.1
+            round(swatch,7); local ss=stroke(swatch,C.Border,1); ss.Transparency=.1
             connect(window,swatch.Activated,function() self:Set(color) end,window._popupConnections)
         end
 
@@ -928,9 +1272,11 @@ function Nox:CreateWindow(options)
     end)
     local env=(getgenv and getgenv()) or _G
     if env.__NOX_UI and env.__NOX_UI.Destroy then pcall(function() env.__NOX_UI:Destroy() end) end
+    local resolvedTheme = canonicalThemeName(o.Theme or CURRENT_THEME_NAME)
     local w={_connections={},_popupConnections={},_onDestroy={},_onOpen={},_onClose={},Tabs={},
         Groups={},Opened=true,Destroyed=false,Compact=false,ToggleKey=o.ToggleKey or Enum.KeyCode.RightShift,
-        Title=plain(o.Title or "XeroHub"),_brandBaseTitle=plain(o.Title or "XeroHub"),Author=o.Author or "by Kev",UIScale=1,_navOrder=0}
+        Title=plain(o.Title or "XeroHub"),_brandBaseTitle=plain(o.Title or "XeroHub"),Author=o.Author or "by Kev",UIScale=1,_navOrder=0,
+        ThemeName=resolvedTheme,ThemeDef=getThemeDefinition(resolvedTheme),_themeGeneration=0}
     self.Window=w; env.__NOX_UI=w
     local gui=new("ScreenGui",{Name="XeroHubUI",ResetOnSpawn=false,IgnoreGuiInset=true,
         DisplayOrder=2147483000,ZIndexBehavior=Enum.ZIndexBehavior.Sibling},parent)
@@ -955,13 +1301,13 @@ function Nox:CreateWindow(options)
     self.ScreenGui=gui; w.ScreenGui=gui
     -- Full-viewport bounds are shared by popups, dragging and responsive layout.
     local surface=new("Frame",{Name="Surface",BackgroundTransparency=1,Size=UDim2.fromScale(1,1)},gui)
-    local root=new("Frame",{Name="XeroPanel",BackgroundColor3=Color3.fromRGB(7,7,7),BackgroundTransparency=Glass.Root,AnchorPoint=Vector2.new(.5,.5),
+    local root=new("Frame",{Name="XeroPanel",BackgroundColor3=w.ThemeDef.Visuals.RootBase,BackgroundTransparency=Glass.Root,AnchorPoint=Vector2.new(.5,.5),
         Position=UDim2.fromScale(.5,.5),Size=UDim2.fromOffset(680,430),ClipsDescendants=true},surface)
-    round(root,20); stroke(root,Color3.fromRGB(48,48,48))
+    round(root,20); local rootStroke=stroke(root,w.ThemeDef.Visuals.RootStroke)
     local rootGradient=new("UIGradient",{Rotation=22,Color=ColorSequence.new({
-        ColorSequenceKeypoint.new(0,Color3.fromRGB(5,5,5)),
-        ColorSequenceKeypoint.new(.52,Color3.fromRGB(10,10,10)),
-        ColorSequenceKeypoint.new(1,Color3.fromRGB(4,4,4))
+        ColorSequenceKeypoint.new(0,w.ThemeDef.Visuals.RootGradient[1]),
+        ColorSequenceKeypoint.new(.52,w.ThemeDef.Visuals.RootGradient[2]),
+        ColorSequenceKeypoint.new(1,w.ThemeDef.Visuals.RootGradient[3])
     })},root)
     local scale=new("UIScale",{Scale=1},root); self.UIScaleObj=scale
 
@@ -976,57 +1322,74 @@ function Nox:CreateWindow(options)
     round(animeImage,20)
 
     local animeShade=new("Frame",{
-        Name="AnimeShade",BackgroundColor3=Color3.fromRGB(0,0,0),BackgroundTransparency=.64,
+        Name="AnimeShade",BackgroundColor3=w.ThemeDef.Visuals.AnimeShadeColor,BackgroundTransparency=w.ThemeDef.Visuals.AnimeShadeTransparency,
         Size=UDim2.fromScale(1,1),Visible=false,ZIndex=2,
     },root)
     round(animeShade,20)
     -- Un poco más oscuro del lado de navegación/contenido y más libre a la derecha.
-    new("UIGradient",{
+    local animeShadeGradient=new("UIGradient",{
         Rotation=0,
         Transparency=NumberSequence.new({
-            NumberSequenceKeypoint.new(0,.00),
-            NumberSequenceKeypoint.new(.58,.10),
-            NumberSequenceKeypoint.new(1,.30),
+            NumberSequenceKeypoint.new(0,w.ThemeDef.Visuals.AnimeShadeStops[1]),
+            NumberSequenceKeypoint.new(.58,w.ThemeDef.Visuals.AnimeShadeStops[2]),
+            NumberSequenceKeypoint.new(1,w.ThemeDef.Visuals.AnimeShadeStops[3]),
         })
     },animeShade)
 
     -- Fondo Xero geométrico: sólo se usa como respaldo mientras no haya imagen.
     local backdrop=new("Frame",{Name="NoxBackdrop",BackgroundTransparency=1,Size=UDim2.fromScale(1,1),ZIndex=1},root)
     local glowA=new("Frame",{Name="SoftGlowA",AnchorPoint=Vector2.new(.5,.5),Position=UDim2.fromScale(.68,.34),
-        Size=UDim2.fromScale(.54,.62),BackgroundColor3=Color3.fromRGB(26,26,28),BackgroundTransparency=.58,Rotation=-16,ZIndex=1},backdrop)
+        Size=UDim2.fromScale(.54,.62),BackgroundColor3=w.ThemeDef.Visuals.BackdropGlowA,BackgroundTransparency=.58,Rotation=-16,ZIndex=1},backdrop)
     round(glowA,72)
     new("UIGradient",{Rotation=35,Transparency=NumberSequence.new({NumberSequenceKeypoint.new(0,.12),NumberSequenceKeypoint.new(1,1)})},glowA)
     local glowB=new("Frame",{Name="SoftGlowB",AnchorPoint=Vector2.new(.5,.5),Position=UDim2.fromScale(.22,.84),
-        Size=UDim2.fromScale(.46,.38),BackgroundColor3=Color3.fromRGB(20,20,24),BackgroundTransparency=.64,Rotation=18,ZIndex=1},backdrop)
+        Size=UDim2.fromScale(.46,.38),BackgroundColor3=w.ThemeDef.Visuals.BackdropGlowB,BackgroundTransparency=.64,Rotation=18,ZIndex=1},backdrop)
     round(glowB,64)
     new("UIGradient",{Rotation=205,Transparency=NumberSequence.new({NumberSequenceKeypoint.new(0,.2),NumberSequenceKeypoint.new(1,1)})},glowB)
     local watermark=label(backdrop,"XERO",80,Color3.fromRGB(255,255,255),{
         AnchorPoint=Vector2.new(.5,.5),Position=UDim2.fromScale(.61,.58),Size=UDim2.fromScale(.30,.12),
-        Font=BOLD,TextTransparency=.974,TextXAlignment=Enum.TextXAlignment.Center,TextYAlignment=Enum.TextYAlignment.Center,Rotation=-10,ZIndex=1})
+        Font=BOLD,TextTransparency=w.ThemeDef.Visuals.BackdropWatermarkTransparency,TextXAlignment=Enum.TextXAlignment.Center,TextYAlignment=Enum.TextYAlignment.Center,Rotation=-10,ZIndex=1})
     for i=1,6 do
         local v=new("Frame",{Name="GridV",Position=UDim2.new(i/7,0,0,0),Size=UDim2.new(0,1,1,0),
-            BackgroundColor3=Color3.fromRGB(255,255,255),BackgroundTransparency=.952,ZIndex=1},backdrop)
+            BackgroundColor3=w.ThemeDef.Visuals.GridColor,BackgroundTransparency=w.ThemeDef.Visuals.GridVTransparency,ZIndex=1},backdrop)
     end
     for i=1,4 do
         local h=new("Frame",{Name="GridH",Position=UDim2.new(0,0,i/5,0),Size=UDim2.new(1,0,0,1),
-            BackgroundColor3=Color3.fromRGB(255,255,255),BackgroundTransparency=.962,ZIndex=1},backdrop)
+            BackgroundColor3=w.ThemeDef.Visuals.GridColor,BackgroundTransparency=w.ThemeDef.Visuals.GridHTransparency,ZIndex=1},backdrop)
     end
 
-    local function applyAnimeBackground(asset)
+    local function showBackdropFallback()
+        animeImage.Image = ""
+        animeImage.Visible = false
+        animeShade.Visible = false
+        backdrop.Visible = true
+    end
+
+    local function applyAnimeBackground(asset, themeDef)
         if not root.Parent or type(asset) ~= "string" or asset == "" then return end
-        animeImage.Image=asset
-        animeImage.Visible=true
-        animeShade.Visible=true
-        backdrop.Visible=false
+        animeImage.Image = asset
+        animeImage.ImageTransparency = (themeDef and themeDef.Visuals and themeDef.Visuals.AnimeImageTransparency) or 0.06
+        animeImage.Visible = true
+        animeShade.Visible = true
+        backdrop.Visible = false
     end
 
-    local cachedAnimeAsset=cachedBackgroundAsset()
-    if cachedAnimeAsset then
-        applyAnimeBackground(cachedAnimeAsset)
-    else
+    local function refreshBackgroundForTheme(themeName)
+        local resolved = canonicalThemeName(themeName)
+        local themeDef = getThemeDefinition(resolved)
+        w._themeGeneration += 1
+        local generation = w._themeGeneration
+        local cachedAnimeAsset = cachedBackgroundAsset(resolved)
+        if cachedAnimeAsset then
+            applyAnimeBackground(cachedAnimeAsset, themeDef)
+            return
+        end
+        showBackdropFallback()
         task.spawn(function()
-            local asset=downloadBackgroundAsset()
-            if asset then applyAnimeBackground(asset) end
+            local asset = downloadBackgroundAsset(resolved)
+            if asset and not w.Destroyed and w._themeGeneration == generation then
+                applyAnimeBackground(asset, themeDef)
+            end
         end)
     end
 
@@ -1054,8 +1417,8 @@ function Nox:CreateWindow(options)
     icon(close,"close").Position=UDim2.fromOffset(4,4)
     hover(w,minimize); hover(w,close)
     local topRule=line(root,14,57,784,1,0,C.Border); topRule.Size=UDim2.new(1,-28,0,1)
-    local sidebar=new("Frame",{Name="Navigation",BackgroundColor3=Color3.fromRGB(10,10,10),BackgroundTransparency=Glass.Sidebar,Position=UDim2.fromOffset(12,70),
-        Size=UDim2.new(0,154,1,-82),ZIndex=12},root); round(sidebar,12); stroke(sidebar,Color3.fromRGB(28,28,28))
+    local sidebar=new("Frame",{Name="Navigation",BackgroundColor3=w.ThemeDef.Visuals.SidebarBase,BackgroundTransparency=Glass.Sidebar,Position=UDim2.fromOffset(12,70),
+        Size=UDim2.new(0,154,1,-82),ZIndex=12},root); round(sidebar,12); local sidebarStroke=stroke(sidebar,w.ThemeDef.Visuals.SidebarStroke)
     local nav=scroll(sidebar,{Name="Tabs",Position=UDim2.fromOffset(8,10),Size=UDim2.new(1,-16,1,-58),ScrollBarThickness=0})
     vertical(nav,6)
     local navFooter=label(sidebar,"XERO  /  OBSIDIAN",8,C.Faint,{Position=UDim2.new(0,12,1,-28),Size=UDim2.new(1,-24,0,16),Font=Enum.Font.Code})
@@ -1068,7 +1431,7 @@ function Nox:CreateWindow(options)
     w.CountLabel=count
     local searchBox=new("Frame",{Name="SearchBox",BackgroundColor3=C.Field,BackgroundTransparency=Glass.Field,ClipsDescendants=true,
         Position=UDim2.new(1,-312,0,8),Size=UDim2.fromOffset(198,30),ZIndex=6},top)
-    round(searchBox,9); stroke(searchBox,Color3.fromRGB(32,32,32))
+    round(searchBox,9); local searchStroke=stroke(searchBox,w.ThemeDef.Visuals.SearchStroke)
     local search=new("TextBox",{Name="Search",BackgroundTransparency=1,ClearTextOnFocus=false,TextSize=12,TextTruncate=Enum.TextTruncate.AtEnd,
         PlaceholderText="Buscar ajuste...",PlaceholderColor3=C.Faint,TextXAlignment=Enum.TextXAlignment.Left,TextYAlignment=Enum.TextYAlignment.Center,
         Position=UDim2.fromOffset(28,0),Size=UDim2.new(1,-54,1,0)},searchBox)
@@ -1077,8 +1440,8 @@ function Nox:CreateWindow(options)
     local pages=new("Frame",{Name="Pages",BackgroundTransparency=1,Position=UDim2.fromOffset(0,34),Size=UDim2.new(1,0,1,-34)},content)
     local footer=label(root,"XEROHUB",8,C.Faint,{Position=UDim2.new(0,18,1,-24),Size=UDim2.new(.6,0,0,14),Font=Enum.Font.Code})
     local shortcut=label(root,"RSHIFT  /  MOSTRAR U OCULTAR",8,C.Faint,{Position=UDim2.new(.4,0,1,-24),Size=UDim2.new(.6,-18,0,14),TextXAlignment=Enum.TextXAlignment.Right,Font=Enum.Font.Code})
-    local openButton=button(launcherSurface,"",{Name="OpenXeroHub",Position=UDim2.new(.5,-73,0,16),Size=UDim2.fromOffset(146,44),BackgroundColor3=C.Window,BackgroundTransparency=Glass.Button,ZIndex=20})
-    round(openButton,12); local openStroke=stroke(openButton,Color3.fromRGB(66,66,66))
+    local openButton=button(launcherSurface,"",{Name="OpenXeroHub",Position=UDim2.new(.5,-73,0,16),Size=UDim2.fromOffset(146,44),BackgroundColor3=w.ThemeDef.Visuals.OpenButtonBase,BackgroundTransparency=Glass.Button,ZIndex=20})
+    round(openButton,12); local openStroke=stroke(openButton,w.ThemeDef.Visuals.OpenStroke)
     local openIcon=mark(openButton,22); openIcon.Position=UDim2.fromOffset(12,11)
     local openLabel=label(openButton,"XEROHUB",11,C.Text,{Position=UDim2.fromOffset(45,5),Size=UDim2.new(1,-55,0,20),Font=MEDIUM})
     local openHint=label(openButton,"ABRIR PANEL",8,C.Muted,{Position=UDim2.fromOffset(45,25),Size=UDim2.new(1,-55,0,12),Font=MEDIUM})
@@ -1106,7 +1469,7 @@ function Nox:CreateWindow(options)
             Size = size,
             Rotation = rotation or 0,
             BackgroundColor3 = C.Text,
-            BackgroundTransparency = 0.32,
+            BackgroundTransparency = w.ThemeDef.Visuals.ResizeGuideTransparency,
             BorderSizePixel = 0,
             ZIndex = 39,
             Visible = w.Resizable,
@@ -1168,7 +1531,7 @@ function Nox:CreateWindow(options)
         local layer=button(surface,"",{Name="ModalBackdrop",BackgroundColor3=Color3.new(),BackgroundTransparency=.3,Size=UDim2.fromScale(1,1),ZIndex=50})
         launcherGui.Enabled=false
         local panel=button(layer,"",{Name="Modal",BackgroundColor3=C.Panel,BackgroundTransparency=Glass.Popup,AnchorPoint=Vector2.new(.5,.5),Position=UDim2.fromScale(.5,.5),Size=UDim2.fromOffset(width,height),ZIndex=2,ClipsDescendants=true})
-        round(panel,16); stroke(panel,Color3.fromRGB(66,66,66))
+        round(panel,16); stroke(panel,C.Border)
         label(panel,title,14,C.Text,{Position=UDim2.fromOffset(16,17),Size=UDim2.new(1,-62,0,22),Font=BOLD,TextTruncate=Enum.TextTruncate.AtEnd})
         local dismiss=button(panel,"×",{Position=UDim2.new(1,-50,0,7),Size=UDim2.fromOffset(40,40),TextSize=18}); round(dismiss,8)
         local function fit()
@@ -1442,7 +1805,7 @@ function Nox:CreateWindow(options)
         for _,tab in ipairs(self.Tabs) do
             local selected=tab==target
             tab.Page.Visible=selected
-            tab.NavButton.BackgroundColor3=selected and C.Row or Color3.fromRGB(10,10,10)
+            tab.NavButton.BackgroundColor3=selected and C.Row or self.ThemeDef.Visuals.NavButtonIdle
             tab.NavButton.BackgroundTransparency=selected and Glass.NavActive or Glass.NavIdle
             tab.NavTitle.TextColor3=selected and C.Text or C.Muted
             if tab.Number then tab.Number.TextColor3=selected and C.Text or C.Faint end
@@ -1464,7 +1827,7 @@ function Nox:CreateWindow(options)
         local page=new("Frame",{Name=title,BackgroundTransparency=1,Size=UDim2.fromScale(1,1),Visible=false},pages)
         local list=scroll(page,{Name="Options",AutomaticCanvasSize=Enum.AutomaticSize.None}); vertical(list,5); padding(list,2,4)
         local empty=label(page,"Sin coincidencias. Prueba otra búsqueda.",12,C.Muted,{Position=UDim2.fromOffset(12,18),Size=UDim2.new(1,-24,0,50),TextWrapped=true,Visible=false})
-        local navButton=button(holder or nav,"",{Name=title,Size=UDim2.new(1,0,0,28),BackgroundColor3=Color3.fromRGB(10,10,10),BackgroundTransparency=Glass.NavIdle,LayoutOrder=index})
+        local navButton=button(holder or nav,"",{Name=title,Size=UDim2.new(1,0,0,28),BackgroundColor3=self.ThemeDef.Visuals.NavButtonIdle,BackgroundTransparency=Glass.NavIdle,LayoutOrder=index})
         round(navButton,8)
         local selectionBar=new("Frame",{Name="Selected",Position=UDim2.fromOffset(1,5),Size=UDim2.fromOffset(2,18),
             BackgroundColor3=C.Text,BackgroundTransparency=0,Visible=false,ZIndex=3},navButton); round(selectionBar,2)
@@ -1476,13 +1839,13 @@ function Nox:CreateWindow(options)
         connect(self,navButton.Activated,function() self:SelectTab(tab) end)
         connect(self,navButton.MouseEnter,function()
             if self.CurrentTab~=tab then
-                navButton.BackgroundColor3=Color3.fromRGB(18,18,18)
+                navButton.BackgroundColor3=self.ThemeDef.Visuals.NavButtonHover
                 navButton.BackgroundTransparency=Glass.NavHover
             end
         end)
         connect(self,navButton.MouseLeave,function()
             if self.CurrentTab~=tab then
-                navButton.BackgroundColor3=Color3.fromRGB(10,10,10)
+                navButton.BackgroundColor3=self.ThemeDef.Visuals.NavButtonIdle
                 navButton.BackgroundTransparency=Glass.NavIdle
             end
         end)
@@ -1568,6 +1931,74 @@ function Nox:CreateWindow(options)
         if config.Enabled~=nil then self:SetOpenButtonVisible(config.Enabled) end
         if config.Ghosted~=nil then self:SetOpenButtonGhosted(config.Ghosted) end
         if config.Title then openLabel.Text=plain(config.Title) end
+        return self
+    end
+    function w:GetTheme()
+        return self.ThemeName or CURRENT_THEME_NAME
+    end
+    function w:SetTheme(name, silent)
+        local resolved = canonicalThemeName(name)
+        local themeDef = getThemeDefinition(resolved)
+        self.ThemeName = resolved
+        self.ThemeDef = themeDef
+        applyThemeDefinition(resolved)
+
+        root.BackgroundColor3 = themeDef.Visuals.RootBase
+        root.BackgroundTransparency = Glass.Root
+        rootStroke.Color = themeDef.Visuals.RootStroke
+        rootGradient.Color = ColorSequence.new({
+            ColorSequenceKeypoint.new(0, themeDef.Visuals.RootGradient[1]),
+            ColorSequenceKeypoint.new(.52, themeDef.Visuals.RootGradient[2]),
+            ColorSequenceKeypoint.new(1, themeDef.Visuals.RootGradient[3])
+        })
+        animeShade.BackgroundColor3 = themeDef.Visuals.AnimeShadeColor
+        animeShade.BackgroundTransparency = themeDef.Visuals.AnimeShadeTransparency
+        animeShadeGradient.Transparency = NumberSequence.new({
+            NumberSequenceKeypoint.new(0, themeDef.Visuals.AnimeShadeStops[1]),
+            NumberSequenceKeypoint.new(.58, themeDef.Visuals.AnimeShadeStops[2]),
+            NumberSequenceKeypoint.new(1, themeDef.Visuals.AnimeShadeStops[3])
+        })
+        glowA.BackgroundColor3 = themeDef.Visuals.BackdropGlowA
+        glowB.BackgroundColor3 = themeDef.Visuals.BackdropGlowB
+        watermark.TextTransparency = themeDef.Visuals.BackdropWatermarkTransparency
+        for _, child in ipairs(backdrop:GetChildren()) do
+            if child.Name == "GridV" then
+                child.BackgroundColor3 = themeDef.Visuals.GridColor
+                child.BackgroundTransparency = themeDef.Visuals.GridVTransparency
+            elseif child.Name == "GridH" then
+                child.BackgroundColor3 = themeDef.Visuals.GridColor
+                child.BackgroundTransparency = themeDef.Visuals.GridHTransparency
+            end
+        end
+        topRule.BackgroundColor3 = C.Border
+        sidebar.BackgroundColor3 = themeDef.Visuals.SidebarBase
+        sidebar.BackgroundTransparency = Glass.Sidebar
+        sidebarStroke.Color = themeDef.Visuals.SidebarStroke
+        searchBox.BackgroundColor3 = C.Field
+        searchBox.BackgroundTransparency = Glass.Field
+        searchStroke.Color = themeDef.Visuals.SearchStroke
+        openButton.BackgroundColor3 = themeDef.Visuals.OpenButtonBase
+        openButton.BackgroundTransparency = Glass.Button
+        openStroke.Color = themeDef.Visuals.OpenStroke
+        for _, grip in ipairs(resizeVisuals) do
+            grip.BackgroundColor3 = C.Text
+            grip.BackgroundTransparency = themeDef.Visuals.ResizeGuideTransparency
+        end
+        self:_applyOpenButtonState()
+        if self.CurrentTab then
+            self:SelectTab(self.CurrentTab)
+        end
+        applyThemeRolesRecursive(gui)
+        applyThemeRolesRecursive(launcherGui)
+        for _, tab in ipairs(self.Tabs) do
+            for _, control in ipairs(tab.Elements or {}) do
+                if control.ApplyTheme then control:ApplyTheme() end
+            end
+        end
+        refreshBackgroundForTheme(resolved)
+        if not silent and Nox.Notify and Nox.Window == self then
+            Nox:Notify({Title = "Tema", Content = "Interfaz cambiada a " .. (resolved == "Blanco" and "Blanco" or "Oscuro")})
+        end
         return self
     end
     function w:OnDestroy(callback) table.insert(self._onDestroy,callback); return self end
@@ -1698,16 +2129,34 @@ function Nox:CreateWindow(options)
     if o.OpenButton then w:EditOpenButton(o.OpenButton) end
     if o.Author then w:SetAuthor(o.Author) end
     footer.Text="XEROHUB  /  KEV"
+    w:SetTheme(resolvedTheme, true)
     task.defer(fit)
     return w
 end
 function Nox:SetTheme(name)
-    -- "Onyx" sigue aceptado como alias para no romper llamadas antiguas.
-    self.Theme={Name="Xero",Accent=C.White,Background=C.Window,Text=C.Text}
+    local resolved = canonicalThemeName(name)
+    applyThemeDefinition(resolved)
+    self.Theme = {Name = resolved, Accent = C.White, Background = C.Window, Text = C.Text}
+    if self.Window and not self.Window.Destroyed and self.Window.SetTheme then
+        self.Window:SetTheme(resolved, true)
+    end
     return self.Theme
 end
-function Nox:GetCurrentTheme() return "Xero" end
-function Nox:GetThemes() return {Xero={Name="Xero"},Nox={Name="Xero"},Onyx={Name="Xero"}} end
+function Nox:GetCurrentTheme()
+    if self.Window and not self.Window.Destroyed and self.Window.GetTheme then
+        return self.Window:GetTheme()
+    end
+    return CURRENT_THEME_NAME
+end
+function Nox:GetThemes()
+    return {
+        Xero = {Name = "Xero"},
+        Nox = {Name = "Xero"},
+        Onyx = {Name = "Xero"},
+        Blanco = {Name = "Blanco"},
+        White = {Name = "Blanco"},
+    }
+end
 function Nox:Notify(options)
     if not self.Window then return end
     local w=self.Window; local o=options or {}

@@ -11318,10 +11318,12 @@ local function hideESP(targetPlayer)
     if espObj.Highlight and espObj.Highlight.Enabled then espObj.Highlight.Enabled = false end
 end
 
--- El Highlight permanece fuera del Character, pero se parenta directamente a
--- Workspace, que Roblox soporta oficialmente para Highlights con Adornee externo.
+-- El Highlight permanece fuera del Character y fuera de Workspace.
+-- Roblox permite Highlights con Adornee externo dentro de ReplicatedStorage.
+-- Esto evita que las reglas del juego que vigilan descendientes de Workspace
+-- interfieran con este visual local.
 local function getESPHighlightParent()
-    return workspace
+    return ReplicatedStorage
 end
 
 runtime.ESPVisualCleanup = function()
@@ -11852,10 +11854,13 @@ runtime.Track(RunService.Heartbeat:Connect(function(deltaTime)
                             if not espObj then
                                 local highlight = Instance.new("Highlight")
                                 highlight.Name = p.Name .. "_Glow"
-                                highlight.FillTransparency = 0.6
-                                highlight.OutlineTransparency = 1
+                                highlight.FillColor = espColor
+                                highlight.FillTransparency = 0.45
+                                highlight.OutlineColor = espColor
+                                highlight.OutlineTransparency = 0.05
                                 highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
                                 highlight.Adornee = char
+                                highlight.Enabled = espSettings.Glow
                                 highlight.Parent = getESPHighlightParent()
 
                                 espObj = {
@@ -11871,6 +11876,7 @@ runtime.Track(RunService.Heartbeat:Connect(function(deltaTime)
                             if highlight.Adornee ~= char then highlight.Adornee = char end
                             if highlight.Enabled ~= espSettings.Glow then highlight.Enabled = espSettings.Glow end
                             if highlight.FillColor ~= espColor then highlight.FillColor = espColor end
+                            if highlight.OutlineColor ~= espColor then highlight.OutlineColor = espColor end
                         else
                             hideESP(p)
                         end

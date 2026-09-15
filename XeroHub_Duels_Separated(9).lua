@@ -188,70 +188,17 @@ local runtime = {
     Alive = true,
     Connections = {},
     Drawings = {},
-    InfectedTexts = setmetatable({}, {__mode = "k"}),
+    InfectedTexts = {},
 }
 
-runtime.NextConnectionPruneAt = 96
-
-
-
-function runtime.PruneConnections()
-    local list = runtime.Connections
-    local writeIndex = 1
-
-    for readIndex = 1, #list do
-        local connection = list[readIndex]
-        local connected = false
-        if connection then
-            pcall(function() connected = connection.Connected == true end)
-        end
-
-        if connected then
-            list[writeIndex] = connection
-            writeIndex = writeIndex + 1
-        end
-    end
-
-    for index = #list, writeIndex, -1 do
-        list[index] = nil
-    end
-
-    -- No barremos en cada Track: sólo después de crecer otra tanda razonable.
-    runtime.NextConnectionPruneAt = #list + 64
-end
-
 function runtime.Track(connection)
-    if connection then
-        local list = runtime.Connections
-        list[#list + 1] = connection
-        if #list >= (runtime.NextConnectionPruneAt or 96) then
-            runtime.PruneConnections()
-        end
-    end
+    if connection then table.insert(runtime.Connections, connection) end
     return connection
 end
 
 function runtime.TrackDrawing(drawing)
     if drawing then table.insert(runtime.Drawings, drawing) end
     return drawing
-end
-
-function runtime.UntrackDrawing(drawing)
-    if not drawing then return end
-    local list = runtime.Drawings
-    for i = #list, 1, -1 do
-        if list[i] == drawing then
-            list[i] = list[#list]
-            list[#list] = nil
-            return
-        end
-    end
-end
-
-function runtime.RemoveDrawing(drawing)
-    if not drawing then return end
-    runtime.UntrackDrawing(drawing)
-    pcall(function() drawing:Remove() end)
 end
 
 function runtime.TrackInfectedText(textObject)
@@ -910,6 +857,8 @@ function showBottomMessage(text, options)
 end
 
 
+
+
 local MainSection = Window:Section({ Title = "PRINCIPAL", Opened = true })
 local TrollSection = Window:Section({ Title = "PERSONAL", Opened = true })
 
@@ -966,6 +915,12 @@ for _, tab in pairs(Tabs) do
         end
     end)
 end
+
+
+
+
+
+
 
 
 -- ==========================================
@@ -1044,42 +999,6 @@ local killSoundState = {
     SuppressedDeathOriginalVolumes = setmetatable({}, {__mode = "k"}),
 }
 runtime.KillSoundChanger = killSoundState
-
--- Registro central de Sounds: gunshot y death sound comparten el mismo inventario.
--- El escaneo grande ocurre una sola vez; después DescendantAdded mantiene el registro.
-runtime.SoundRegistry = setmetatable({}, {__mode = "k"})
-runtime.SoundRegistryPrimed = false
-
-function runtime.RegisterSoundInstance(object)
-    if object and object:IsA("Sound") then
-        runtime.SoundRegistry[object] = true
-        return true
-    end
-    return false
-end
-
-function runtime.PrimeSoundRegistry()
-    if runtime.SoundRegistryPrimed then return end
-    runtime.SoundRegistryPrimed = true
-
-    local seenRoots = setmetatable({}, {__mode = "k"})
-    -- Workspace ya incluye Character y CurrentCamera; no recorremos esos árboles dos veces.
-    local roots = {
-        workspace,
-        player:FindFirstChildOfClass("Backpack"),
-        SoundService,
-    }
-    for i = 1, #roots do
-        local root = roots[i]
-        if root and not seenRoots[root] then
-            seenRoots[root] = true
-            runtime.RegisterSoundInstance(root)
-            for _, object in ipairs(root:GetDescendants()) do
-                runtime.RegisterSoundInstance(object)
-            end
-        end
-    end
-end
 
 local KILL_GUN_SOUND_ID = "296102734"
 local DEFAULT_DEATH_SOUND = "rbxasset://sounds/uuhhh.mp3"
@@ -1354,11 +1273,27 @@ local function watchCandidateSound(sound)
 end
 
 local function scanGunshots()
-    runtime.PrimeSoundRegistry()
     local changed = 0
-    for sound in pairs(runtime.SoundRegistry) do
-        if sound and sound.Parent and bindGunshot(sound) then
-            changed = changed + 1
+    local seen = setmetatable({}, {__mode = "k"})
+    local roots = {
+        workspace,
+        player.Character,
+        player:FindFirstChildOfClass("Backpack"),
+        workspace.CurrentCamera,
+        SoundService,
+    }
+    for _, root in ipairs(roots) do
+        if root then
+            if root:IsA("Sound") and not seen[root] then
+                seen[root] = true
+                if bindGunshot(root) then changed = changed + 1 end
+            end
+            for _, object in ipairs(root:GetDescendants()) do
+                if object:IsA("Sound") and not seen[object] then
+                    seen[object] = true
+                    if bindGunshot(object) then changed = changed + 1 end
+                end
+            end
         end
     end
     return changed
@@ -2168,11 +2103,27 @@ local function watchCandidateKillSound(sound)
 end
 
 local function scanKillSounds()
-    runtime.PrimeSoundRegistry()
     local changed = 0
-    for sound in pairs(runtime.SoundRegistry) do
-        if sound and sound.Parent and bindKillSound(sound) then
-            changed = changed + 1
+    local seen = setmetatable({}, {__mode = "k"})
+    local roots = {
+        workspace,
+        player.Character,
+        player:FindFirstChildOfClass("Backpack"),
+        workspace.CurrentCamera,
+        SoundService,
+    }
+    for _, root in ipairs(roots) do
+        if root then
+            if root:IsA("Sound") and not seen[root] then
+                seen[root] = true
+                if bindKillSound(root) then changed = changed + 1 end
+            end
+            for _, object in ipairs(root:GetDescendants()) do
+                if object:IsA("Sound") and not seen[object] then
+                    seen[object] = true
+                    if bindKillSound(object) then changed = changed + 1 end
+                end
+            end
         end
     end
     return changed
@@ -2729,7 +2680,7 @@ killSoundToggle = Tabs.Sonidos:Toggle({
 UIElements.TogKillSound = killSoundToggle
 
 local function onRelevantSoundAdded(object)
-    if not runtime.RegisterSoundInstance(object) then return end
+    if not object:IsA("Sound") then return end
     if soundState.Enabled or soundState.MuteGunshot then watchCandidateSound(object) end
     if killSoundState.Enabled then watchCandidateKillSound(object) end
 end
@@ -3303,38 +3254,17 @@ end
 runtime.Track(player:GetPropertyChangedSignal("Team"):Connect(updateTeamCache))
 updateTeamCache() -- Escaneo inicial
 
--- 2. Actualiza el caché SOLO cuando te ponen o quitan un campo de fuerza.
--- Reutilizamos sólo dos listeners del Character actual; los de la ronda anterior
--- se desconectan en el acto para no dejar cierres/referencias vivas entre respawns.
-runtime.BindForceFieldCache = function(char)
-    if runtime.ForceFieldAddedConnection then
-        pcall(function() runtime.ForceFieldAddedConnection:Disconnect() end)
-        runtime.ForceFieldAddedConnection = nil
-    end
-    if runtime.ForceFieldRemovedConnection then
-        pcall(function() runtime.ForceFieldRemovedConnection:Disconnect() end)
-        runtime.ForceFieldRemovedConnection = nil
-    end
-
-    hasForceField = char and char:FindFirstChildOfClass("ForceField") ~= nil or false
-    if not char then
-        runtime.PruneConnections()
-        return
-    end
-
-    runtime.ForceFieldAddedConnection = runtime.Track(char.ChildAdded:Connect(function(child)
+-- 2. Actualiza el caché SOLO cuando te ponen o quitan un campo de fuerza
+runtime.Track(player.CharacterAdded:Connect(function(char)
+    hasForceField = char:FindFirstChildOfClass("ForceField") ~= nil
+    
+    runtime.Track(char.ChildAdded:Connect(function(child)
         if child:IsA("ForceField") then hasForceField = true end
     end))
-    runtime.ForceFieldRemovedConnection = runtime.Track(char.ChildRemoved:Connect(function(child)
+    runtime.Track(char.ChildRemoved:Connect(function(child)
         if child:IsA("ForceField") then hasForceField = false end
     end))
-    runtime.PruneConnections()
-end
-
-runtime.Track(player.CharacterAdded:Connect(function(char)
-    runtime.BindForceFieldCache(char)
 end))
-runtime.BindForceFieldCache(player.Character)
 
 -- 3. La función maestra ahora es 1000x más rápida
 function estaEnLobby()
@@ -3469,38 +3399,18 @@ runtime.Track(player:GetPropertyChangedSignal("TeamColor"):Connect(updateMyTeam)
 runtime.Track(player:GetAttributeChangedSignal("Team"):Connect(updateMyTeam))
 runtime.Track(player:GetAttributeChangedSignal("team"):Connect(updateMyTeam))
 
-runtime.EnemyEventConnections = setmetatable({}, {__mode = "k"})
-
-runtime.ClearEnemyPlayerEvents = function(p)
-    local bundle = runtime.EnemyEventConnections[p]
-    if not bundle then return end
-    runtime.EnemyEventConnections[p] = nil
-    for i = 1, #bundle do
-        pcall(function() bundle[i]:Disconnect() end)
-    end
-end
-
 function setupPlayerEvents(p)
-    runtime.ClearEnemyPlayerEvents(p)
-    local bundle = {
-        p:GetPropertyChangedSignal("Team"):Connect(function() updateEnemy(p) end),
-        p:GetPropertyChangedSignal("TeamColor"):Connect(function() updateEnemy(p) end),
-        p:GetAttributeChangedSignal("Team"):Connect(function() updateEnemy(p) end),
-        p:GetAttributeChangedSignal("team"):Connect(function() updateEnemy(p) end),
-    }
-    runtime.EnemyEventConnections[p] = bundle
-    for i = 1, #bundle do runtime.Track(bundle[i]) end
+    runtime.Track(p:GetPropertyChangedSignal("Team"):Connect(function() updateEnemy(p) end))
+    runtime.Track(p:GetPropertyChangedSignal("TeamColor"):Connect(function() updateEnemy(p) end))
+    runtime.Track(p:GetAttributeChangedSignal("Team"):Connect(function() updateEnemy(p) end))
+    runtime.Track(p:GetAttributeChangedSignal("team"):Connect(function() updateEnemy(p) end))
 end
 
 for _, p in ipairs(listaJugadores) do
     if p ~= player then setupPlayerEvents(p) end
 end
 runtime.Track(Players.PlayerAdded:Connect(function(p) setupPlayerEvents(p) end))
-runtime.Track(Players.PlayerRemoving:Connect(function(p)
-    runtime.ClearEnemyPlayerEvents(p)
-    updateEnemy(p)
-    runtime.PruneConnections()
-end))
+runtime.Track(Players.PlayerRemoving:Connect(function(p) updateEnemy(p) end))
 
 function isEnemy(targetPlayer)
     if not teamCheckEnabled then return true end
@@ -3642,50 +3552,45 @@ function runtime.SetTargetSelection(mode, value)
     end
 end
 
-function runtime.CollectTargetParts(char, mode)
-    if not char then return nil end
+function runtime.CollectTargetParts(char, mode, out, seen)
+    table.clear(out)
+    table.clear(seen)
+    if not char then return out end
 
     local modeCache = runtime.TargetPartCache[mode]
     local version = runtime.TargetSelectionVersion[mode] or 1
     local cached = modeCache and modeCache[char]
     if cached and cached.Version == version then
-        local parts = cached.Parts
-        local valid = parts and #parts > 0
-        if valid then
-            for i = 1, #parts do
-                local part = parts[i]
-                if not part or part.Parent ~= char then
-                    valid = false
-                    break
-                end
-            end
+        local valid = true
+        for i = 1, #cached.Parts do
+            local part = cached.Parts[i]
+            if not part or part.Parent ~= char then valid = false break end
+            out[i] = part
         end
-        if valid then return parts end
+        if valid and #out > 0 then return out end
+        table.clear(out)
         modeCache[char] = nil
     end
 
-    -- Cache miss sólo ocurre al cambiar selección o cuando Duels reconstruye el rig.
-    -- Creamos la tabla una vez y después AutoShoot/SilentAim la leen directamente,
-    -- evitando copiar las mismas referencias ~33 veces por segundo.
-    local parts = {}
-    local seen = {}
     local partNames = runtime.TargetPartNameCache[mode] or runtime.RebuildTargetPartNameCache(mode)
     for i = 1, #partNames do
         local part = ffc(char, partNames[i])
         if part and part:IsA("BasePart") and not seen[part] then
             seen[part] = true
-            parts[#parts + 1] = part
+            out[#out + 1] = part
         end
     end
-    if #parts == 0 then
+    if #out == 0 then
         local fallback = ffc(char, "Head") or ffc(char, "HumanoidRootPart")
-        if fallback then parts[1] = fallback end
+        if fallback then out[1] = fallback end
     end
 
-    if modeCache and #parts > 0 then
+    if modeCache and #out > 0 then
+        local parts = table.create and table.create(#out) or {}
+        for i = 1, #out do parts[i] = out[i] end
         modeCache[char] = {Version = version, Parts = parts}
     end
-    return parts
+    return out
 end
 
 function runtime.EnsureBodySelector()
@@ -4233,8 +4138,6 @@ runtime.Appearance = {
         NativeEffectPairs = {},
         NativeTransparencyBindName = nil,
         NativeCameraTransparencyLast = nil,
-        NativeAppliedTransparencyLast = nil,
-        NativeLayerSignatureLast = nil,
         AnimationConnection = nil,
         RenderAnimationConnection = nil,
         BaseDescendantConnection = nil,
@@ -4267,8 +4170,6 @@ runtime.Appearance = {
     AccessoryGuardConnections = {},
     AccessoryGuardMutating = {},
     AccessoryGuardPending = false,
-    AccessoryGuardDirty = false,
-    AccessoryCloneRefreshPending = false,
     AccessoryGuardCharacter = nil,
     EditorDisplayToKey = {},
     EditorControls = {},
@@ -5116,39 +5017,22 @@ function runtime.GetAppearanceTemplate(key)
     return template
 end
 
-local function isAppearanceBodyAttachment(char, attachment)
-    return attachment
-        and attachment:IsA("Attachment")
-        and attachment.Parent
-        and attachment.Parent:IsA("BasePart")
-        and attachment.Parent.Parent == char
-end
-
 local function findAppearanceAttachment(char, name)
     local cache = runtime.Appearance.AttachmentCache[char]
     if not cache then
         cache = {}
         runtime.Appearance.AttachmentCache[char] = cache
         for _, d in ipairs(char:GetDescendants()) do
-            -- CRÍTICO: nunca cachear el Attachment DEL PROPIO limited. Durante un
-            -- respawn temprano el Accessory ya puede ser hijo del Character antes de
-            -- que Roblox agregue el Attachment corporal; antes eso permitía soldar
-            -- Handle -> Handle y el limited quedaba invisible/desprendido.
-            if isAppearanceBodyAttachment(char, d) then
+            if d:IsA("Attachment") and d.Parent and d.Parent:IsA("BasePart") then
                 cache[d.Name] = cache[d.Name] or d
             end
         end
     end
-
     local found = cache[name]
-    if found and found.Name == name and isAppearanceBodyAttachment(char, found) then
-        return found
-    end
-    cache[name] = nil
-
-    -- Fallback por si Duels reemplazó una pieza/attachment después del snapshot.
+    if found and found.Parent then return found end
+    -- Fallback por si el juego reemplazó una pieza/attachment después del snapshot.
     for _, d in ipairs(char:GetDescendants()) do
-        if d.Name == name and isAppearanceBodyAttachment(char, d) then
+        if d:IsA("Attachment") and d.Name == name and d.Parent and d.Parent:IsA("BasePart") then
             cache[name] = d
             return d
         end
@@ -5348,28 +5232,11 @@ function runtime.ApplyAppearanceAccessory(key, char)
 
     runtime.Appearance.ActiveAccessories[key] = accessory
 
-    -- XERO_SYNC_LIMITED_ATTACH:
-    -- Humanoid:AddAccessory puede parentar el Accessory antes de crear AccessoryWeld.
-    -- Si esperamos al defer, durante respawn existe una carrera donde el limited queda
-    -- creado pero todavía no visible. Intentamos cerrar el attach EN ESTE MISMO turno.
-    local attachedNow = runtime.ApplyAppearanceOffsetToInstance(key, accessory, true)
-    if not attachedNow then
-        runtime.Appearance.AttachmentCache[char] = nil
-        pcall(function() manualAttachAppearanceAccessory(char, accessory) end)
-        runtime.Appearance.AccessoryWeld[accessory] = nil
-        attachedNow = runtime.ApplyAppearanceOffsetToInstance(key, accessory, true)
-    end
-
-    -- Roblox todavía puede reemplazar attachments unos frames después. Esta segunda
-    -- pasada es barata y sólo actúa sobre ESTE accessory; no escanea todo el avatar.
     task.defer(function()
         if not runtime.Alive or accessory.Parent ~= char then return end
-        if not runtime.ApplyAppearanceOffsetToInstance(key, accessory, true) then
-            runtime.Appearance.AttachmentCache[char] = nil
-            pcall(function() manualAttachAppearanceAccessory(char, accessory) end)
-            runtime.Appearance.AccessoryWeld[accessory] = nil
-            runtime.ApplyAppearanceOffsetToInstance(key, accessory, true)
-        end
+        -- Si AddAccessory todavía no generó weld, ApplyAppearanceOffset intenta
+        -- adjuntarlo manualmente usando los attachments que ya hayan aparecido.
+        runtime.ApplyAppearanceOffsetToInstance(key, accessory, true)
         runtime.EnforceBodyAppearance(char)
     end)
     return true
@@ -5416,22 +5283,14 @@ function runtime.EnsureAppearanceAccessoryKey(key, char)
     end
 
     if current and current.Parent == char then
-        -- No basta con que exista cualquier Weld. Un self-weld o un weld apuntando a
-        -- una pieza corporal vieja puede hacer que ApplyAppearanceOffset parezca OK
-        -- aunque el limited esté visualmente perdido. Validamos primero la topología.
-        if runtime.IsAppearanceAccessoryReady(key, char) then
-            return runtime.ApplyAppearanceOffsetToInstance(key, current, true)
+        if runtime.ApplyAppearanceOffsetToInstance(key, current, true) then
+            return true
         end
 
         runtime.Appearance.AttachmentCache[char] = nil
-        runtime.Appearance.AccessoryWeld[current] = nil
-        runtime.Appearance.AccessoryBaseWeld[current] = nil
         if manualAttachAppearanceAccessory(char, current) then
             runtime.Appearance.AccessoryWeld[current] = nil
-            runtime.Appearance.AccessoryBaseWeld[current] = nil
-            return runtime.IsAppearanceAccessoryReady(key, char)
-                and runtime.ApplyAppearanceOffsetToInstance(key, current, true)
-                or false
+            return runtime.ApplyAppearanceOffsetToInstance(key, current, true)
         end
         return false
     end
@@ -5544,85 +5403,6 @@ function runtime.EnsureAppearanceAccessories(char)
     end
 
     runtime.EnforceBodyAppearance(char)
-end
-
--- Comprueba que el limited no sólo exista, sino que ya tenga un weld válido hacia
--- una pieza del Character actual. "Parent == char" por sí solo no significa visible.
-function runtime.IsAppearanceAccessoryReady(key, char)
-    char = char or player.Character
-    if not char then return false end
-
-    local accessory = runtime.Appearance.ActiveAccessories[key]
-    if not accessory or accessory.Parent ~= char then
-        for _, child in ipairs(char:GetChildren()) do
-            if child:IsA("Accoutrement") and child:GetAttribute("iLunXAppearanceKey") == key then
-                accessory = child
-                runtime.Appearance.ActiveAccessories[key] = child
-                break
-            end
-        end
-    end
-    if not accessory or accessory.Parent ~= char then return false end
-
-    local handle = accessory:FindFirstChild("Handle")
-    local weld = runtime.FindAppearanceWeld(accessory)
-    if not handle or not handle:IsA("BasePart") or not weld or not weld.Parent then return false end
-    if weld.Part0 ~= handle or not weld.Part1 or not weld.Part1:IsDescendantOf(char) then return false end
-
-    -- AccessoryWeld válido = Handle -> una pieza corporal ACTUAL del Character.
-    -- Esto rechaza tanto el antiguo self-weld Handle -> Handle como referencias a
-    -- Heads/Torsos que Duels ya reemplazó durante el respawn.
-    if weld.Part1 == handle or weld.Part1.Parent ~= char
-        or char:FindFirstChild(weld.Part1.Name) ~= weld.Part1 then
-        return false
-    end
-    return true
-end
-
--- XERO_LIMITED_RESPAWN_SETTLE:
--- Micro-guardia dedicada a limiteds. NO espera el freeze de 4.5-7 s del clon; sólo
--- trabaja durante la pequeña ventana en la que Roblox va agregando Head/attachments.
--- Sale inmediatamente en cuanto todos los limiteds activos tienen weld válido.
-function runtime.FastEnsureAppearanceAccessories(char, generation, maxDuration)
-    char = char or player.Character
-    if not char or not char.Parent or not hasEnabledAppearanceAccessory() then return true end
-
-    local deadline = os.clock() + (tonumber(maxDuration) or 0.9)
-    local pass = 0
-
-    repeat
-        if not runtime.Alive or char ~= player.Character or not char.Parent then return false end
-        if generation and generation ~= runtime.Appearance.RespawnGeneration then return false end
-
-        pass += 1
-        local allReady = true
-        for _, key in ipairs(runtime.AppearanceOrder) do
-            local asset = runtime.AppearanceCatalog[key]
-            if asset and asset.Kind == "Accessory" and runtime.Appearance.Enabled[key] then
-                if not runtime.IsAppearanceAccessoryReady(key, char) then
-                    runtime.EnsureAppearanceAccessoryKey(key, char)
-                end
-                if not runtime.IsAppearanceAccessoryReady(key, char) then
-                    allReady = false
-                end
-            end
-        end
-
-        if allReady then
-            runtime.EnforceBodyAppearance(char)
-            return true
-        end
-
-        -- Dos frames inmediatos cubren la mayoría de respawns. Después bajamos
-        -- frecuencia para no convertir una condición rara en trabajo por frame.
-        if pass <= 2 then
-            RunService.Heartbeat:Wait()
-        else
-            task.wait(math.min(0.025 * pass, 0.10))
-        end
-    until os.clock() >= deadline
-
-    return false
 end
 
 -- ==========================================
@@ -5926,8 +5706,6 @@ function runtime.AvatarCloneBuildNativeTransparencyMap(char, overlay)
     local state = runtime.Appearance.AvatarClone
     table.clear(state.NativeTransparencyPairs)
     table.clear(state.NativeEffectPairs)
-    state.NativeAppliedTransparencyLast = nil
-    state.NativeLayerSignatureLast = nil
 
     if not char or not char.Parent or not overlay or not overlay.Parent then return false end
 
@@ -5981,15 +5759,12 @@ function runtime.AvatarCloneNativeLayerHidden(pair)
     return false
 end
 
-function runtime.AvatarCloneSyncNativeTransparency(char, overlay, dt, boundHumanoid)
+function runtime.AvatarCloneSyncNativeTransparency(char, overlay, dt)
     local state = runtime.Appearance.AvatarClone
     if state.Overlay ~= overlay or not overlay or not overlay.Parent or not char or not char.Parent then return end
 
     local currentCamera = workspace.CurrentCamera
-    local humanoid = boundHumanoid
-    if not humanoid or humanoid.Parent ~= char then
-        humanoid = char:FindFirstChildOfClass("Humanoid")
-    end
+    local humanoid = char:FindFirstChildOfClass("Humanoid")
     local subject = currentCamera and currentCamera.CameraSubject
     local cameraOwnsCharacter = currentCamera and humanoid and (
         subject == humanoid
@@ -6002,14 +5777,10 @@ function runtime.AvatarCloneSyncNativeTransparency(char, overlay, dt, boundHuman
     -- XeroHub lo mantiene en 1 para esconderlo debajo del overlay.
     local transparency = 0
     if cameraOwnsCharacter and currentCamera then
-        -- XERO_PERF_CLONE_MASK_DISTANCE_SQ: evitamos sqrt en tercera persona.
-        -- Sólo necesitamos la distancia exacta dentro del radio de 2 studs.
-        local cameraDelta = currentCamera.Focus.Position - currentCamera.CFrame.Position
-        local distanceSq = cameraDelta:Dot(cameraDelta)
-        if distanceSq < 4 then
-            local distance = math.sqrt(distanceSq)
-            transparency = 1 - (distance - 0.5) / 1.5
-            if transparency < 0.5 then transparency = 0 end
+        local distance = (currentCamera.Focus.Position - currentCamera.CFrame.Position).Magnitude
+        transparency = (distance < 2) and (1 - (distance - 0.5) / 1.5) or 0
+        if transparency < 0.5 then
+            transparency = 0
         end
 
         local last = state.NativeCameraTransparencyLast
@@ -6023,42 +5794,27 @@ function runtime.AvatarCloneSyncNativeTransparency(char, overlay, dt, boundHuman
 
     state.NativeCameraTransparencyLast = transparency
 
-    -- XERO_PERF_CLONE_MASK_SKIP_UNCHANGED:
-    -- En tercera persona el fade suele quedarse en 0 durante cientos de frames.
-    -- No recorremos todas las partes/efectos del overlay si ni el fade ni las capas
-    -- Headless/Korblox/HideHair cambiaron desde el último frame aplicado.
-    local layerSignature = (runtime.Appearance.Enabled.Headless and 1 or 0)
-        + (runtime.Appearance.Enabled.Korblox and 2 or 0)
-        + (runtime.Appearance.Enabled.HideHair and 4 or 0)
-    local visualStateChanged = state.NativeAppliedTransparencyLast ~= transparency
-        or state.NativeLayerSignatureLast ~= layerSignature
-
-    if visualStateChanged then
-        state.NativeAppliedTransparencyLast = transparency
-        state.NativeLayerSignatureLast = layerSignature
-
-        for i = 1, #state.NativeTransparencyPairs do
-            local pair = state.NativeTransparencyPairs[i]
-            local clonePart = pair.ClonePart
-            if clonePart and clonePart.Parent then
-                local layerLTM = runtime.AvatarCloneNativeLayerHidden(pair) and 1
-                    or math.clamp(tonumber(pair.BaseLTM) or 0, 0, 1)
-                local desired = math.max(transparency, layerLTM)
-                if clonePart.LocalTransparencyModifier ~= desired then
-                    clonePart.LocalTransparencyModifier = desired
-                end
+    for i = 1, #state.NativeTransparencyPairs do
+        local pair = state.NativeTransparencyPairs[i]
+        local clonePart = pair.ClonePart
+        if clonePart and clonePart.Parent then
+            local layerLTM = runtime.AvatarCloneNativeLayerHidden(pair) and 1
+                or math.clamp(tonumber(pair.BaseLTM) or 0, 0, 1)
+            local desired = math.max(transparency, layerLTM)
+            if clonePart.LocalTransparencyModifier ~= desired then
+                clonePart.LocalTransparencyModifier = desired
             end
         end
+    end
 
-        for i = 1, #state.NativeEffectPairs do
-            local pair = state.NativeEffectPairs[i]
-            local effect = pair.Effect
-            if effect and effect.Parent then
-                local hiddenByLayer = runtime.Appearance.Enabled.HideHair
-                    and pair.Accessory and isHairAccessory(pair.Accessory)
-                local desired = pair.BaseEnabled == true and transparency < 0.95 and not hiddenByLayer
-                if effect.Enabled ~= desired then effect.Enabled = desired end
-            end
+    for i = 1, #state.NativeEffectPairs do
+        local pair = state.NativeEffectPairs[i]
+        local effect = pair.Effect
+        if effect and effect.Parent then
+            local hiddenByLayer = runtime.Appearance.Enabled.HideHair
+                and pair.Accessory and isHairAccessory(pair.Accessory)
+            local desired = pair.BaseEnabled == true and transparency < 0.95 and not hiddenByLayer
+            if effect.Enabled ~= desired then effect.Enabled = desired end
         end
     end
 end
@@ -6078,8 +5834,6 @@ function runtime.AvatarCloneBindNativeTransparency(char, overlay)
     state.NativeTransparencyBindName = bindName
     state.NativeCameraTransparencyLast = nil
 
-    local boundHumanoid = char:FindFirstChildOfClass("Humanoid")
-
     local ok = pcall(function()
         RunService:BindToRenderStep(
             bindName,
@@ -6089,11 +5843,11 @@ function runtime.AvatarCloneBindNativeTransparency(char, overlay)
                     or state.Overlay ~= overlay or not overlay.Parent then
                     return
                 end
-                runtime.AvatarCloneSyncNativeTransparency(char, overlay, dt, boundHumanoid)
-                -- CameraModule sólo reescribe LocalTransparencyModifier de BaseParts.
-                -- Texturas/efectos ya quedan protegidos por eventos y no necesitan un
-                -- recorrido completo cada frame.
-                runtime.AvatarCloneEnforceBaseHiddenParts(char)
+                runtime.AvatarCloneSyncNativeTransparency(char, overlay, dt)
+                -- CameraModule ya terminó de escribir LTM. Reafirmamos el avatar base
+                -- aquí, reutilizando ESTE render callback en vez de duplicar el trabajo
+                -- dentro del sincronizador de pose.
+                runtime.AvatarCloneEnforceBaseHidden(char)
             end
         )
     end)
@@ -6103,7 +5857,7 @@ function runtime.AvatarCloneBindNativeTransparency(char, overlay)
         return false
     end
 
-    runtime.AvatarCloneSyncNativeTransparency(char, overlay, 0, boundHumanoid)
+    runtime.AvatarCloneSyncNativeTransparency(char, overlay, 0)
     return true
 end
 
@@ -6458,8 +6212,6 @@ function runtime.AvatarCloneDisconnectAnimation()
     table.clear(state.NativeTransparencyPairs)
     table.clear(state.NativeEffectPairs)
     state.NativeCameraTransparencyLast = nil
-    state.NativeAppliedTransparencyLast = nil
-    state.NativeLayerSignatureLast = nil
     if state.AnimationConnection then
         pcall(function() state.AnimationConnection:Disconnect() end)
         state.AnimationConnection = nil
@@ -6512,13 +6264,16 @@ function runtime.AvatarCloneDestroyOverlay(restoreBase)
     end
 end
 
-function runtime.AvatarCloneEnforceBaseHiddenParts(char)
+function runtime.AvatarCloneEnforceBaseHidden(char)
     local state = runtime.Appearance.AvatarClone
     char = char or state.BaseCharacter or player.Character
     if not char or state.BaseCharacter ~= char then return end
 
     local cache = state.BaseVisualCache
     local korblox = runtime.Appearance.Enabled.Korblox == true
+
+    -- Hot path: no pairs(BaseVisualCache), no FindFirstAncestorWhichIsA y no pcall
+    -- por objeto. Las armas se liberan por eventos en AvatarCloneBindToolVisualGuard.
     local parts = state.BaseHiddenParts
     local i = 1
     while i <= #parts do
@@ -6533,20 +6288,9 @@ function runtime.AvatarCloneEnforceBaseHiddenParts(char)
             i += 1
         end
     end
-end
 
-function runtime.AvatarCloneEnforceBaseHidden(char)
-    local state = runtime.Appearance.AvatarClone
-    char = char or state.BaseCharacter or player.Character
-    if not char or state.BaseCharacter ~= char then return end
-
-    -- Camino completo usado fuera del bind Camera+1/fallback. El hot path nativo
-    -- llama sólo AvatarCloneEnforceBaseHiddenParts().
-    runtime.AvatarCloneEnforceBaseHiddenParts(char)
-
-    local cache = state.BaseVisualCache
     local textures = state.BaseHiddenTextures
-    local i = 1
+    i = 1
     while i <= #textures do
         local object = textures[i]
         if not object or not object.Parent or not cache[object] then
@@ -6722,17 +6466,6 @@ function runtime.AvatarCloneBuildMotorSync(char, overlay)
         return nil, nil
     end
 
-    -- XERO_PERF_CLONE_LIVE_MOTOR_FASTPATH_V2:
-    -- Animator ya calcula Motor6D.Transform. Lo indexamos una sola vez al hacer el
-    -- bind del clon y evitamos reconstruir la pose con varias inversas/ToObjectSpace
-    -- por joint en cada RenderStepped.
-    local liveMotorMap = {}
-    for _, object in ipairs(char:GetDescendants()) do
-        if object:IsA("Motor6D") and object.Part0 and object.Part1 then
-            liveMotorMap[object.Part0.Name .. ">" .. object.Part1.Name] = object
-        end
-    end
-
     for _, spec in ipairs(jointSpecs) do
         local parentName = spec[1]
         local childName = spec[2]
@@ -6743,10 +6476,6 @@ function runtime.AvatarCloneBuildMotorSync(char, overlay)
         local cloneChild = cloneParts[childName]
         local driverParent = driverParts[parentName]
         local driverChild = driverParts[childName]
-        local liveMotor = liveMotorMap[parentName .. ">" .. childName]
-        if liveMotor and (liveMotor.Part0 ~= realParent or liveMotor.Part1 ~= realChild) then
-            liveMotor = nil
-        end
 
         if realParent and realChild and cloneParent and cloneChild then
             -- Pivotes del CLON: estos preservan exactamente sus proporciones.
@@ -6769,7 +6498,6 @@ function runtime.AvatarCloneBuildMotorSync(char, overlay)
                     RealChild = realChild,
                     CloneParent = cloneParent,
                     CloneChild = cloneChild,
-                    LiveMotor = liveMotor,
 
                     CloneC0 = cloneA0.CFrame,
                     CloneC1 = cloneA1.CFrame,
@@ -6822,7 +6550,6 @@ function runtime.AvatarCloneBuildMotorSync(char, overlay)
             return
         end
 
-
         -- El root visual sigue exactamente nuestro movimiento global.
         -- XERO_PERF_CLONE_SYNC: las body parts del overlay están ancladas; sus
         -- velocidades ya se limpian al construir el clon y no necesitan 2 escrituras/joint/frame.
@@ -6849,11 +6576,7 @@ function runtime.AvatarCloneBuildMotorSync(char, overlay)
                         cloneChild.CFrame = cloneParent.CFrame * pair.InitialCloneRelative * delta
                     else
                         local poseTransform
-                        local liveMotor = pair.LiveMotor
-                        if liveMotor and liveMotor.Parent
-                            and liveMotor.Part0 == realParent and liveMotor.Part1 == realChild then
-                            poseTransform = liveMotor.Transform
-                        elseif pair.RealC0 and pair.RealC1 then
+                        if pair.RealC0 and pair.RealC1 then
                             local parentJointWorld = realParent.CFrame * pair.RealC0
                             local childJointWorld = realChild.CFrame * pair.RealC1
                             poseTransform = parentJointWorld:ToObjectSpace(childJointWorld)
@@ -6877,16 +6600,13 @@ function runtime.AvatarCloneBuildMotorSync(char, overlay)
         -- Re-alinearla AQUÍ, después de actualizar todos los CFrame del clon, evita
         -- que quede un frame atrás al caminar/correr si su RenderStepped separado
         -- se ejecutó antes que esta marioneta visual.
-        if runtime.Appearance.FaceClassicVisuals[overlay] then
-            runtime.SyncFaceClassicVisual(overlay)
-        end
+        runtime.SyncFaceClassicVisual(overlay)
 
         -- En condiciones normales la invisibilidad base se reafirma en el bind
         -- Camera+1 de transparencia. Sólo usamos este fallback si ese bind falló.
         if not state.NativeTransparencyBindName then
             runtime.AvatarCloneEnforceBaseHidden(char)
         end
-
     end
 
     -- El juego puede terminar su pose tarde en móvil; RenderStepped toma la
@@ -7430,19 +7150,16 @@ function runtime.BeginAvatarCloneRespawnMask(char, generation)
             return nil, nil
         end
 
-        -- XERO_PERF_CLONE_MOTOR_INDEX: antes cada joint hacía su propio
-        -- overlay:GetDescendants(). R15 podía recorrer el mismo modelo 15 veces
-        -- durante cada respawn. Indexamos los Motor6D en una sola pasada.
-        local cloneMotorIndex = {}
-        for _, object in ipairs(overlay:GetDescendants()) do
-            if object:IsA("Motor6D") and object.Part0 and object.Part1 then
-                local row = cloneMotorIndex[object.Part0.Name]
-                if not row then
-                    row = {}
-                    cloneMotorIndex[object.Part0.Name] = row
+        local function findJointMotor(model, part0Name, part1Name)
+            for _, object in ipairs(model:GetDescendants()) do
+                if object:IsA("Motor6D")
+                    and object.Part0 and object.Part1
+                    and object.Part0.Name == part0Name
+                    and object.Part1.Name == part1Name then
+                    return object
                 end
-                row[object.Part1.Name] = object
             end
+            return nil
         end
 
         -- Sólo cacheamos geometría DEL CLON, porque esa no cambia durante el respawn.
@@ -7455,8 +7172,7 @@ function runtime.BeginAvatarCloneRespawnMask(char, generation)
             if cloneParent and cloneParent:IsA("BasePart")
                 and cloneChild and cloneChild:IsA("BasePart") then
 
-                local motorRow = cloneMotorIndex[parentName]
-                local cloneMotor = motorRow and motorRow[childName] or nil
+                local cloneMotor = findJointMotor(overlay, parentName, childName)
                 local cloneC0, cloneC1
 
                 if cloneMotor then
@@ -7622,19 +7338,15 @@ function runtime.BeginAvatarCloneRespawnMask(char, generation)
         end)
 
         rebuildRespawnPoseCache()
-        local poseSafetyElapsed = 0
 
-        state.RespawnMaskConnection = RunService.RenderStepped:Connect(function(deltaTime)
+        state.RespawnMaskConnection = RunService.RenderStepped:Connect(function()
             if not valid() or state.Overlay ~= overlay or not overlay.Parent then
                 return
             end
 
-            -- XERO_PERF_RESPAWN_PERIODIC_SAFETY:
-            -- DescendantAdded/Removing marca dirty de inmediato. Esta pasada completa
-            -- queda sólo como red de seguridad cada 0.5 s, no 50-60 veces por segundo.
-            poseSafetyElapsed = poseSafetyElapsed + (tonumber(deltaTime) or 0)
-            if not poseCacheDirty and poseSafetyElapsed >= 0.5 then
-                poseSafetyElapsed = 0
+            -- Normalmente esto es falso. Sólo reconstruye el caché cuando Duels
+            -- realmente tocó la topología del rig durante el countdown.
+            if not poseCacheDirty then
                 for i = 1, #posePairs do
                     local pair = posePairs[i]
                     local motor = pair.LiveMotor
@@ -7653,7 +7365,6 @@ function runtime.BeginAvatarCloneRespawnMask(char, generation)
 
             if poseCacheDirty then
                 rebuildRespawnPoseCache()
-                poseSafetyElapsed = 0
             end
 
             if root and root.Parent then
@@ -7693,9 +7404,7 @@ function runtime.BeginAvatarCloneRespawnMask(char, generation)
 
             -- La máscara de respawn usa otro loop de pose. La Face clásica también
             -- debe tomar el Head ya actualizado de ESTE frame para no quedarse atrás.
-            if runtime.Appearance.FaceClassicVisuals[overlay] then
-                runtime.SyncFaceClassicVisual(overlay)
-            end
+            runtime.SyncFaceClassicVisual(overlay)
 
             if not state.NativeTransparencyBindName then
                 runtime.AvatarCloneEnforceBaseHidden(char)
@@ -7753,8 +7462,6 @@ function runtime.ClearAppearanceAccessoryGuard()
         list[i] = nil
     end
     runtime.Appearance.AccessoryGuardPending = false
-    runtime.Appearance.AccessoryGuardDirty = false
-    runtime.Appearance.AccessoryCloneRefreshPending = false
     runtime.Appearance.AccessoryGuardCharacter = nil
 end
 
@@ -7763,15 +7470,13 @@ function runtime.BindAppearanceAccessoryGuard(char, generation)
     if not char or not char.Parent then return end
     runtime.Appearance.AccessoryGuardCharacter = char
 
-    local queueEnsure
-
-    -- El clon tiene SU propia cola. Nunca vuelve a mantener ocupado el guard de
-    -- limiteds mientras espera state.Applying / handoff del overlay.
-    local function queueCloneRefresh()
-        if runtime.Appearance.AccessoryCloneRefreshPending then return end
-        runtime.Appearance.AccessoryCloneRefreshPending = true
+    local function queueEnsure()
+        if runtime.Appearance.AccessoryGuardPending then return end
+        runtime.Appearance.AccessoryGuardPending = true
 
         task.spawn(function()
+            -- Si el lobby limpia la apariencia justo durante un handoff del clon,
+            -- no perdemos el evento: esperamos a que termine y reponemos todo.
             local deadline = os.clock() + 2.5
             while runtime.Alive
                 and char == player.Character
@@ -7784,82 +7489,24 @@ function runtime.BindAppearanceAccessoryGuard(char, generation)
                 RunService.Heartbeat:Wait()
             end
 
-            runtime.Appearance.AccessoryCloneRefreshPending = false
+            runtime.Appearance.AccessoryGuardPending = false
             if not runtime.Alive or char ~= player.Character or not char.Parent then return end
             if generation and generation ~= runtime.Appearance.RespawnGeneration then return end
 
             local cloneState = runtime.Appearance.AvatarClone
             if cloneState and cloneState.Applying then
-                task.delay(0.12, queueCloneRefresh)
+                task.delay(0.12, queueEnsure)
                 return
             end
 
-            -- SEGUNDA VALIDACIÓN CRÍTICA: un limited pudo ser eliminado/re-soldado
-            -- mientras el clon estaba aplicándose. No ocultamos el avatar base hasta
-            -- comprobar de nuevo que todos los limiteds activos están realmente unidos.
-            local ready = runtime.FastEnsureAppearanceAccessories(char, generation, 0.35)
-            runtime.EnforceBodyAppearance(char)
-            runtime.ApplyHairRemoval(char)
+            runtime.Appearance.AttachmentCache[char] = nil
+            runtime.ReapplyAppearanceLayers(char)
 
             if cloneState and cloneState.Active and cloneState.Overlay and cloneState.Overlay.Parent then
                 runtime.AvatarCloneHideBase(char)
                 runtime.UpdateAvatarCloneLayers()
                 runtime.AvatarCloneBuildNativeTransparencyMap(char, cloneState.Overlay)
             end
-
-            if not ready then
-                task.delay(0.05, function()
-                    if runtime.Alive and char == player.Character and char.Parent then
-                        queueEnsure()
-                    end
-                end)
-            end
-        end)
-    end
-
-    queueEnsure = function()
-        if runtime.Appearance.AccessoryGuardPending then
-            -- Antes este evento se PERDÍA. Ahora queda marcado y fuerza otra pasada
-            -- apenas termine la que ya está ejecutándose.
-            runtime.Appearance.AccessoryGuardDirty = true
-            return
-        end
-
-        runtime.Appearance.AccessoryGuardPending = true
-        runtime.Appearance.AccessoryGuardDirty = false
-
-        task.spawn(function()
-            if not runtime.Alive or char ~= player.Character or not char.Parent then
-                runtime.Appearance.AccessoryGuardPending = false
-                return
-            end
-            if generation and generation ~= runtime.Appearance.RespawnGeneration then
-                runtime.Appearance.AccessoryGuardPending = false
-                return
-            end
-
-            local ready = runtime.FastEnsureAppearanceAccessories(char, generation, 0.45)
-            runtime.EnforceBodyAppearance(char)
-            runtime.ApplyHairRemoval(char)
-
-            -- Liberamos el pending ANTES de mirar Dirty. Si entra un evento justo aquí,
-            -- iniciará su propia pasada; si entró antes, Dirty ya quedó en true.
-            runtime.Appearance.AccessoryGuardPending = false
-            local rerun = runtime.Appearance.AccessoryGuardDirty
-            runtime.Appearance.AccessoryGuardDirty = false
-
-            if not runtime.Alive or char ~= player.Character or not char.Parent then return end
-            if generation and generation ~= runtime.Appearance.RespawnGeneration then return end
-
-            if rerun or not ready then
-                task.delay(0.03, function()
-                    if runtime.Alive and char == player.Character and char.Parent then
-                        queueEnsure()
-                    end
-                end)
-            end
-
-            queueCloneRefresh()
         end)
     end
 
@@ -7869,60 +7516,21 @@ function runtime.BindAppearanceAccessoryGuard(char, generation)
         if not key or runtime.Appearance.AccessoryGuardMutating[key] then return end
         if runtime.Appearance.Enabled[key] then
             runtime.Appearance.ActiveAccessories[key] = nil
-            runtime.Appearance.AccessoryWeld[child] = nil
-            queueEnsure()
-        end
-    end))
-
-    -- Si Roblox/DUELS rompe sólo el AccessoryWeld sin quitar el Accessory completo,
-    -- ChildRemoved no se dispara para el limited. Vigilamos también esa topología.
-    table_insert(runtime.Appearance.AccessoryGuardConnections, char.DescendantRemoving:Connect(function(obj)
-        if not hasEnabledAppearanceAccessory() then return end
-
-        local acc = obj:IsA("Accoutrement") and obj or obj:FindFirstAncestorWhichIsA("Accoutrement")
-        if acc then
-            local key = acc:GetAttribute("iLunXAppearanceKey")
-            if key and runtime.Appearance.Enabled[key] and not runtime.Appearance.AccessoryGuardMutating[key] then
-                if obj:IsA("Weld") or obj:IsA("WeldConstraint") or obj:IsA("Motor6D")
-                    or obj:IsA("Attachment") or obj:IsA("BasePart") then
-                    runtime.Appearance.AccessoryWeld[acc] = nil
-                    runtime.Appearance.AccessoryBaseWeld[acc] = nil
-                    queueEnsure()
-                end
-            end
-            return
-        end
-
-        -- Un body part/attachment destino también puede ser reemplazado sin quitar el
-        -- limited. La pasada posterior detectará que Weld.Part1 ya no es la pieza actual.
-        if obj:IsA("Attachment")
-            or (obj:IsA("BasePart") and (obj.Name == "Head"
-                or obj.Name == "UpperTorso" or obj.Name == "Torso"
-                or obj.Name == "RightUpperLeg" or obj.Name == "LeftUpperLeg")) then
-            runtime.Appearance.AttachmentCache[char] = nil
             queueEnsure()
         end
     end))
 
     -- Algunos juegos insertan Head/attachments por etapas. En cuanto aparece un
-    -- attachment corporal nuevo hacemos una comprobación coalescida.
+    -- attachment nuevo hacemos una única comprobación en el siguiente frame.
     table_insert(runtime.Appearance.AccessoryGuardConnections, char.DescendantAdded:Connect(function(obj)
         if obj:IsA("Attachment") and hasEnabledAppearanceAccessory() then
-            local cache = runtime.Appearance.AttachmentCache[char]
-            -- Sólo attachments de body parts directos del Character. Nunca el attachment
-            -- interno de un limited recién parentado (eso causaba self-welds aleatorios).
-            if cache and isAppearanceBodyAttachment(char, obj) then
-                cache[obj.Name] = obj
-            end
+            runtime.Appearance.AttachmentCache[char] = nil
             queueEnsure()
         elseif obj:IsA("BasePart")
             and (obj.Name == "Head"
-                or obj.Name == "UpperTorso"
-                or obj.Name == "Torso"
                 or obj.Name == "RightUpperLeg"
                 or obj.Name == "RightLowerLeg"
                 or obj.Name == "RightFoot") then
-            runtime.Appearance.AttachmentCache[char] = nil
             queueEnsure()
         end
     end))
@@ -8159,14 +7767,6 @@ function runtime.FastRestoreAppearanceOnRespawn(char, generation)
     if not runtime.Alive or not char.Parent then return end
     if generation and generation ~= runtime.Appearance.RespawnGeneration then return end
 
-    -- XERO_FAST_LIMITEDS_RESPAWN:
-    -- Los limiteds de Xero llevan iLunXAppearanceKey y AvatarCloneHideBase los excluye
-    -- expresamente del ocultado. Por eso no necesitan esperar los 4.5-7 s usados para
-    -- estabilizar el overlay del clon. Los reaplicamos en cuanto existen Head/attachments;
-    -- el apply definitivo del clon podrá repetir esta pasada después como protección.
-    runtime.ReapplyAppearanceLayers(char)
-    runtime.FastEnsureAppearanceAccessories(char, generation, 0.9)
-
     local cloneState = runtime.Appearance.AvatarClone
     if cloneState.Active
         and cloneState.KeepOnRespawn
@@ -8196,6 +7796,8 @@ function runtime.FastRestoreAppearanceOnRespawn(char, generation)
             runtime.ReapplyAppearanceLayers(char)
         end
         if generation and generation ~= runtime.Appearance.RespawnGeneration then return end
+    else
+        runtime.ReapplyAppearanceLayers(char)
     end
 end
 
@@ -8448,9 +8050,6 @@ pcall(function()
 
         task.defer(function()
             if runtime.Alive and char.Parent and generation == runtime.Appearance.RespawnGeneration then
-                -- CharacterAppearanceLoaded puede reemplazar attachments aunque el limited
-                -- ya hubiera aparecido en CharacterAdded. Revalidamos sólo sus welds.
-                runtime.FastEnsureAppearanceAccessories(char, generation, 0.45)
                 local cloneState = runtime.Appearance.AvatarClone
                 if cloneState.Active
                     and cloneState.KeepOnRespawn
@@ -11335,46 +10934,18 @@ local mState = {
     pAS = RaycastParams.new(),
     pSA = RaycastParams.new(),
     igHB = {},
-    igAS = {},
-    igSA = {},
+    igAS = {}, scAS = {}, seenAS = {},
+    igSA = {}, scSA = {}, seenSA = {},
     hbBlockedColor = Color3_fromRGB(255, 50, 50),
     hbByChar = setmetatable({}, {__mode = "k"}),
     hbAdornment = setmetatable({}, {__mode = "k"}),
-    -- XERO_SPIKE_GUARD: trabajo costoso de Instance creation/destruction se reparte
-    -- entre Heartbeats; el efecto se neutraliza inmediatamente al limpiar.
-    hbLegacyScanned = setmetatable({}, {__mode = "k"}),
-    hbCreateQueue = {},
-    hbCreatePending = setmetatable({}, {__mode = "k"}),
-    hbCleanupQueue = {},
-    hbCleanupPending = setmetatable({}, {__mode = "k"}),
-    hbSpikeWorkerRunning = false,
-    autoShootHeavyDue = false,
     charCore = setmetatable({}, {__mode = "k"}),
-    enemySnapshot = {},
-    enemySnapshotCount = 0,
-    enemySnapshotReady = false,
-    equippedTool = nil,
-    toolChar = nil,
-    toolAddedConnection = nil,
-    toolRemovedConnection = nil,
     vpX = -1, vpY = -1, centerX = 0, centerY = 0,
     maxEspDistanceSq = MAX_ESP_DISTANCE * MAX_ESP_DISTANCE,
 }
 mState.pHB.FilterType = Enum.RaycastFilterType.Exclude
 mState.pAS.FilterType = Enum.RaycastFilterType.Exclude
 mState.pSA.FilterType = Enum.RaycastFilterType.Exclude
-
-function runtime.DisconnectCharCoreSignals(core)
-    if not core then return end
-    local keys = {"ForceFieldAddedConnection", "ForceFieldRemovedConnection", "AncestryConnection"}
-    for i = 1, #keys do
-        local connection = core[keys[i]]
-        if connection then
-            pcall(function() connection:Disconnect() end)
-            core[keys[i]] = nil
-        end
-    end
-end
 
 local function getCharCore(char)
     if not char then return nil end
@@ -11385,48 +10956,23 @@ local function getCharCore(char)
         if not core.RightFoot or core.RightFoot.Parent ~= char then core.RightFoot = ffc(char, "RightFoot") or ffc(char, "RightLeg") end
         return core
     end
-
-    if core then runtime.DisconnectCharCoreSignals(core) end
     core = {
         Humanoid = ffc(char, "Humanoid") or char:FindFirstChildOfClass("Humanoid"),
         HRP = ffc(char, "HumanoidRootPart"),
         Head = ffc(char, "Head"),
         LeftFoot = ffc(char, "LeftFoot") or ffc(char, "LeftLeg"),
         RightFoot = ffc(char, "RightFoot") or ffc(char, "RightLeg"),
-        HasForceField = char:FindFirstChildOfClass("ForceField") ~= nil,
     }
-
-    -- Enemy lobby cache event-driven: evita FindFirstChildOfClass("ForceField")
-    -- en ESP/Aimbot varias veces por frame.
-    core.ForceFieldAddedConnection = runtime.Track(char.ChildAdded:Connect(function(child)
-        if child:IsA("ForceField") then core.HasForceField = true end
-    end))
-    core.ForceFieldRemovedConnection = runtime.Track(char.ChildRemoved:Connect(function(child)
-        if child:IsA("ForceField") then
-            core.HasForceField = char:FindFirstChildOfClass("ForceField") ~= nil
-        end
-    end))
-    core.AncestryConnection = runtime.Track(char.AncestryChanged:Connect(function(_, parent)
-        if parent then return end
-        if mState.charCore[char] == core then mState.charCore[char] = nil end
-        runtime.DisconnectCharCoreSignals(core)
-        task.defer(function()
-            if runtime.Alive then runtime.PruneConnections() end
-        end)
-    end))
-
     mState.charCore[char] = core
     return core
 end
 
-local function enemigoEnLobby(enemyChar, enemyHrp, knownCore)
-    if not enemyChar then return true end
-    local core = knownCore or getCharCore(enemyChar)
-    if core and core.HasForceField then return true end
+local function enemigoEnLobby(enemyChar, enemyHrp)
+    if enemyChar:FindFirstChildOfClass("ForceField") then return true end
+    local core = enemyHrp and nil or getCharCore(enemyChar)
     local eHrp = enemyHrp or (core and core.HRP)
     if eHrp then
-        for i = 1, #ZONAS_SEGURAS do
-            local zona = ZONAS_SEGURAS[i]
+        for _, zona in ipairs(ZONAS_SEGURAS) do
             local delta = eHrp.Position - zona.Centro
             if delta:Dot(delta) <= zona.RadioSq then return true end
         end
@@ -11434,239 +10980,10 @@ local function enemigoEnLobby(enemyChar, enemyHrp, knownCore)
     return false
 end
 
--- Tool equipado cacheado por eventos. AutoShoot y SilentAim sólo leen una referencia.
-runtime.BindEquippedToolCache = function(char)
-    if mState.toolAddedConnection then
-        pcall(function() mState.toolAddedConnection:Disconnect() end)
-        mState.toolAddedConnection = nil
-    end
-    if mState.toolRemovedConnection then
-        pcall(function() mState.toolRemovedConnection:Disconnect() end)
-        mState.toolRemovedConnection = nil
-    end
-
-    mState.toolChar = char
-    mState.equippedTool = char and char:FindFirstChildOfClass("Tool") or nil
-    if char then
-        mState.toolAddedConnection = runtime.Track(char.ChildAdded:Connect(function(child)
-            if child:IsA("Tool") then mState.equippedTool = child end
-        end))
-        mState.toolRemovedConnection = runtime.Track(char.ChildRemoved:Connect(function(child)
-            if child == mState.equippedTool then
-                mState.equippedTool = char:FindFirstChildOfClass("Tool")
-            end
-        end))
-    end
-    runtime.PruneConnections()
-end
-runtime.Track(player.CharacterAdded:Connect(function(char)
-    runtime.BindEquippedToolCache(char)
-end))
-runtime.BindEquippedToolCache(player.Character)
-
--- Snapshot reutilizado sólo dentro del Heartbeat ACTUAL. Nunca conserva posiciones
--- entre frames: comparte validación Character/Humanoid/HRP/isEnemy entre módulos.
-function runtime.GetEnemySnapshot()
-    if mState.enemySnapshotReady then
-        return mState.enemySnapshot, mState.enemySnapshotCount
-    end
-
-    local snapshot = mState.enemySnapshot
-    local previousCount = mState.enemySnapshotCount
-    local count = 0
-    for i = 1, #listaJugadores do
-        local p = listaJugadores[i]
-        if p ~= player then
-            count = count + 1
-            local entry = snapshot[count]
-            if not entry then
-                entry = {}
-                snapshot[count] = entry
-            end
-
-            local char = p.Character
-            local core = char and getCharCore(char) or nil
-            local hrp = core and core.HRP or nil
-            local hum = core and core.Humanoid or nil
-            local alive = hrp ~= nil and hum ~= nil and hum.Health > 0
-
-            entry.Player = p
-            entry.Character = char
-            entry.Core = core
-            entry.HRP = hrp
-            entry.Humanoid = hum
-            entry.Head = core and core.Head or nil
-            entry.Alive = alive
-            entry.Enemy = alive and isEnemy(p) or false
-            entry.SafeZone = nil
-        end
-    end
-
-    for i = count + 1, previousCount do
-        snapshot[i] = nil
-    end
-    mState.enemySnapshotCount = count
-    mState.enemySnapshotReady = true
-    return snapshot, count
-end
-
-function runtime.SnapshotEntryInSafeZone(entry)
-    if entry.SafeZone == nil then
-        entry.SafeZone = entry.Alive and enemigoEnLobby(entry.Character, entry.HRP, entry.Core) or true
-    end
-    return entry.SafeZone
-end
-
 
 -- Variables en caché fuera del Heartbeat
 local enLobby = false
 local timerLobby = 0
-
--- ==========================================
--- XERO_SPIKE_GUARD · amortización de picos de Hitbox
--- ==========================================
--- Sólo escaneamos basura legacy una vez por Character. Antes, un enemigo inválido
--- sin hitbox cacheada podía provocar GetChildren() cada 0.15 s.
-function runtime.GetCachedHitbox(char)
-    if not char then return nil end
-    local cached = mState.hbByChar[char]
-    if cached and cached.Parent == char then return cached end
-    mState.hbByChar[char] = nil
-
-    if mState.hbLegacyScanned[char] then return nil end
-    mState.hbLegacyScanned[char] = true
-    for _, child in ipairs(char:GetChildren()) do
-        if child:GetAttribute("EsAstraHitbox") then
-            mState.hbByChar[char] = child
-            return child
-        end
-    end
-    return nil
-end
-
-function runtime.QueueHitboxDestroy(hitbox)
-    if not hitbox or mState.hbCleanupPending[hitbox] then return end
-    mState.hbCleanupPending[hitbox] = true
-
-    -- La hitbox deja de afectar gameplay AHORA; Destroy puede esperar otro frame.
-    pcall(function()
-        local box = mState.hbAdornment[hitbox] or hitbox:FindFirstChild("AstraHitboxBox")
-        if box then box.Visible = false end
-        if hitbox:IsA("BasePart") then
-            hitbox.CanTouch = false
-            hitbox.CanQuery = false
-            hitbox.CanCollide = false
-            hitbox.Transparency = 1
-        end
-    end)
-    mState.hbCleanupQueue[#mState.hbCleanupQueue + 1] = hitbox
-    runtime.EnsureHitboxSpikeWorker()
-end
-
-function runtime.QueueHitboxCreate(targetPlayer, char, hrp)
-    if not targetPlayer or not char or not hrp or mState.hbCreatePending[char] then return end
-    if runtime.GetCachedHitbox(char) then return end
-    mState.hbCreatePending[char] = true
-    mState.hbCreateQueue[#mState.hbCreateQueue + 1] = {Player = targetPlayer, Character = char, HRP = hrp}
-    runtime.EnsureHitboxSpikeWorker()
-end
-
-function runtime.CreateQueuedHitbox(entry)
-    if not entry or not hitboxEnabled or enLobby then return nil end
-    local targetPlayer = entry.Player
-    local char = entry.Character
-    local hrp = entry.HRP
-    if not targetPlayer or targetPlayer.Character ~= char or not char or not char.Parent
-        or not hrp or hrp.Parent ~= char then return nil end
-
-    local core = getCharCore(char)
-    local humanoid = core and core.Humanoid
-    if not humanoid or humanoid.Health <= 0 or not isEnemy(targetPlayer) then return nil end
-
-    local existing = runtime.GetCachedHitbox(char)
-    if existing then return existing end
-
-    local targetSize = Vector3_new(hitboxSize, hitboxSize, hitboxSize)
-    local fakeHitbox = Instance.new("Part")
-    fakeHitbox.Name = "Torso"
-    fakeHitbox:SetAttribute("EsAstraHitbox", true)
-    fakeHitbox.Shape = Enum.PartType.Block
-    fakeHitbox.Size = targetSize
-    fakeHitbox.CFrame = hrp.CFrame
-    fakeHitbox.Massless = true
-    fakeHitbox.CanCollide = false
-    fakeHitbox.Anchored = false
-    fakeHitbox.Transparency = 1
-    fakeHitbox.Parent = char
-
-    local weld = Instance.new("WeldConstraint")
-    weld.Part0 = hrp
-    weld.Part1 = fakeHitbox
-    weld.Parent = fakeHitbox
-
-    local box = Instance.new("BoxHandleAdornment")
-    box.Name = "AstraHitboxBox"
-    box.Adornee = fakeHitbox
-    box.AlwaysOnTop = true
-    box.ZIndex = 5
-    box.Size = targetSize
-    box.Color3 = mState.hbBlockedColor
-    box.Transparency = hitboxInvisible and 1 or (hitboxTransparency or 0.6)
-    box.Visible = not hitboxInvisible
-    box.Parent = fakeHitbox
-
-    mState.hbByChar[char] = fakeHitbox
-    mState.hbAdornment[fakeHitbox] = box
-    return fakeHitbox
-end
-
-function runtime.EnsureHitboxSpikeWorker()
-    if mState.hbSpikeWorkerRunning then return end
-    mState.hbSpikeWorkerRunning = true
-
-    task.spawn(function()
-        while runtime.Alive and (#mState.hbCleanupQueue > 0 or #mState.hbCreateQueue > 0) do
-            RunService.Heartbeat:Wait()
-            if not runtime.Alive then break end
-
-            -- Destrucción: el efecto ya fue neutralizado al encolar. Máximo 2 Instances/frame.
-            for _ = 1, 2 do
-                local index = #mState.hbCleanupQueue
-                if index == 0 then break end
-                local hitbox = mState.hbCleanupQueue[index]
-                mState.hbCleanupQueue[index] = nil
-                mState.hbCleanupPending[hitbox] = nil
-                mState.hbAdornment[hitbox] = nil
-                if hitbox and hitbox.Parent then pcall(function() hitbox:Destroy() end) end
-            end
-
-            -- Creación: una por frame y nunca pegada a un tick pesado de AutoShoot.
-            if #mState.hbCreateQueue > 0 and not mState.autoShootHeavyDue
-                and not ((autoShootEnabled or autoShootCuchilloEnabled) and mState.tAS >= 0.12) then
-                local index = #mState.hbCreateQueue
-                local entry = mState.hbCreateQueue[index]
-                mState.hbCreateQueue[index] = nil
-                if entry and entry.Character then mState.hbCreatePending[entry.Character] = nil end
-                runtime.CreateQueuedHitbox(entry)
-            end
-
-        end
-
-        -- Las entradas que no llegaron a procesarse no deben bloquear una futura ronda.
-        for i = 1, #mState.hbCreateQueue do
-            local entry = mState.hbCreateQueue[i]
-            if entry and entry.Character then mState.hbCreatePending[entry.Character] = nil end
-        end
-        table.clear(mState.hbCreateQueue)
-        table.clear(mState.hbCleanupQueue)
-        mState.hbSpikeWorkerRunning = false
-
-        -- Si entró trabajo justo al salir del while, arranca otro worker.
-        if runtime.Alive and (#mState.hbCleanupQueue > 0 or #mState.hbCreateQueue > 0) then
-            runtime.EnsureHitboxSpikeWorker()
-        end
-    end)
-end
 
 runtime.Track(RunService.Heartbeat:Connect(function(deltaTime)
     -- XERO_PERF_IDLE_HEARTBEAT: con las cuatro familias apagadas no hacemos
@@ -11682,7 +10999,6 @@ runtime.Track(RunService.Heartbeat:Connect(function(deltaTime)
         return
     end
 
-    mState.enemySnapshotReady = false
     local camera = workspace.CurrentCamera -- 🔥 FIX: Siempre la cámara actual
     timerLobby = timerLobby + deltaTime
     if timerLobby >= 1 then
@@ -11690,44 +11006,68 @@ runtime.Track(RunService.Heartbeat:Connect(function(deltaTime)
         pcall(function() enLobby = estaEnLobby() end)
     end
 
-    -- AutoShoot tiene prioridad cuando ambas tareas de 0.15 s caen en el mismo frame.
-    -- Hitbox conserva su timer vencido y corre en el Heartbeat siguiente (~1 frame).
-    mState.autoShootHeavyDue = not enLobby
-        and (autoShootEnabled or autoShootCuchilloEnabled)
-        and (mState.tAS + deltaTime >= 0.15)
-
     -- ==========================================
     -- 1. HITBOX (0.15s) - FIX VISUAL + WELD
     -- ==========================================
     if hitboxEnabled then
         mState.hbAct = true
         mState.tHB = mState.tHB + deltaTime
-        if mState.tHB >= 0.15 and not mState.autoShootHeavyDue then
+        if mState.tHB >= 0.15 then
             mState.tHB = 0
             if not enLobby then
                 local myChar = player.Character
-                local myCore = myChar and getCharCore(myChar) or nil
-                local myHead = myCore and myCore.Head
+                local myHead = myChar and myChar:FindFirstChild("Head")
                 local origin = camera.CFrame.Position 
                 local targetSize = Vector3_new(hitboxSize, hitboxSize, hitboxSize)
                 mState.igHB[1] = myChar
                 
-                local enemies, enemyCount = runtime.GetEnemySnapshot()
-                for i = 1, enemyCount do
-                    local enemy = enemies[i]
-                    local v = enemy.Player
-                    local targetChar = enemy.Character
-                    local targetCore = enemy.Core
-                    local hrp = enemy.HRP
-                    local targetHum = enemy.Humanoid
+                for i = 1, #listaJugadores do
+                    local v = listaJugadores[i]
+                    local targetChar = v ~= player and v.Character or nil
+                    local targetCore = targetChar and getCharCore(targetChar) or nil
+                    local hrp = targetCore and targetCore.HRP
+                    local targetHum = targetCore and targetCore.Humanoid
                     
-                    if enemy.Alive and enemy.Enemy then
-                        -- 1. Reutiliza el bloque existente. Crear 3-6 Instances de golpe
-                        -- era uno de los picos al empezar ronda; ahora se crea 1 enemigo/frame.
-                        local fakeHitbox = runtime.GetCachedHitbox(targetChar)
+                    if hrp and targetHum and targetHum.Health > 0 and isEnemy(v) then
+                        -- 1. BUSCAMOS O CREAMOS EL BLOQUE FALSO
+                        local fakeHitbox = mState.hbByChar[targetChar]
+                        if not (fakeHitbox and fakeHitbox.Parent == targetChar) then
+                            fakeHitbox = nil
+                            for _, child in ipairs(targetChar:GetChildren()) do
+                                if child:GetAttribute("EsAstraHitbox") then
+                                    fakeHitbox = child
+                                    break
+                                end
+                            end
+                            mState.hbByChar[targetChar] = fakeHitbox
+                        end
+
                         if not fakeHitbox then
-                            runtime.QueueHitboxCreate(v, targetChar, hrp)
-                            continue
+                            fakeHitbox = Instance.new("Part")
+                            fakeHitbox.Name = "Torso" -- 🔥 EL TRUCO: El juego lo acepta como cuerpo válido y el cuchillo NO rebota
+                            fakeHitbox:SetAttribute("EsAstraHitbox", true)
+                            fakeHitbox.Shape = Enum.PartType.Block
+                            fakeHitbox.Size = targetSize
+                            fakeHitbox.CFrame = hrp.CFrame 
+                            fakeHitbox.Massless = true
+                            fakeHitbox.CanCollide = false
+                            fakeHitbox.Anchored = false
+                            fakeHitbox.Transparency = 1 
+                            fakeHitbox.Parent = targetChar 
+                            
+                            local weld = Instance.new("WeldConstraint")
+                            weld.Part0 = hrp
+                            weld.Part1 = fakeHitbox
+                            weld.Parent = fakeHitbox
+                            
+                            local box = Instance.new("BoxHandleAdornment") 
+                            box.Name = "AstraHitboxBox" 
+                            box.Adornee = fakeHitbox 
+                            box.AlwaysOnTop = true 
+                            box.ZIndex = 5 
+                            box.Parent = fakeHitbox
+                            mState.hbByChar[targetChar] = fakeHitbox
+                            mState.hbAdornment[fakeHitbox] = box
                         end
                         
                         -- 2. ACTUALIZAMOS TAMAÑO FÍSICO
@@ -11764,20 +11104,30 @@ runtime.Track(RunService.Heartbeat:Connect(function(deltaTime)
                             if box.Visible ~= not hitboxInvisible then box.Visible = not hitboxInvisible end
                         end -- 🔥 AQUÍ ESTÁ EL END QUE FALTABA
                     elseif targetChar then
-                        -- Neutraliza instantáneo y reparte Destroy entre frames.
-                        local cachedHitbox = runtime.GetCachedHitbox(targetChar)
-                        if cachedHitbox then runtime.QueueHitboxDestroy(cachedHitbox) end
+                        -- Limpieza automática con caché; el escaneo queda sólo como fallback legacy.
+                        local cachedHitbox = mState.hbByChar[targetChar]
+                        if cachedHitbox and cachedHitbox.Parent then cachedHitbox:Destroy() end
                         mState.hbByChar[targetChar] = nil
+                        if not cachedHitbox then
+                            for _, child in ipairs(targetChar:GetChildren()) do
+                                if child:GetAttribute("EsAstraHitbox") then child:Destroy() end
+                            end
+                        end
                     end
                 end
             else
-                -- LOBBY: desactiva todas inmediatamente; Destroy queda amortizado.
+                -- 🔥 LIMPIEZA LOBBY: BORRAMOS LAS HITBOXES QUE QUEDARON PEGADAS
                 for i = 1, #listaJugadores do
                     local v = listaJugadores[i]
                     if v ~= player and v.Character then
-                        local cachedHitbox = runtime.GetCachedHitbox(v.Character)
-                        if cachedHitbox then runtime.QueueHitboxDestroy(cachedHitbox) end
+                        local cachedHitbox = mState.hbByChar[v.Character]
+                        if cachedHitbox and cachedHitbox.Parent then cachedHitbox:Destroy() end
                         mState.hbByChar[v.Character] = nil
+                        if not cachedHitbox then
+                            for _, child in ipairs(v.Character:GetChildren()) do
+                                if child:GetAttribute("EsAstraHitbox") then child:Destroy() end
+                            end
+                        end
                     end
                 end
             end
@@ -11785,13 +11135,18 @@ runtime.Track(RunService.Heartbeat:Connect(function(deltaTime)
     elseif mState.hbAct then
         mState.hbAct = false
         mState.tHB = 0
-        -- LIMPIEZA: el efecto se apaga ya; las destrucciones se reparten.
+        -- LIMPIEZA: Destruimos los bloques falsos cuando se apaga el Hitbox
         for i = 1, #listaJugadores do
             local v = listaJugadores[i]
             if v ~= player and v.Character then
-                local cachedHitbox = runtime.GetCachedHitbox(v.Character)
-                if cachedHitbox then runtime.QueueHitboxDestroy(cachedHitbox) end
+                local cachedHitbox = mState.hbByChar[v.Character]
+                if cachedHitbox and cachedHitbox.Parent then cachedHitbox:Destroy() end
                 mState.hbByChar[v.Character] = nil
+                if not cachedHitbox then
+                    for _, child in ipairs(v.Character:GetChildren()) do
+                        if child:GetAttribute("EsAstraHitbox") then child:Destroy() end
+                    end
+                end
                 
                 -- Limpieza por si quedó basura del script anterior
                 local hrp = v.Character:FindFirstChild("HumanoidRootPart")
@@ -11803,7 +11158,6 @@ runtime.Track(RunService.Heartbeat:Connect(function(deltaTime)
             end
         end
     end
-
 
     -- ==========================================
     -- 2. ESP (0.25s): 4 actualizaciones/s son suficientes para etiquetas.
@@ -11828,15 +11182,14 @@ runtime.Track(RunService.Heartbeat:Connect(function(deltaTime)
                     )
                 end
 
-                local enemies, enemyCount = runtime.GetEnemySnapshot()
-                for i = 1, enemyCount do
-                    local enemy = enemies[i]
-                    local p = enemy.Player
-                    local char = enemy.Character
-                    local core = enemy.Core
-                    local targetHum = enemy.Humanoid
-                    local targetHead = enemy.Head
-                    if myPos and enemy.Alive and targetHead and (enLobby or enemy.Enemy) then
+                for i = 1, #listaJugadores do
+                    local p = listaJugadores[i]
+                    if p ~= player then
+                        local char = p.Character
+                        local core = char and getCharCore(char) or nil
+                        local targetHum = core and core.Humanoid
+                        local targetHead = core and core.Head
+                        if myPos and targetHum and targetHum.Health > 0 and targetHead and isEnemy(p) and not enemigoEnLobby(char, core.HRP) then
                             local delta = targetHead.Position - myPos
                             local distSq = delta:Dot(delta)
                             
@@ -11862,7 +11215,7 @@ runtime.Track(RunService.Heartbeat:Connect(function(deltaTime)
                                     highlight.OutlineTransparency = 1 
                                     highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop 
                                     highlight.Adornee = char 
-                                    highlight.Parent = char
+                                    highlight.Parent = espFolder
                                     
                                     local billboard = Instance.new("BillboardGui") 
                                     billboard.Name = p.Name.."_Tag" 
@@ -11937,6 +11290,7 @@ runtime.Track(RunService.Heartbeat:Connect(function(deltaTime)
                                 end
                             else hideESP(p) end
                         else hideESP(p) end
+                    end
                 end
             end
         end
@@ -11945,7 +11299,6 @@ runtime.Track(RunService.Heartbeat:Connect(function(deltaTime)
         mState.tESP = 0
         for i = 1, #listaJugadores do hideESP(listaJugadores[i]) end
     end
-
 
     -- ==========================================
     -- 3. AUTO SHOOT (0.15s)
@@ -11960,8 +11313,7 @@ runtime.Track(RunService.Heartbeat:Connect(function(deltaTime)
                 local localCore = char and getCharCore(char) or nil
                 local hrp = localCore and localCore.HRP
                 if hrp then
-                    local arma = (mState.toolChar == char) and mState.equippedTool or char:FindFirstChildOfClass("Tool")
-                    if arma and arma.Parent ~= char then arma = nil end
+                    local arma = char:FindFirstChildOfClass("Tool")
                     if arma and arma:FindFirstChild("Handle") then
                         local esGun = esLaPistola(arma)
                         if (esGun and autoShootEnabled) or (not esGun and autoShootCuchilloEnabled) then
@@ -11974,27 +11326,26 @@ runtime.Track(RunService.Heartbeat:Connect(function(deltaTime)
 
                             -- Seleccionar el visible más cercano no requiere crear N tablas,
                             -- ordenar N candidatos y reciclarlos: basta conservar el mejor.
-                            local enemies, enemyCount = runtime.GetEnemySnapshot()
-                            for i = 1, enemyCount do
-                                local enemy = enemies[i]
-                                local enemyChar = enemy.Character
-                                local enemyHrp = enemy.HRP
-                                if enemy.Alive and enemy.Enemy and enemyHrp then
-                                    local enemyDelta = enemyHrp.Position - myPos
-                                    if enemyDelta:Dot(enemyDelta) <= 640000 then
-                                        local targetParts = runtime.CollectTargetParts(enemyChar, "AutoShoot")
-                                        if targetParts then
-                                            for j = 1, #targetParts do
-                                                local part = targetParts[j]
-                                                local partDelta = part.Position - myPos
-                                                local distSq = partDelta:Dot(partDelta)
-                                                if distSq < closestTargetDistSq then
-                                                    mState.igAS[2] = enemyChar
-                                                    mState.pAS.FilterDescendantsInstances = mState.igAS
-                                                    if not ws_Raycast(workspace, headPos, part.Position - headPos, mState.pAS) then
-                                                        closestTargetDistSq = distSq
-                                                        closestTargetPart = part
-                                                    end
+                            for i = 1, #listaJugadores do
+                                local p = listaJugadores[i]
+                                local enemyChar = p ~= player and p.Character or nil
+                                if enemyChar and isEnemy(p) then
+                                    local enemyCore = getCharCore(enemyChar)
+                                    local enemyHrp = enemyCore and enemyCore.HRP
+                                    local enemyHum = enemyCore and enemyCore.Humanoid
+                                    local enemyDelta = enemyHrp and (enemyHrp.Position - myPos) or nil
+                                    if enemyHum and enemyHum.Health > 0 and enemyDelta and enemyDelta:Dot(enemyDelta) <= 640000 then
+                                        runtime.CollectTargetParts(enemyChar, "AutoShoot", mState.scAS, mState.seenAS)
+                                        for j = 1, #mState.scAS do
+                                            local part = mState.scAS[j]
+                                            local partDelta = part.Position - myPos
+                                            local distSq = partDelta:Dot(partDelta)
+                                            if distSq < closestTargetDistSq then
+                                                mState.igAS[2] = enemyChar
+                                                mState.pAS.FilterDescendantsInstances = mState.igAS
+                                                if not ws_Raycast(workspace, headPos, part.Position - headPos, mState.pAS) then
+                                                    closestTargetDistSq = distSq
+                                                    closestTargetPart = part
                                                 end
                                             end
                                         end
@@ -12022,7 +11373,6 @@ runtime.Track(RunService.Heartbeat:Connect(function(deltaTime)
         aimHookState.Target = nil
     end
 
-
     -- ==========================================
     -- 4. SILENT AIM (0.03s · ~33 Hz)
     -- ==========================================
@@ -12036,8 +11386,7 @@ runtime.Track(RunService.Heartbeat:Connect(function(deltaTime)
                 local localCore = char and getCharCore(char) or nil
                 local hrp = localCore and localCore.HRP
                 if hrp then
-                    local arma = (mState.toolChar == char) and mState.equippedTool or char:FindFirstChildOfClass("Tool")
-                    if arma and arma.Parent ~= char then arma = nil end
+                    local arma = char:FindFirstChildOfClass("Tool")
                     local allowedWeapon = false
                     if arma then
                         local esGun = esLaPistola(arma)
@@ -12064,47 +11413,48 @@ runtime.Track(RunService.Heartbeat:Connect(function(deltaTime)
                         
                         mState.igSA[1] = char
 
-                        local enemies, enemyCount = runtime.GetEnemySnapshot()
-                        for i = 1, enemyCount do 
-                            local enemy = enemies[i]
-                            local enemyChar = enemy.Character
-                            local enemyHrp = enemy.HRP
-                            if enemy.Alive and enemy.Enemy and enemyHrp then
-                                local enemyDelta = enemyHrp.Position - myPos
-                                if enemyDelta:Dot(enemyDelta) <= 640000 then
+                        for i = 1, #listaJugadores do 
+                            local p = listaJugadores[i]
+                            local enemyChar = p ~= player and p.Character or nil
+                            if enemyChar and isEnemy(p) then
+                                local enemyCore = getCharCore(enemyChar)
+                                local enemyHum = enemyCore and enemyCore.Humanoid
+                                local enemyHrp = enemyCore and enemyCore.HRP
+                                local enemyDelta = enemyHrp and (enemyHrp.Position - myPos) or nil
+                                if enemyHum and enemyHum.Health > 0 and enemyDelta and enemyDelta:Dot(enemyDelta) <= 640000 then
                                     if silentAimFovEnabled then
                                         local hrpPos2D, onScreen = camera:WorldToViewportPoint(enemyHrp.Position)
                                         local dx, dy = hrpPos2D.X - centerX, hrpPos2D.Y - centerY
                                         if not onScreen or (dx * dx + dy * dy) > broadFovSq then continue end
                                     end
 
-                                    local targetParts = runtime.CollectTargetParts(enemyChar, "SilentAim")
+                                    runtime.CollectTargetParts(enemyChar, "SilentAim", mState.scSA, mState.seenSA)
+
                                     mState.igSA[2] = enemyChar 
                                     mState.pSA.FilterDescendantsInstances = mState.igSA
                                     
-                                    if targetParts then
-                                        for j = 1, #targetParts do
-                                            local part = targetParts[j]
-                                            local pasaFiltro = false
-                                            local candidateDistance = math.huge
-                                            
-                                            if silentAimFovEnabled then
-                                                local hrpPos2D, onScreen = camera:WorldToViewportPoint(part.Position)
-                                                if onScreen then
-                                                    local dx, dy = hrpPos2D.X - centerX, hrpPos2D.Y - centerY 
-                                                    candidateDistance = dx * dx + dy * dy
-                                                    if candidateDistance <= fovSq and candidateDistance < shortestDistToCenter then pasaFiltro = true end
-                                                end
-                                            else
-                                                local partDelta = part.Position - myPos
-                                                candidateDistance = partDelta:Dot(partDelta)
-                                                if candidateDistance < shortestDistanceFisica then pasaFiltro = true end
+                                    for j = 1, #mState.scSA do
+                                        local part = mState.scSA[j]
+                                        local pasaFiltro = false
+                                        local candidateDistance = math.huge
+                                        
+                                        if silentAimFovEnabled then
+                                            local hrpPos2D, onScreen = camera:WorldToViewportPoint(part.Position)
+                                            if onScreen then
+                                                -- Cambiamos pos2D por hrpPos2D
+                                                local dx, dy = hrpPos2D.X - centerX, hrpPos2D.Y - centerY 
+                                                candidateDistance = dx * dx + dy * dy
+                                                if candidateDistance <= fovSq and candidateDistance < shortestDistToCenter then pasaFiltro = true end
                                             end
-                                            
-                                            if pasaFiltro and not ws_Raycast(workspace, headPos, part.Position - headPos, mState.pSA) then
-                                                if silentAimFovEnabled then shortestDistToCenter = candidateDistance else shortestDistanceFisica = candidateDistance end
-                                                closestTargetPart = part
-                                            end
+                                        else
+                                            local partDelta = part.Position - myPos
+                                            candidateDistance = partDelta:Dot(partDelta)
+                                            if candidateDistance < shortestDistanceFisica then pasaFiltro = true end
+                                        end
+                                        
+                                        if pasaFiltro and not ws_Raycast(workspace, headPos, part.Position - headPos, mState.pSA) then
+                                            if silentAimFovEnabled then shortestDistToCenter = candidateDistance else shortestDistanceFisica = candidateDistance end
+                                            closestTargetPart = part
                                         end
                                     end
                                 end
@@ -12250,10 +11600,7 @@ UIElements.TogShowFOV = Tabs.Aim:Toggle({
     Title = "Mostrar Círculo FOV",
     Desc = "Dibuja un círculo en pantalla para saber dónde funciona tu Silent Aim.",
     Value = false,
-    Callback = function(Value)
-        fovVisiblePreference = Value
-        if runtime.UpdateESP2DRenderConnection then runtime.UpdateESP2DRenderConnection() end
-    end,
+    Callback = function(Value) fovVisiblePreference = Value end,
 })
 
 Tabs.Aim:Section({Title = "Campo de visión"})
@@ -12263,6 +11610,8 @@ UIElements.SliFOVSize = Tabs.Aim:Slider({
     Value = {Min = 10, Max = 800, Default = 120}, 
     Callback = function(v) fovRadius = v end
 })
+
+
 
 
 -- ==========================================
@@ -14606,7 +13955,7 @@ UIElements.SliHitboxTrans = Tabs.Aim:Slider({
 
 local spoofLoop = nil
 local isWorkspaceLooping = false
-local originalData = setmetatable({}, {__mode = "k"})
+local originalData = {}
 
 function safeReplace(str, find, replace) local safeFind = find:gsub("[%-%^%$%(%)%%%.%[%]%*%+%?]", "%%%1") return (str:gsub(safeFind, replace)) end
 function processText(v, myName, myDisp)
@@ -14648,40 +13997,31 @@ function processText(v, myName, myDisp)
         end
     end
 end
-runtime.VisualConnections = runtime.VisualConnections or {} -- conexiones del spoofer fuera del scope principal
-runtime.VisualInitialScanDone = false
+local visualConnections = {} -- 🚀 Nueva tabla para guardar eventos
 
 function updateSystem()
     local myName = player.Name 
     local myDisp = player.DisplayName
     local visualActive = hideNameEnabled or fakeNameEnabled or rainbowEnabled or creatorTagEnabled
 
-    -- Un GetDescendants completo sólo en la transición apagado -> activo.
-    -- Cambiar fake name/rainbow/tag mientras ya está activo reprocesa únicamente
-    -- los textos conocidos; DescendantAdded se encarga de los nuevos.
+    -- El escaneo amplio sólo tiene sentido al ACTIVAR/modificar una capa visual.
+    -- Al apagar todo restauramos el caché directamente, sin volver a recorrer UI/avatares.
     if visualActive then
-        if not runtime.VisualInitialScanDone then
-            runtime.VisualInitialScanDone = true
-            task.spawn(function() 
-                for _, p in ipairs(listaJugadores) do
-                    if p.Character then
-                        for _, v in pairs(p.Character:GetDescendants()) do
-                            if v:IsA("TextLabel") or v:IsA("TextBox") then processText(v, myName, myDisp) end
-                        end
-                    end
+        task.spawn(function() 
+        for _, p in ipairs(listaJugadores) do
+            if p.Character then
+                for _, v in pairs(p.Character:GetDescendants()) do
+                    if v:IsA("TextLabel") or v:IsA("TextBox") then processText(v, myName, myDisp) end
                 end
-                local pGui = player:FindFirstChild("PlayerGui")
-                if pGui then
-                    for _, v in pairs(pGui:GetDescendants()) do
-                        if v:IsA("TextLabel") or v:IsA("TextBox") then processText(v, myName, myDisp) end
-                    end
-                end
-            end)
-        else
-            for v in pairs(originalData) do
-                if v and v.Parent then processText(v, myName, myDisp) end
             end
         end
+        local pGui = player:FindFirstChild("PlayerGui")
+        if pGui then
+            for _, v in pairs(pGui:GetDescendants()) do
+                if v:IsA("TextLabel") or v:IsA("TextBox") then processText(v, myName, myDisp) end
+            end
+        end
+        end)
     end
 
     if visualActive then
@@ -14710,7 +14050,7 @@ function updateSystem()
             -- 🚀 OPTIMIZACIÓN: Solo vigilamos lo que "aparece nuevo", no escaneamos lo viejo infinitamente.
             local pGui = player:FindFirstChild("PlayerGui")
             if pGui then
-                table.insert(runtime.VisualConnections, runtime.Track(pGui.DescendantAdded:Connect(function(nuevoObjeto) 
+                table.insert(visualConnections, runtime.Track(pGui.DescendantAdded:Connect(function(nuevoObjeto) 
                     if isWorkspaceLooping and (nuevoObjeto:IsA("TextLabel") or nuevoObjeto:IsA("TextBox") or nuevoObjeto:IsA("TextButton")) then 
                         infectarTextoSeguro(nuevoObjeto)
                     end 
@@ -14719,7 +14059,7 @@ function updateSystem()
             
             local successCore, coreGui = pcall(function() return game:GetService("CoreGui") end)
             if successCore and coreGui then
-                table.insert(runtime.VisualConnections, runtime.Track(coreGui.DescendantAdded:Connect(function(nuevoObjeto) 
+                table.insert(visualConnections, runtime.Track(coreGui.DescendantAdded:Connect(function(nuevoObjeto) 
                     if isWorkspaceLooping and (nuevoObjeto:IsA("TextLabel") or nuevoObjeto:IsA("TextBox") or nuevoObjeto:IsA("TextButton")) then 
                         infectarTextoSeguro(nuevoObjeto)
                     end 
@@ -14728,11 +14068,9 @@ function updateSystem()
         end 
     else
         isWorkspaceLooping = false
-        runtime.VisualInitialScanDone = false
         
-        for _, conn in ipairs(runtime.VisualConnections) do conn:Disconnect() end
-        runtime.VisualConnections = {}
-        runtime.PruneConnections()
+        for _, conn in ipairs(visualConnections) do conn:Disconnect() end
+        visualConnections = {}
         
         local char = player.Character if char then local hum = char:FindFirstChild("Humanoid") if hum then hum.DisplayDistanceType = Enum.HumanoidDisplayDistanceType.Viewer end end
         
@@ -14781,8 +14119,8 @@ UIElements.TogEsp = Tabs.Vis:Toggle({
     Title = "ESP de jugadores", 
     Desc = "Activa las capas visuales configuradas para enemigos.",
     Callback = function(s) 
-        espEnabled = s
-        if runtime.UpdateESP2DRenderConnection then runtime.UpdateESP2DRenderConnection() end
+        espEnabled = s 
+  
     end
 })
 
@@ -14796,28 +14134,19 @@ UIElements.TogEspBox = Tabs.Vis:Toggle({
     Title = "ESP Box 2D",
     Desc = "Caja anclada al enemigo",
     Value = false,
-    Callback = function(s)
-        espSettings.Box = s
-        if runtime.UpdateESP2DRenderConnection then runtime.UpdateESP2DRenderConnection() end
-    end,
+    Callback = function(s) espSettings.Box = s end,
 })
 UIElements.TogEspHealth = Tabs.Vis:Toggle({
     Title = "Barra de vida",
     Desc = "Muestra la vida.",
     Value = false,
-    Callback = function(s)
-        espSettings.HealthBar = s
-        if runtime.UpdateESP2DRenderConnection then runtime.UpdateESP2DRenderConnection() end
-    end,
+    Callback = function(s) espSettings.HealthBar = s end,
 })
 
 UIElements.TogEspLines = Tabs.Vis:Toggle({
     Title = "Mostrar Líneas", 
     Desc = "Dibuja una línea desde el centro de tu pantalla hasta cada enemigo.",
-    Callback = function(s)
-        espLinesEnabled = s
-        if runtime.UpdateESP2DRenderConnection then runtime.UpdateESP2DRenderConnection() end
-    end
+    Callback = function(s) espLinesEnabled = s end
 })
 
 -- ==========================================
@@ -14896,11 +14225,9 @@ local function hideTracersOnce()
     tracersLimpios = true
 end
 
-function runtime.RenderESP2D(deltaTime)
+runtime.Track(RunService.RenderStepped:Connect(function(deltaTime)
     tracerAccumulator = tracerAccumulator + deltaTime
-    if tracerAccumulator < TRACER_INTERVAL then
-        return
-    end
+    if tracerAccumulator < TRACER_INTERVAL then return end
     tracerAccumulator = tracerAccumulator - TRACER_INTERVAL
 
     local camera = workspace.CurrentCamera
@@ -14928,7 +14255,7 @@ function runtime.RenderESP2D(deltaTime)
         FOVCircle.Visible = false
     end
 
-    if not espEnabled then
+    if not espEnabled or enLobby then
         hideTracersOnce()
         runtime.HideAllESP2D()
         return
@@ -14950,7 +14277,7 @@ function runtime.RenderESP2D(deltaTime)
             local valid = false
             local rootScreen, onScreen
 
-            if hrp and hum and hum.Health > 0 and (enLobby or isEnemy(p)) then
+            if hrp and hum and hum.Health > 0 and isEnemy(p) and not enemigoEnLobby(char, hrp) then
                 local delta = myPos - hrp.Position
                 if delta:Dot(delta) <= MAX_ESP_DISTANCE_SQ then
                     rootScreen, onScreen = camera:WorldToViewportPoint(hrp.Position)
@@ -15049,47 +14376,15 @@ function runtime.RenderESP2D(deltaTime)
             end
         end
     end
-end
-
-runtime.ESP2DRenderConnection = nil
-function runtime.UpdateESP2DRenderConnection()
-    local wantsESP2D = fovVisiblePreference
-        or (espEnabled and (espLinesEnabled or espSettings.Box or espSettings.HealthBar))
-    local connection = runtime.ESP2DRenderConnection
-
-    if wantsESP2D then
-        local connected = false
-        if connection then
-            pcall(function() connected = connection.Connected == true end)
-        end
-        if not connected then
-            runtime.ESP2DRenderConnection = runtime.Track(RunService.RenderStepped:Connect(runtime.RenderESP2D))
-        end
-        return
-    end
-
-    if connection then
-        pcall(function() connection:Disconnect() end)
-        runtime.ESP2DRenderConnection = nil
-        runtime.PruneConnections()
-    end
-    tracerAccumulator = 0
-    if FOVCircle.Visible then FOVCircle.Visible = false end
-    hideTracersOnce()
-    runtime.HideAllESP2D()
-end
-runtime.UpdateESP2DRenderConnection()
+end))
 
 runtime.Track(Players.PlayerRemoving:Connect(function(p)
-    if tracerLines[p] then
-        runtime.RemoveDrawing(tracerLines[p])
-        tracerLines[p] = nil
-    end
+    if tracerLines[p] then pcall(function() tracerLines[p]:Remove() end); tracerLines[p] = nil end
     local entry = runtime.ESP2D[p]
     if entry then
-        runtime.RemoveDrawing(entry.Box)
-        runtime.RemoveDrawing(entry.HealthBg)
-        runtime.RemoveDrawing(entry.Health)
+        for _, drawing in pairs(entry) do
+            if typeof(drawing) ~= "function" then pcall(function() drawing:Remove() end) end
+        end
         runtime.ESP2D[p] = nil
     end
     cleanESP(p)
@@ -15110,6 +14405,12 @@ task.spawn(function()
     local PlayerModule = require(player:WaitForChild("PlayerScripts"):WaitForChild("PlayerModule"))
     Controls = PlayerModule:GetControls()
 end)
+
+
+
+
+
+
 
 
 -- ==========================================
@@ -15386,6 +14687,8 @@ runtime.Track(player.CharacterAdded:Connect(function()
 end))
 
 
+
+
 -- ==========================================
 -- BOTONES FLOTANTES: AUTO SHOOT Y SILENT AIM
 -- ==========================================
@@ -15450,6 +14753,9 @@ UIElements.ToggleSaBtn = Tabs.Aim:Toggle({
         saBtn.Visible = state
     end
 })
+
+
+
 
 
 UIElements.SliderGhostSpeed = Tabs.Mov:Slider({
@@ -16329,6 +15635,8 @@ Tabs.Graficos:Slider({
         end
     end
 })
+
+
 
 
 -- ============================================================
@@ -17487,7 +16795,6 @@ Tabs.Config:Button({ Title = " Cargar Configuración", Callback = function()
                 if decoded.Toggles["Mostrar Distancia"] ~= nil then espSettings.Distance = decoded.Toggles["Mostrar Distancia"] secureLoadToggle(UIElements.TogEspDs, espSettings.Distance) end
                 if decoded.Toggles["Ocultar mi Nombre (Local)"] ~= nil then hideNameEnabled = decoded.Toggles["Ocultar mi Nombre (Local)"] secureLoadToggle(UIElements.TogHideName, hideNameEnabled) end
                 if decoded.Toggles["FPS Boost"] ~= nil then fpsBoostEnabled = decoded.Toggles["FPS Boost"] secureLoadToggle(UIElements.ToggleFPS, fpsBoostEnabled) end
-                if runtime.UpdateESP2DRenderConnection then runtime.UpdateESP2DRenderConnection() end
             end
             
             -- Sliders
@@ -17610,4 +16917,3 @@ end)
 startupSplashState.Finish()
 runtime.NotificationsReady = true
 -- XERO_FULL_GENERAL_OPTIMIZATION_2026_09_13
--- XERO_GENERAL_OPTIMIZATION_2026_09_14

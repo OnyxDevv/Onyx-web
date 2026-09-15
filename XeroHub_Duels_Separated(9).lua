@@ -11302,32 +11302,56 @@ runtime.AimState = aimHookState
 -- ==========================================
 -- MEMORIA DEL ESP (OBLIGATORIO ANTES DEL HILO)
 -- ==========================================
-local activeESPs = {} 
-local MAX_ESP_DISTANCE = 1500 
+local activeESPs = {}
+local MAX_ESP_DISTANCE = 1500
+runtime.ESPGlowVisibleCount = 0
+
+local function setESPGlowEnabled(espObj, enabled)
+    if not espObj then return end
+    local highlight = espObj.Highlight
+    if not highlight or not highlight.Parent then return end
+    enabled = enabled == true
+    if highlight.Enabled == enabled then return end
+
+    highlight.Enabled = enabled
+    if enabled then
+        runtime.ESPGlowVisibleCount = (runtime.ESPGlowVisibleCount or 0) + 1
+    else
+        runtime.ESPGlowVisibleCount = math.max(0, (runtime.ESPGlowVisibleCount or 0) - 1)
+    end
+end
 
 function cleanESP(targetPlayer)
     local espObj = activeESPs[targetPlayer]
     if not espObj then return end
-    if espObj.Highlight then pcall(function() espObj.Highlight:Destroy() end) end
+
+    local highlight = espObj.Highlight
+    if highlight then
+        if highlight.Enabled then
+            runtime.ESPGlowVisibleCount = math.max(0, (runtime.ESPGlowVisibleCount or 0) - 1)
+        end
+        pcall(function() highlight:Destroy() end)
+    end
     activeESPs[targetPlayer] = nil
 end
 
 local function hideESP(targetPlayer)
     local espObj = activeESPs[targetPlayer]
     if not espObj then return end
-    if espObj.Highlight and espObj.Highlight.Enabled then espObj.Highlight.Enabled = false end
+    setESPGlowEnabled(espObj, false)
 end
 
--- El Highlight permanece fuera del Character y fuera de Workspace.
--- Roblox permite Highlights con Adornee externo dentro de ReplicatedStorage.
--- Esto evita que las reglas del juego que vigilan descendientes de Workspace
--- interfieran con este visual local.
+-- ReplicatedStorage fue validado por el hub de diagnóstico y mantiene el
+-- Highlight fuera del Character. El Adornee apunta al Character real.
+local ESP_GLOW_PARENT = ReplicatedStorage
+local ESP_GLOW_FILL_TRANSPARENCY = 0.35
+
 local function getESPHighlightParent()
-    return ReplicatedStorage
+    return ESP_GLOW_PARENT
 end
 
--- Glow aislado del Heartbeat maestro:
--- usa el mismo patrón que funcionó en el hub de diagnóstico.
+-- El Highlight sigue automáticamente al Character; esta función sólo sincroniza
+-- estado/Character/color cuando el caché de objetivos se refresca, no cada frame.
 function runtime.SyncESPGlow(targetPlayer, char, visible)
     local espObj = activeESPs[targetPlayer]
 
@@ -11345,14 +11369,14 @@ function runtime.SyncESPGlow(targetPlayer, char, visible)
 
     if not espObj then
         local highlight = Instance.new("Highlight")
-        highlight.Name = "XeroDiagnosticHighlight"
+        highlight.Name = "XeroESPGlow"
         highlight.FillColor = espColor
-        highlight.FillTransparency = 0.35
-        highlight.OutlineColor = espColor
-        highlight.OutlineTransparency = 0
+        highlight.FillTransparency = ESP_GLOW_FILL_TRANSPARENCY
+        -- Fill-only: sin contorno.
+        highlight.OutlineTransparency = 1
         highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
         highlight.Adornee = char
-        highlight.Enabled = true
+        highlight.Enabled = false
         highlight.Parent = getESPHighlightParent()
 
         espObj = {
@@ -11366,21 +11390,23 @@ function runtime.SyncESPGlow(targetPlayer, char, visible)
     local desiredParent = getESPHighlightParent()
     if highlight.Parent ~= desiredParent then highlight.Parent = desiredParent end
     if highlight.Adornee ~= char then highlight.Adornee = char end
-    if not highlight.Enabled then highlight.Enabled = true end
     if highlight.FillColor ~= espColor then highlight.FillColor = espColor end
-    if highlight.OutlineColor ~= espColor then highlight.OutlineColor = espColor end
+    setESPGlowEnabled(espObj, true)
 end
 
 function runtime.HideAllESPGlow()
+    if (runtime.ESPGlowVisibleCount or 0) <= 0 then return end
     for targetPlayer in pairs(activeESPs) do
         hideESP(targetPlayer)
     end
+    runtime.ESPGlowVisibleCount = 0
 end
 
 runtime.ESPVisualCleanup = function()
     for targetPlayer in pairs(activeESPs) do
         cleanESP(targetPlayer)
     end
+    runtime.ESPGlowVisibleCount = 0
 end
 
 
@@ -14775,7 +14801,8 @@ UIElements.TogEspLines = Tabs.Vis:Toggle({
 })
 
 -- ==========================================
--- DIBUJADO EN PANTALLA 2D (FOV, Tracers, Box y Vida) - UN SOLO RENDER
+-- ESP VISUAL OPTIMIZADO
+-- Glow: caché lento | Etiquetas: 20 Hz | Geometría/Tracers: 30 Hz
 -- ==========================================
 local FOVCircle = runtime.TrackDrawing(Drawing.new("Circle"))
 FOVCircle.Filled = false
@@ -14786,16 +14813,36 @@ FOVCircle.NumSides = 64
 
 local tracerLines = {}
 local tracersLimpios = true
-local tracerAccumulator = 0
-local TRACER_INTERVAL = 1 / 30
+local espRenderAccumulator = 0
+local espTargetRefreshAccumulator = 999
+
+local ESP_RENDER_FAST_INTERVAL = 1 / 30
+local ESP_RENDER_LABEL_INTERVAL = 1 / 20
+local ESP_RENDER_GLOW_INTERVAL = 1 / 8
+local ESP_TARGET_REFRESH_INTERVAL = 0.12
 local MAX_ESP_DISTANCE_SQ = MAX_ESP_DISTANCE * MAX_ESP_DISTANCE
+
 local cachedViewportX, cachedViewportY = -1, -1
 local centroVector = Vector2_new(0, 0)
 local tracerOrigin = Vector2_new(0, 0)
 local fovIdleColor = Color3_fromRGB(255, 255, 255)
 local fovTargetColor = Color3_fromRGB(0, 255, 0)
 local esp2dClean = true
+
 runtime.ESP2D = {}
+runtime.ESPTargetCache = {}
+runtime.ESPTargetCount = 0
+
+local function getESPVisualInterval()
+    if fovVisiblePreference or espLinesEnabled
+        or (espEnabled and (espSettings.Box or espSettings.HealthBar)) then
+        return ESP_RENDER_FAST_INTERVAL
+    end
+    if espEnabled and (espSettings.Name or espSettings.Distance) then
+        return ESP_RENDER_LABEL_INTERVAL
+    end
+    return ESP_RENDER_GLOW_INTERVAL
+end
 
 function runtime.HideESP2DEntry(entry)
     if not entry then return end
@@ -14808,14 +14855,23 @@ end
 
 function runtime.HideAllESP2D()
     if esp2dClean then return end
-    for _, entry in pairs(runtime.ESP2D) do runtime.HideESP2DEntry(entry) end
+    for _, entry in pairs(runtime.ESP2D) do
+        runtime.HideESP2DEntry(entry)
+    end
     esp2dClean = true
 end
 
 function runtime.GetESP2DEntry(p)
     local entry = runtime.ESP2D[p]
     if entry then return entry end
-    entry = {}
+    entry = {
+        LastBoxColor = nil,
+        LastNameText = nil,
+        LastNameColor = nil,
+        LastDistanceText = nil,
+        LastHealth = nil,
+        LastMaxHealth = nil,
+    }
 
     local okBox, box = pcall(function() return Drawing.new("Square") end)
     if okBox and box then
@@ -14871,16 +14927,86 @@ local function hideTracersOnce()
     tracersLimpios = true
 end
 
-function runtime.RenderESP2D(deltaTime)
-    tracerAccumulator = tracerAccumulator + deltaTime
-    if tracerAccumulator < TRACER_INTERVAL then
+-- Trabajo relativamente caro (isEnemy, zonas seguras, Core lookup) se hace ~8 Hz.
+-- Las referencias HRP/Humanoid quedan cacheadas; sus posiciones siguen siendo actuales.
+function runtime.RefreshESPTargetCache()
+    local cache = runtime.ESPTargetCache
+    local previousCount = runtime.ESPTargetCount or 0
+    local count = 0
+
+    if not espEnabled or enLobby then
+        for i = 1, previousCount do cache[i] = nil end
+        runtime.ESPTargetCount = 0
+        runtime.HideAllESPGlow()
         return
     end
-    tracerAccumulator = tracerAccumulator - TRACER_INTERVAL
+
+    local myChar = player.Character
+    local myCore = myChar and getCharCore(myChar) or nil
+    local myRoot = myCore and myCore.HRP
+    local myPos = myRoot and myRoot.Position or workspace.CurrentCamera.CFrame.Position
+
+    for i = 1, #listaJugadores do
+        local p = listaJugadores[i]
+        if p ~= player then
+            count = count + 1
+            local entry = cache[count]
+            if not entry then
+                entry = {}
+                cache[count] = entry
+            end
+
+            local char = p.Character
+            local core = char and getCharCore(char) or nil
+            local hrp = core and core.HRP or nil
+            local hum = core and core.Humanoid or nil
+            local alive = hrp ~= nil and hum ~= nil and hum.Health > 0
+            local eligible = false
+
+            if alive and isEnemy(p) and not enemigoEnLobby(char, hrp, core) then
+                local delta = myPos - hrp.Position
+                eligible = delta:Dot(delta) <= MAX_ESP_DISTANCE_SQ
+            end
+
+            entry.Player = p
+            entry.Character = char
+            entry.Core = core
+            entry.HRP = hrp
+            entry.Humanoid = hum
+            entry.Head = core and core.Head or nil
+            entry.Eligible = eligible
+
+            if espSettings.Glow then
+                runtime.SyncESPGlow(p, char, eligible)
+            elseif activeESPs[p] then
+                hideESP(p)
+            end
+        end
+    end
+
+    for i = count + 1, previousCount do
+        cache[i] = nil
+    end
+    runtime.ESPTargetCount = count
+end
+
+function runtime.RenderESP2D(deltaTime)
+    espRenderAccumulator = espRenderAccumulator + deltaTime
+    espTargetRefreshAccumulator = espTargetRefreshAccumulator + deltaTime
+
+    local interval = getESPVisualInterval()
+    if espRenderAccumulator < interval then return end
+    -- No intentamos "ponernos al día" con varios renders si hubo un frame lento.
+    -- Eso evita picos después de un freeze o caída temporal de FPS.
+    espRenderAccumulator = 0
 
     local camera = workspace.CurrentCamera
-    local wantsESP2D = espEnabled and (espSettings.Glow or espSettings.Name or espSettings.Distance or espSettings.Box or espSettings.HealthBar)
-    if not fovVisiblePreference and not espLinesEnabled and not wantsESP2D then
+    local wantsESPVisuals = espEnabled and (
+        espSettings.Glow or espSettings.Name or espSettings.Distance
+        or espSettings.Box or espSettings.HealthBar
+    )
+
+    if not fovVisiblePreference and not espLinesEnabled and not wantsESPVisuals then
         if FOVCircle.Visible then FOVCircle.Visible = false end
         hideTracersOnce()
         runtime.HideAllESP2D()
@@ -14891,7 +15017,7 @@ function runtime.RenderESP2D(deltaTime)
     local viewport = camera.ViewportSize
     if viewport.X ~= cachedViewportX or viewport.Y ~= cachedViewportY then
         cachedViewportX, cachedViewportY = viewport.X, viewport.Y
-        centroVector = Vector2_new(viewport.X / 2, viewport.Y / 2)
+        centroVector = Vector2_new(viewport.X * 0.5, viewport.Y * 0.5)
         tracerOrigin = Vector2_new(centroVector.X, viewport.Y - 2)
     end
 
@@ -14911,60 +15037,87 @@ function runtime.RenderESP2D(deltaTime)
         return
     end
 
+    if espTargetRefreshAccumulator >= ESP_TARGET_REFRESH_INTERVAL then
+        espTargetRefreshAccumulator = 0
+        runtime.RefreshESPTargetCache()
+    end
+
+    local wantsLabels = espSettings.Name or espSettings.Distance
+    local wantsBodyGeometry = espSettings.Box or espSettings.HealthBar
+    local wantsAny2D = wantsLabels or wantsBodyGeometry
+
     tracersLimpios = not espLinesEnabled
+
     local myChar = player.Character
     local myCore = myChar and getCharCore(myChar) or nil
     local myRoot = myCore and myCore.HRP
     local myPos = myRoot and myRoot.Position or camera.CFrame.Position
 
-    for i = 1, #listaJugadores do
-        local p = listaJugadores[i]
-        if p ~= player then
-            local char = p.Character
-            local core = char and getCharCore(char) or nil
-            local hrp = core and core.HRP
-            local hum = core and core.Humanoid
-            local eligible = false
-            local valid = false
-            local rootScreen, onScreen
-            local playerDistSq = math.huge
+    local cache = runtime.ESPTargetCache
+    local targetCount = runtime.ESPTargetCount or 0
 
-            if hrp and hum and hum.Health > 0 and isEnemy(p) and not enemigoEnLobby(char, hrp, core) then
-                local delta = myPos - hrp.Position
-                playerDistSq = delta:Dot(delta)
-                if playerDistSq <= MAX_ESP_DISTANCE_SQ then
-                    eligible = true
-                    rootScreen, onScreen = camera:WorldToViewportPoint(hrp.Position)
-                    valid = onScreen and rootScreen.Z > 0
-                end
-            end
+    for i = 1, targetCount do
+        local target = cache[i]
+        local p = target.Player
+        local char = target.Character
+        local core = target.Core
+        local hrp = target.HRP
+        local hum = target.Humanoid
 
-            runtime.SyncESPGlow(p, char, espSettings.Glow and eligible)
+        -- Referencias destruidas entre dos refreshes se invalidan barato aquí.
+        local eligible = target.Eligible
+            and p and p.Parent == Players
+            and char and char.Parent
+            and hrp and hrp.Parent == char
+            and hum and hum.Parent == char and hum.Health > 0
 
-            local tLine = tracerLines[p]
-            if espLinesEnabled and valid then
-                if not tLine then
-                    tLine = runtime.TrackDrawing(Drawing.new("Line"))
-                    tLine.Thickness = 1.35
-                    tLine.Transparency = 0.92
-                    tLine.Visible = false
-                    tracerLines[p] = tLine
-                end
-                tLine.From = tracerOrigin
-                tLine.To = Vector2_new(rootScreen.X, rootScreen.Y)
-                tLine.Color = espColor
-                tLine.Visible = true
-            elseif tLine and tLine.Visible then
+        local valid = false
+        local rootScreen
+        if eligible then
+            local onScreen
+            rootScreen, onScreen = camera:WorldToViewportPoint(hrp.Position)
+            valid = onScreen and rootScreen.Z > 0
+        elseif p and activeESPs[p] then
+            -- Si murió/desapareció entre refreshes, oculta Glow sin esperar 120 ms.
+            hideESP(p)
+        end
+
+        local tLine = p and tracerLines[p] or nil
+        if espLinesEnabled and valid then
+            if not tLine then
+                tLine = runtime.TrackDrawing(Drawing.new("Line"))
+                tLine.Thickness = 1.35
+                tLine.Transparency = 0.92
                 tLine.Visible = false
+                tracerLines[p] = tLine
             end
+            tLine.From = tracerOrigin
+            tLine.To = Vector2_new(rootScreen.X, rootScreen.Y)
+            if tLine.Color ~= espColor then tLine.Color = espColor end
+            tLine.Visible = true
+        elseif tLine and tLine.Visible then
+            tLine.Visible = false
+        end
 
-            local entry = runtime.ESP2D[p]
-            if wantsESP2D and valid then
-                esp2dClean = false
-                entry = entry or runtime.GetESP2DEntry(p)
-                -- OPT: caja corporal estable. NO usamos Character:GetBoundingBox(),
-                -- porque incluye el Torso falso del Hitbox Expander y accesorios/limiteds.
-                local head = core and core.Head
+        local entry = p and runtime.ESP2D[p] or nil
+        if wantsAny2D and valid then
+            esp2dClean = false
+            entry = entry or runtime.GetESP2DEntry(p)
+
+            local labelX = rootScreen.X
+            local labelY = rootScreen.Y - 34
+            local bodyGeometryValid = false
+            local boxX, boxY, boxW, boxH
+
+            -- La geometría de cuerpo/pies es lo más caro del ESP 2D. Sólo existe
+            -- cuando Box o Barra de vida están realmente activos.
+            if wantsBodyGeometry then
+                local head = target.Head
+                if (not head or head.Parent ~= char) and core then
+                    head = core.Head
+                    target.Head = head
+                end
+
                 local up = hrp.CFrame.UpVector
                 local topWorld = head and (head.Position + up * (head.Size.Y * 0.55))
                     or (hrp.Position + up * 2.8)
@@ -14976,7 +15129,6 @@ function runtime.RenderESP2D(deltaTime)
                     local lfPoint = leftFoot and (leftFoot.Position - up * (leftFoot.Size.Y * 0.5)) or nil
                     local rfPoint = rightFoot and (rightFoot.Position - up * (rightFoot.Size.Y * 0.5)) or nil
                     if lfPoint and rfPoint then
-                        -- Escogemos el punto más bajo respecto al eje vertical del propio personaje.
                         bottomWorld = ((lfPoint - hrp.Position):Dot(up) < (rfPoint - hrp.Position):Dot(up)) and lfPoint or rfPoint
                     else
                         bottomWorld = lfPoint or rfPoint
@@ -14987,68 +15139,100 @@ function runtime.RenderESP2D(deltaTime)
 
                 local topScreen = camera:WorldToViewportPoint(topWorld)
                 local bottomScreen = camera:WorldToViewportPoint(bottomWorld)
-                local geometryValid = topScreen.Z > 0.05 and bottomScreen.Z > 0.05
+                bodyGeometryValid = topScreen.Z > 0.05 and bottomScreen.Z > 0.05
 
-                if geometryValid then
+                if bodyGeometryValid then
                     local rawH = math.abs(bottomScreen.Y - topScreen.Y)
                     local maxH = math.max(8, viewport.Y * 0.92)
-                    local boxH = math.clamp(rawH, 8, maxH)
+                    boxH = math.clamp(rawH, 8, maxH)
                     local ratioW = hum.RigType == Enum.HumanoidRigType.R6 and 0.62 or 0.55
-                    local boxW = math.clamp(boxH * ratioW, 6, math.max(6, viewport.X * 0.62))
-                    local x = rootScreen.X - boxW * 0.5
-                    local y = math.min(topScreen.Y, bottomScreen.Y)
-
-                    if entry.Box then
-                        entry.Box.Position = Vector2_new(x, y)
-                        entry.Box.Size = Vector2_new(boxW, boxH)
-                        if entry.LastBoxColor ~= espColor then
-                            entry.Box.Color = espColor
-                            entry.LastBoxColor = espColor
-                        end
-                        if entry.Box.Visible ~= espSettings.Box then entry.Box.Visible = espSettings.Box end
-                    end
-
-                    if espSettings.HealthBar then
-                        local ratio = math.clamp(hum.Health / math.max(hum.MaxHealth, 1), 0, 1)
-                        local bx = x - 5
-                        local byBottom = y + boxH
-                        local byHealth = byBottom - (boxH * ratio)
-                        entry.HealthBg.From = Vector2_new(bx, y)
-                        entry.HealthBg.To = Vector2_new(bx, byBottom)
-                        if not entry.HealthBg.Visible then entry.HealthBg.Visible = true end
-                        entry.Health.From = Vector2_new(bx, byBottom)
-                        entry.Health.To = Vector2_new(bx, byHealth)
-                        entry.Health.Color = Color3.fromHSV(ratio * 0.33, 0.92, 1)
-                        if not entry.Health.Visible then entry.Health.Visible = true end
-                    else
-                        if entry.HealthBg.Visible then entry.HealthBg.Visible = false end
-                        if entry.Health.Visible then entry.Health.Visible = false end
-                    end
-
-                    local labelY = y - 18
-                    if espSettings.Name and entry.NameText then
-                        entry.NameText.Text = p.Name
-                        entry.NameText.Position = Vector2_new(rootScreen.X, labelY)
-                        entry.NameText.Color = espColor
-                        if not entry.NameText.Visible then entry.NameText.Visible = true end
-                        labelY = labelY + 15
-                    elseif entry.NameText and entry.NameText.Visible then
-                        entry.NameText.Visible = false
-                    end
-
-                    if espSettings.Distance and entry.DistanceText then
-                        entry.DistanceText.Text = tostring(math_floor(math.sqrt(playerDistSq))) .. "m"
-                        entry.DistanceText.Position = Vector2_new(rootScreen.X, labelY)
-                        if not entry.DistanceText.Visible then entry.DistanceText.Visible = true end
-                    elseif entry.DistanceText and entry.DistanceText.Visible then
-                        entry.DistanceText.Visible = false
-                    end
-                else
-                    runtime.HideESP2DEntry(entry)
+                    boxW = math.clamp(boxH * ratioW, 6, math.max(6, viewport.X * 0.62))
+                    boxX = rootScreen.X - boxW * 0.5
+                    boxY = math.min(topScreen.Y, bottomScreen.Y)
+                    labelY = boxY - 18
                 end
-            elseif entry then
-                runtime.HideESP2DEntry(entry)
+            elseif wantsLabels then
+                -- Nombre/distancia no necesitan pies ni bounding box.
+                local head = target.Head
+                if head and head.Parent == char then
+                    local headScreen = camera:WorldToViewportPoint(head.Position)
+                    if headScreen.Z > 0.05 then
+                        labelY = headScreen.Y - 18
+                    end
+                end
             end
+
+            if entry.Box then
+                if espSettings.Box and bodyGeometryValid then
+                    entry.Box.Position = Vector2_new(boxX, boxY)
+                    entry.Box.Size = Vector2_new(boxW, boxH)
+                    if entry.LastBoxColor ~= espColor then
+                        entry.Box.Color = espColor
+                        entry.LastBoxColor = espColor
+                    end
+                    if not entry.Box.Visible then entry.Box.Visible = true end
+                elseif entry.Box.Visible then
+                    entry.Box.Visible = false
+                end
+            end
+
+            if espSettings.HealthBar and bodyGeometryValid then
+                local healthValue = hum.Health
+                local maxHealth = math.max(hum.MaxHealth, 1)
+                local ratio = math.clamp(healthValue / maxHealth, 0, 1)
+                local bx = boxX - 5
+                local byBottom = boxY + boxH
+                local byHealth = byBottom - (boxH * ratio)
+
+                entry.HealthBg.From = Vector2_new(bx, boxY)
+                entry.HealthBg.To = Vector2_new(bx, byBottom)
+                if not entry.HealthBg.Visible then entry.HealthBg.Visible = true end
+
+                entry.Health.From = Vector2_new(bx, byBottom)
+                entry.Health.To = Vector2_new(bx, byHealth)
+                if entry.LastHealth ~= healthValue or entry.LastMaxHealth ~= maxHealth then
+                    entry.Health.Color = Color3.fromHSV(ratio * 0.33, 0.92, 1)
+                    entry.LastHealth = healthValue
+                    entry.LastMaxHealth = maxHealth
+                end
+                if not entry.Health.Visible then entry.Health.Visible = true end
+            else
+                if entry.HealthBg.Visible then entry.HealthBg.Visible = false end
+                if entry.Health.Visible then entry.Health.Visible = false end
+            end
+
+            if espSettings.Name and entry.NameText then
+                local currentName = p.Name
+                if entry.LastNameText ~= currentName then
+                    entry.NameText.Text = currentName
+                    entry.LastNameText = currentName
+                end
+                if entry.LastNameColor ~= espColor then
+                    entry.NameText.Color = espColor
+                    entry.LastNameColor = espColor
+                end
+                entry.NameText.Position = Vector2_new(labelX, labelY)
+                if not entry.NameText.Visible then entry.NameText.Visible = true end
+                labelY = labelY + 15
+            elseif entry.NameText and entry.NameText.Visible then
+                entry.NameText.Visible = false
+            end
+
+            if espSettings.Distance and entry.DistanceText then
+                local delta = myPos - hrp.Position
+                local distanceInt = math_floor(math.sqrt(delta:Dot(delta)))
+                local distanceString = tostring(distanceInt) .. "m"
+                if entry.LastDistanceText ~= distanceString then
+                    entry.DistanceText.Text = distanceString
+                    entry.LastDistanceText = distanceString
+                end
+                entry.DistanceText.Position = Vector2_new(labelX, labelY)
+                if not entry.DistanceText.Visible then entry.DistanceText.Visible = true end
+            elseif entry.DistanceText and entry.DistanceText.Visible then
+                entry.DistanceText.Visible = false
+            end
+        elseif entry then
+            runtime.HideESP2DEntry(entry)
         end
     end
 end
@@ -15056,7 +15240,10 @@ end
 runtime.ESP2DRenderConnection = nil
 function runtime.UpdateESP2DRenderConnection()
     local wantsESP2D = fovVisiblePreference
-        or (espEnabled and (espLinesEnabled or espSettings.Glow or espSettings.Name or espSettings.Distance or espSettings.Box or espSettings.HealthBar))
+        or (espEnabled and (
+            espLinesEnabled or espSettings.Glow or espSettings.Name
+            or espSettings.Distance or espSettings.Box or espSettings.HealthBar
+        ))
     local connection = runtime.ESP2DRenderConnection
 
     if wantsESP2D then
@@ -15064,6 +15251,8 @@ function runtime.UpdateESP2DRenderConnection()
         if connection then
             pcall(function() connected = connection.Connected == true end)
         end
+        -- Fuerza un refresh de elegibilidad al cambiar cualquier toggle visual.
+        espTargetRefreshAccumulator = 999
         if not connected then
             runtime.ESP2DRenderConnection = runtime.Track(RunService.RenderStepped:Connect(runtime.RenderESP2D))
         end
@@ -15075,10 +15264,12 @@ function runtime.UpdateESP2DRenderConnection()
         runtime.ESP2DRenderConnection = nil
         runtime.PruneConnections()
     end
-    tracerAccumulator = 0
+    espRenderAccumulator = 0
+    espTargetRefreshAccumulator = 999
     if FOVCircle.Visible then FOVCircle.Visible = false end
     hideTracersOnce()
     runtime.HideAllESP2D()
+    runtime.HideAllESPGlow()
 end
 runtime.UpdateESP2DRenderConnection()
 
@@ -15097,6 +15288,7 @@ runtime.Track(Players.PlayerRemoving:Connect(function(p)
         runtime.ESP2D[p] = nil
     end
     cleanESP(p)
+    espTargetRefreshAccumulator = 999
 end))
 
 

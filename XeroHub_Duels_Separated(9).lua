@@ -14808,16 +14808,20 @@ local FOVCircle = runtime.TrackDrawing(Drawing.new("Circle"))
 FOVCircle.Filled = false
 FOVCircle.Color = Color3.fromRGB(255, 255, 255)
 FOVCircle.Visible = false
-FOVCircle.Thickness = 1.7
-FOVCircle.NumSides = 64
+FOVCircle.Thickness = 2.6
+FOVCircle.NumSides = 96
 
 local tracerLines = {}
 local tracersLimpios = true
 local espRenderAccumulator = 0
+local espLabelFollowAccumulator = 0
 local espTargetRefreshAccumulator = 999
 
 local ESP_RENDER_FAST_INTERVAL = 1 / 30
+-- El contenido (nombre/distancia) no necesita reconstruirse cada frame,
+-- pero su POSICIÓN sí sigue al jugador a 60 Hz para evitar sensación de retraso.
 local ESP_RENDER_LABEL_INTERVAL = 1 / 20
+local ESP_LABEL_FOLLOW_INTERVAL = 1 / 60
 local ESP_RENDER_GLOW_INTERVAL = 1 / 8
 local ESP_TARGET_REFRESH_INTERVAL = 0.12
 local MAX_ESP_DISTANCE_SQ = MAX_ESP_DISTANCE * MAX_ESP_DISTANCE
@@ -14990,9 +14994,67 @@ function runtime.RefreshESPTargetCache()
     runtime.ESPTargetCount = count
 end
 
+-- Seguimiento ultraligero de etiquetas: sólo proyecta Head/HRP y mueve Drawings.
+-- No recalcula equipos, zonas seguras, vida, bounding boxes ni Glow.
+function runtime.UpdateESPLabelPositions(camera)
+    if not espEnabled or enLobby or not (espSettings.Name or espSettings.Distance) then return end
+
+    local cache = runtime.ESPTargetCache
+    local targetCount = runtime.ESPTargetCount or 0
+
+    for i = 1, targetCount do
+        local target = cache[i]
+        local p = target and target.Player
+        local entry = p and runtime.ESP2D[p] or nil
+
+        if entry and target.Eligible then
+            local char = target.Character
+            local hrp = target.HRP
+            local hum = target.Humanoid
+            local refsValid = p and p.Parent == Players
+                and char and char.Parent
+                and hrp and hrp.Parent == char
+                and hum and hum.Parent == char and hum.Health > 0
+
+            if refsValid then
+                local anchor = target.Head
+                if not anchor or anchor.Parent ~= char then
+                    local core = target.Core
+                    anchor = core and core.Head or nil
+                    target.Head = anchor
+                end
+
+                local worldPos = anchor and anchor.Position or hrp.Position
+                local screenPos, onScreen = camera:WorldToViewportPoint(worldPos)
+                if onScreen and screenPos.Z > 0.05 then
+                    local y = screenPos.Y - (anchor and 18 or 34)
+                    if espSettings.Name and entry.NameText and entry.NameText.Visible then
+                        entry.NameText.Position = Vector2_new(screenPos.X, y)
+                        y = y + 15
+                    end
+                    if espSettings.Distance and entry.DistanceText and entry.DistanceText.Visible then
+                        entry.DistanceText.Position = Vector2_new(screenPos.X, y)
+                    end
+                else
+                    if entry.NameText and entry.NameText.Visible then entry.NameText.Visible = false end
+                    if entry.DistanceText and entry.DistanceText.Visible then entry.DistanceText.Visible = false end
+                end
+            end
+        end
+    end
+end
+
 function runtime.RenderESP2D(deltaTime)
     espRenderAccumulator = espRenderAccumulator + deltaTime
+    espLabelFollowAccumulator = espLabelFollowAccumulator + deltaTime
     espTargetRefreshAccumulator = espTargetRefreshAccumulator + deltaTime
+
+    local camera = workspace.CurrentCamera
+
+    if espLabelFollowAccumulator >= ESP_LABEL_FOLLOW_INTERVAL then
+        espLabelFollowAccumulator = 0
+        runtime.UpdateESPLabelPositions(camera)
+    end
 
     local interval = getESPVisualInterval()
     if espRenderAccumulator < interval then return end
@@ -15000,7 +15062,6 @@ function runtime.RenderESP2D(deltaTime)
     -- Eso evita picos después de un freeze o caída temporal de FPS.
     espRenderAccumulator = 0
 
-    local camera = workspace.CurrentCamera
     local wantsESPVisuals = espEnabled and (
         espSettings.Glow or espSettings.Name or espSettings.Distance
         or espSettings.Box or espSettings.HealthBar
@@ -15211,7 +15272,6 @@ function runtime.RenderESP2D(deltaTime)
                     entry.NameText.Color = espColor
                     entry.LastNameColor = espColor
                 end
-                entry.NameText.Position = Vector2_new(labelX, labelY)
                 if not entry.NameText.Visible then entry.NameText.Visible = true end
                 labelY = labelY + 15
             elseif entry.NameText and entry.NameText.Visible then
@@ -15226,7 +15286,6 @@ function runtime.RenderESP2D(deltaTime)
                     entry.DistanceText.Text = distanceString
                     entry.LastDistanceText = distanceString
                 end
-                entry.DistanceText.Position = Vector2_new(labelX, labelY)
                 if not entry.DistanceText.Visible then entry.DistanceText.Visible = true end
             elseif entry.DistanceText and entry.DistanceText.Visible then
                 entry.DistanceText.Visible = false
@@ -15265,6 +15324,7 @@ function runtime.UpdateESP2DRenderConnection()
         runtime.PruneConnections()
     end
     espRenderAccumulator = 0
+    espLabelFollowAccumulator = 0
     espTargetRefreshAccumulator = 999
     if FOVCircle.Visible then FOVCircle.Visible = false end
     hideTracersOnce()
@@ -15648,12 +15708,6 @@ UIElements.ToggleSaBtn = Tabs.Aim:Toggle({
 })
 
 
-UIElements.SliderGhostSpeed = Tabs.Mov:Slider({
-    Title = "Velocidad Fantasma", 
-    Step = 1, 
-    Value = {Min = 10, Max = 150, Default = 40}, 
-    Callback = function(Value) invisFlySpeed = Value end 
-})
 
 runtime.Track(player.CharacterAdded:Connect(function()
     isInvisible = false

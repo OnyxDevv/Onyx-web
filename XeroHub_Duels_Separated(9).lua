@@ -1,35 +1,43 @@
--- Xero | EmoteAnimations Scanner
+-- Xero | DUELS EmoteAnimations Watcher
 -- Kev
 
 local Players = game:GetService("Players")
+local Workspace = game:GetService("Workspace")
 
 local player = Players.LocalPlayer
 
-local function getCharacter()
-    return player.Character or player.CharacterAdded:Wait()
-end
+local watchedFolders = {}
+local watchedObjects = {}
 
-local function getPath(obj)
-    local ok, path = pcall(function()
+local function path(obj)
+    local ok, result = pcall(function()
         return obj:GetFullName()
     end)
 
-    return ok and path or tostring(obj)
+    return ok and result or tostring(obj)
 end
 
 local function printAttributes(obj)
     local attrs = obj:GetAttributes()
 
-    for name, value in pairs(attrs) do
-        print("      ATTRIBUTE:", name, "=", value)
+    for key, value in pairs(attrs) do
+        print("   [ATTR]", key, "=", value)
     end
 end
 
-local function inspect(obj)
-    print("------------------------------------------------")
+local function inspect(obj, prefix)
+    if watchedObjects[obj] then
+        return
+    end
+
+    watchedObjects[obj] = true
+
+    print("")
+    print("==============================================")
+    print(prefix or "[OBJETO]")
     print("Nombre:", obj.Name)
     print("Clase:", obj.ClassName)
-    print("Ruta:", getPath(obj))
+    print("Ruta:", path(obj))
 
     if obj:IsA("Animation") then
         print("AnimationId:", obj.AnimationId)
@@ -37,75 +45,86 @@ local function inspect(obj)
     elseif obj:IsA("StringValue")
         or obj:IsA("IntValue")
         or obj:IsA("NumberValue")
-        or obj:IsA("BoolValue")
-        or obj:IsA("ObjectValue")
-        or obj:IsA("CFrameValue")
-        or obj:IsA("Vector3Value") then
+        or obj:IsA("BoolValue") then
 
-        local ok, value = pcall(function()
-            return obj.Value
-        end)
-
-        if ok then
-            print("Value:", value)
-        end
+        print("Value:", obj.Value)
     end
 
     printAttributes(obj)
 end
 
-local character = getCharacter()
+local function watchEmoteFolder(folder)
+    if watchedFolders[folder] then
+        return
+    end
 
-local folder =
-    character:FindFirstChild("EmoteAnimations")
-    or character:WaitForChild("EmoteAnimations", 10)
-
-if not folder then
-    warn("[Xero] No encontré Character.EmoteAnimations")
-    return
-end
-
-print("")
-print("================================================")
-print("       XERO | EMOTE ANIMATIONS SCANNER")
-print("================================================")
-print("CARPETA:")
-print(getPath(folder))
-print("")
-
--- Inspeccionar la propia carpeta
-inspect(folder)
-
--- Todo lo que ya existe
-local descendants = folder:GetDescendants()
-
-print("")
-print("OBJETOS ENCONTRADOS:", #descendants)
-print("")
-
-for _, obj in ipairs(descendants) do
-    inspect(obj)
-end
-
--- Vigilar cosas nuevas
-folder.DescendantAdded:Connect(function(obj)
-    task.wait()
+    watchedFolders[folder] = true
 
     print("")
-    print("++++++++++++ NUEVO OBJETO ++++++++++++")
-    inspect(obj)
-end)
+    print("##############################################")
+    print("EMOTE FOLDER ENCONTRADO")
+    print("Ruta:", path(folder))
+    print("##############################################")
 
-folder.DescendantRemoving:Connect(function(obj)
+    printAttributes(folder)
+
+    local descendants = folder:GetDescendants()
+
     print("")
-    print("------------ ELIMINADO ---------------")
-    print("Nombre:", obj.Name)
-    print("Clase:", obj.ClassName)
-    print("Ruta anterior:", getPath(obj))
+    print("Objetos actualmente dentro:", #descendants)
+
+    for _, obj in ipairs(descendants) do
+        inspect(obj, "[YA EXISTÍA]")
+    end
+
+    folder.DescendantAdded:Connect(function(obj)
+        task.wait()
+
+        inspect(obj, "[NUEVO OBJETO]")
+    end)
+
+    folder.DescendantRemoving:Connect(function(obj)
+        print("")
+        print("[ELIMINADO]")
+        print("Nombre:", obj.Name)
+        print("Clase:", obj.ClassName)
+    end)
+end
+
+local function check(obj)
+    if obj.Name == "EmoteAnimations" then
+
+        -- Preferentemente sólo el árbol de nuestro jugador.
+        local character = player.Character
+        local workspaceCharacter = Workspace:FindFirstChild(player.Name)
+
+        if (character and obj:IsDescendantOf(character))
+            or (workspaceCharacter and obj:IsDescendantOf(workspaceCharacter)) then
+
+            watchEmoteFolder(obj)
+        end
+    end
+end
+
+-- Por si ya existe cuando ejecutamos el scanner.
+for _, obj in ipairs(Workspace:GetDescendants()) do
+    check(obj)
+end
+
+-- Detectar si DUELS la crea DESPUÉS.
+Workspace.DescendantAdded:Connect(function(obj)
+    check(obj)
 end)
 
+player.CharacterAdded:Connect(function()
+    print("")
+    print("[Xero] Nuevo Character detectado.")
+    print("[Xero] Esperando EmoteAnimations...")
+end)
+
+print("==============================================")
+print("XERO | EMOTE WATCHER")
+print("==============================================")
+print("Esperando que DUELS cree EmoteAnimations...")
 print("")
-print("ESCÁNER ACTIVO.")
-print("Ahora abre el menú EMOTES, ciérralo,")
-print("haz tu emote y vuelve a detenerlo.")
-print("Mira si aparecen nuevos objetos.")
+print("AHORA HAZ TU EMOTE.")

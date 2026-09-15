@@ -263,6 +263,7 @@ function runtime.Cleanup()
     if not runtime.Alive then return end
     runtime.Alive = false
     if runtime.GraphicsCleanup then pcall(runtime.GraphicsCleanup) end
+    if runtime.ESPVisualCleanup then pcall(runtime.ESPVisualCleanup) end
     if runtime.SoundCleanup then pcall(runtime.SoundCleanup) end
 
     for i = #runtime.Connections, 1, -1 do
@@ -11305,20 +11306,28 @@ local activeESPs = {}
 local MAX_ESP_DISTANCE = 1500 
 
 function cleanESP(targetPlayer)
-    if activeESPs[targetPlayer] then
-        if activeESPs[targetPlayer].Highlight then activeESPs[targetPlayer].Highlight:Destroy() end
-        if activeESPs[targetPlayer].Billboard then activeESPs[targetPlayer].Billboard:Destroy() end
-        activeESPs[targetPlayer] = nil
-    end
+    local espObj = activeESPs[targetPlayer]
+    if not espObj then return end
+    if espObj.Highlight then pcall(function() espObj.Highlight:Destroy() end) end
+    activeESPs[targetPlayer] = nil
 end
 
 local function hideESP(targetPlayer)
     local espObj = activeESPs[targetPlayer]
     if not espObj then return end
     if espObj.Highlight and espObj.Highlight.Enabled then espObj.Highlight.Enabled = false end
-    if espObj.Billboard and espObj.Billboard.Enabled then espObj.Billboard.Enabled = false end
-    -- Fuerza una sola reconstrucción de texto al volver a ser válido, sin destruir Instances.
-    espObj.LastDistance = -1
+end
+
+-- Los Highlights quedan fuera del Character. Al ser cliente-locales y descendientes
+-- de Workspace (CurrentCamera), siguen renderizando sin insertar hijos en el enemigo.
+local function getESPHighlightParent()
+    return workspace.CurrentCamera or workspace
+end
+
+runtime.ESPVisualCleanup = function()
+    for targetPlayer in pairs(activeESPs) do
+        cleanESP(targetPlayer)
+    end
 end
 
 
@@ -11806,7 +11815,8 @@ runtime.Track(RunService.Heartbeat:Connect(function(deltaTime)
 
 
     -- ==========================================
-    -- 2. ESP (0.25s): 4 actualizaciones/s son suficientes para etiquetas.
+    -- 2. ESP GLOW (0.25s)
+    -- Nombre, distancia, box y vida se dibujan en el renderer 2D de abajo.
     -- ==========================================
     if espEnabled then
         mState.espAct = true
@@ -11817,127 +11827,59 @@ runtime.Track(RunService.Heartbeat:Connect(function(deltaTime)
                 local myChar = player.Character
                 local myCore = myChar and getCharCore(myChar) or nil
                 local myPos = (myCore and myCore.Head and myCore.Head.Position) or nil
-
-                if mState.lastEspColor ~= espColor then
-                    mState.lastEspColor = espColor
-                    mState.espHex = string.format(
-                        "#%02X%02X%02X",
-                        math_floor(espColor.R * 255 + 0.5),
-                        math_floor(espColor.G * 255 + 0.5),
-                        math_floor(espColor.B * 255 + 0.5)
-                    )
-                end
-
                 local enemies, enemyCount = runtime.GetEnemySnapshot()
+
                 for i = 1, enemyCount do
                     local enemy = enemies[i]
                     local p = enemy.Player
                     local char = enemy.Character
-                    local core = enemy.Core
-                    local targetHum = enemy.Humanoid
                     local targetHead = enemy.Head
-                    if myPos and enemy.Alive and targetHead and enemy.Enemy and not runtime.SnapshotEntryInSafeZone(enemy) then
-                            local delta = targetHead.Position - myPos
-                            local distSq = delta:Dot(delta)
-                            
-                            if distSq <= mState.maxEspDistanceSq then
-                                local dist = math.sqrt(distSq)
-                                if activeESPs[p] and activeESPs[p].Char ~= char then cleanESP(p) end
 
-                                -- Duels puede reconstruir Head/partes dentro del MISMO Character.
-                                -- Si algún objeto del ESP fue destruido o quedó inválido, lo recreamos.
-                                if activeESPs[p] then
-                                    local cachedESP = activeESPs[p]
-                                    if not cachedESP.Highlight or not cachedESP.Highlight.Parent
-                                        or not cachedESP.Billboard or not cachedESP.Billboard.Parent
-                                        or not cachedESP.Text or not cachedESP.Text.Parent then
-                                        cleanESP(p)
-                                    end
-                                end
-                                
-                                if not activeESPs[p] then
-                                    local highlight = Instance.new("Highlight") 
-                                    highlight.Name = p.Name.."_Glow" 
-                                    highlight.FillTransparency = 0.6
-                                    highlight.OutlineTransparency = 1 
-                                    highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop 
-                                    highlight.Adornee = char 
-                                    highlight.Parent = espFolder
-                                    
-                                    local billboard = Instance.new("BillboardGui") 
-                                    billboard.Name = p.Name.."_Tag" 
-                                    billboard.Size = UDim2.new(0, 200, 0, 50) 
-                                    billboard.StudsOffset = Vector3.new(0, 3.5, 0) 
-                                    billboard.AlwaysOnTop = true 
-                                    billboard.Adornee = targetHead 
-                                    billboard.Parent = espFolder
-                                    
-                                    local textLabel = Instance.new("TextLabel") 
-                                    textLabel.Size = UDim2.new(1, 0, 1, 0) 
-                                    textLabel.BackgroundTransparency = 1 
-                                    textLabel.TextStrokeTransparency = 1 
-                                    textLabel.RichText = true 
-                                    textLabel.Font = Enum.Font.SourceSansBold 
-                                    textLabel.TextSize = 14
-                                    textLabel.TextYAlignment = Enum.TextYAlignment.Bottom 
-                                    textLabel.Parent = billboard
+                    if myPos and enemy.Alive and targetHead and enemy.Enemy
+                        and not runtime.SnapshotEntryInSafeZone(enemy) then
+                        local delta = targetHead.Position - myPos
+                        local distSq = delta:Dot(delta)
 
-                                    local stroke = Instance.new("UIStroke")
-                                    stroke.Color = Color3.fromRGB(0, 0, 0)
-                                    stroke.Thickness = 1.2
-                                    stroke.Parent = textLabel
-                                    
-                                    activeESPs[p] = {
-                                        Highlight = highlight,
-                                        Billboard = billboard,
-                                        Char = char,
-                                        Text = textLabel,
-                                        LastDistance = -1,
-                                        LastNameEnabled = nil,
-                                        LastDistanceEnabled = nil,
-                                        LastHex = nil,
-                                    }
-                                end
-                                
-                                local espObj = activeESPs[p]
-                                if espObj.Highlight.Enabled ~= espSettings.Glow then espObj.Highlight.Enabled = espSettings.Glow end
-                                if espObj.Highlight.FillColor ~= espColor then espObj.Highlight.FillColor = espColor end
+                        if distSq <= mState.maxEspDistanceSq then
+                            if activeESPs[p] and activeESPs[p].Char ~= char then cleanESP(p) end
 
-                                -- El Character puede seguir siendo el mismo aunque Duels reemplace la Head.
-                                -- Reengancha el nombre a la cabeza ACTUAL sin destruir/recrear el ESP.
-                                if espObj.Billboard.Adornee ~= targetHead then
-                                    espObj.Billboard.Adornee = targetHead
-                                    espObj.LastDistance = -1
-                                end
-                                
-                                local distanceInt = math_floor(dist)
-                                if espObj.LastDistance ~= distanceInt
-                                    or espObj.LastNameEnabled ~= espSettings.Name
-                                    or espObj.LastDistanceEnabled ~= espSettings.Distance
-                                    or espObj.LastHex ~= mState.espHex then
-                                    local infoText = ""
-                                    if espSettings.Name then
-                                        infoText = '<font color="' .. mState.espHex .. '">' .. p.Name .. '</font>'
-                                    end
-                                    if espSettings.Distance then
-                                        infoText = infoText .. (infoText == "" and "" or "\n") .. '<font size="11" color="#bdc3c7">' .. distanceInt .. 'm</font>'
-                                    end
+                            local espObj = activeESPs[p]
+                            if espObj and (not espObj.Highlight or not espObj.Highlight.Parent) then
+                                cleanESP(p)
+                                espObj = nil
+                            end
 
-                                    espObj.LastDistance = distanceInt
-                                    espObj.LastNameEnabled = espSettings.Name
-                                    espObj.LastDistanceEnabled = espSettings.Distance
-                                    espObj.LastHex = mState.espHex
+                            if not espObj then
+                                local highlight = Instance.new("Highlight")
+                                highlight.Name = p.Name .. "_Glow"
+                                highlight.FillTransparency = 0.6
+                                highlight.OutlineTransparency = 1
+                                highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+                                highlight.Adornee = char
+                                highlight.Parent = getESPHighlightParent()
 
-                                    if infoText ~= "" then
-                                        if not espObj.Billboard.Enabled then espObj.Billboard.Enabled = true end
-                                        espObj.Text.Text = infoText
-                                    elseif espObj.Billboard.Enabled then
-                                        espObj.Billboard.Enabled = false
-                                    end
-                                end
-                            else hideESP(p) end
-                        else hideESP(p) end
+                                espObj = {
+                                    Highlight = highlight,
+                                    Char = char,
+                                }
+                                activeESPs[p] = espObj
+                            end
+
+                            local highlight = espObj.Highlight
+                            local desiredParent = getESPHighlightParent()
+                            if highlight.Parent ~= desiredParent then highlight.Parent = desiredParent end
+                            if highlight.Adornee ~= char then highlight.Adornee = char end
+                            if highlight.Enabled ~= espSettings.Glow then highlight.Enabled = espSettings.Glow end
+                            if highlight.FillColor ~= espColor then highlight.FillColor = espColor end
+                        else
+                            hideESP(p)
+                        end
+                    else
+                        hideESP(p)
+                    end
                 end
+            else
+                for i = 1, #listaJugadores do hideESP(listaJugadores[i]) end
             end
         end
     elseif mState.espAct then
@@ -14790,8 +14732,20 @@ UIElements.ColEsp = Tabs.Vis:Colorpicker({Title = "Color del ESP", Default = Col
 
 Tabs.Vis:Section({Title = "Capas del ESP"})
 UIElements.TogEspGl = Tabs.Vis:Toggle({Title = "Mostrar Resplandor", Value = true, Callback = function(s) espSettings.Glow = s end})
-UIElements.TogEspNm = Tabs.Vis:Toggle({Title = "Mostrar Nombre", Value = true, Callback = function(s) espSettings.Name = s end})
-UIElements.TogEspDs = Tabs.Vis:Toggle({Title = "Mostrar Distancia", Value = true, Callback = function(s) espSettings.Distance = s end})
+UIElements.TogEspNm = Tabs.Vis:Toggle({
+    Title = "Mostrar Nombre", Value = true,
+    Callback = function(s)
+        espSettings.Name = s
+        if runtime.UpdateESP2DRenderConnection then runtime.UpdateESP2DRenderConnection() end
+    end
+})
+UIElements.TogEspDs = Tabs.Vis:Toggle({
+    Title = "Mostrar Distancia", Value = true,
+    Callback = function(s)
+        espSettings.Distance = s
+        if runtime.UpdateESP2DRenderConnection then runtime.UpdateESP2DRenderConnection() end
+    end
+})
 UIElements.TogEspBox = Tabs.Vis:Toggle({
     Title = "ESP Box 2D",
     Desc = "Caja anclada al enemigo",
@@ -14848,6 +14802,8 @@ function runtime.HideESP2DEntry(entry)
     if entry.Box and entry.Box.Visible then entry.Box.Visible = false end
     if entry.HealthBg and entry.HealthBg.Visible then entry.HealthBg.Visible = false end
     if entry.Health and entry.Health.Visible then entry.Health.Visible = false end
+    if entry.NameText and entry.NameText.Visible then entry.NameText.Visible = false end
+    if entry.DistanceText and entry.DistanceText.Visible then entry.DistanceText.Visible = false end
 end
 
 function runtime.HideAllESP2D()
@@ -14884,6 +14840,25 @@ function runtime.GetESP2DEntry(p)
     health.Visible = false
     entry.Health = health
 
+    local nameText = runtime.TrackDrawing(Drawing.new("Text"))
+    nameText.Center = true
+    nameText.Outline = true
+    nameText.OutlineColor = Color3.fromRGB(0, 0, 0)
+    nameText.Size = 14
+    nameText.Transparency = 1
+    nameText.Visible = false
+    entry.NameText = nameText
+
+    local distanceText = runtime.TrackDrawing(Drawing.new("Text"))
+    distanceText.Center = true
+    distanceText.Outline = true
+    distanceText.OutlineColor = Color3.fromRGB(0, 0, 0)
+    distanceText.Size = 12
+    distanceText.Transparency = 0.95
+    distanceText.Color = Color3.fromRGB(189, 195, 199)
+    distanceText.Visible = false
+    entry.DistanceText = distanceText
+
     runtime.ESP2D[p] = entry
     return entry
 end
@@ -14904,7 +14879,7 @@ function runtime.RenderESP2D(deltaTime)
     tracerAccumulator = tracerAccumulator - TRACER_INTERVAL
 
     local camera = workspace.CurrentCamera
-    local wantsESP2D = espEnabled and (espSettings.Box or espSettings.HealthBar)
+    local wantsESP2D = espEnabled and (espSettings.Name or espSettings.Distance or espSettings.Box or espSettings.HealthBar)
     if not fovVisiblePreference and not espLinesEnabled and not wantsESP2D then
         if FOVCircle.Visible then FOVCircle.Visible = false end
         hideTracersOnce()
@@ -14949,10 +14924,12 @@ function runtime.RenderESP2D(deltaTime)
             local hum = core and core.Humanoid
             local valid = false
             local rootScreen, onScreen
+            local playerDistSq = math.huge
 
             if hrp and hum and hum.Health > 0 and isEnemy(p) and not enemigoEnLobby(char, hrp, core) then
                 local delta = myPos - hrp.Position
-                if delta:Dot(delta) <= MAX_ESP_DISTANCE_SQ then
+                playerDistSq = delta:Dot(delta)
+                if playerDistSq <= MAX_ESP_DISTANCE_SQ then
                     rootScreen, onScreen = camera:WorldToViewportPoint(hrp.Position)
                     valid = onScreen and rootScreen.Z > 0
                 end
@@ -15041,6 +15018,25 @@ function runtime.RenderESP2D(deltaTime)
                         if entry.HealthBg.Visible then entry.HealthBg.Visible = false end
                         if entry.Health.Visible then entry.Health.Visible = false end
                     end
+
+                    local labelY = y - 18
+                    if espSettings.Name and entry.NameText then
+                        entry.NameText.Text = p.Name
+                        entry.NameText.Position = Vector2_new(rootScreen.X, labelY)
+                        entry.NameText.Color = espColor
+                        if not entry.NameText.Visible then entry.NameText.Visible = true end
+                        labelY = labelY + 15
+                    elseif entry.NameText and entry.NameText.Visible then
+                        entry.NameText.Visible = false
+                    end
+
+                    if espSettings.Distance and entry.DistanceText then
+                        entry.DistanceText.Text = tostring(math_floor(math.sqrt(playerDistSq))) .. "m"
+                        entry.DistanceText.Position = Vector2_new(rootScreen.X, labelY)
+                        if not entry.DistanceText.Visible then entry.DistanceText.Visible = true end
+                    elseif entry.DistanceText and entry.DistanceText.Visible then
+                        entry.DistanceText.Visible = false
+                    end
                 else
                     runtime.HideESP2DEntry(entry)
                 end
@@ -15054,7 +15050,7 @@ end
 runtime.ESP2DRenderConnection = nil
 function runtime.UpdateESP2DRenderConnection()
     local wantsESP2D = fovVisiblePreference
-        or (espEnabled and (espLinesEnabled or espSettings.Box or espSettings.HealthBar))
+        or (espEnabled and (espLinesEnabled or espSettings.Name or espSettings.Distance or espSettings.Box or espSettings.HealthBar))
     local connection = runtime.ESP2DRenderConnection
 
     if wantsESP2D then
@@ -15090,6 +15086,8 @@ runtime.Track(Players.PlayerRemoving:Connect(function(p)
         runtime.RemoveDrawing(entry.Box)
         runtime.RemoveDrawing(entry.HealthBg)
         runtime.RemoveDrawing(entry.Health)
+        runtime.RemoveDrawing(entry.NameText)
+        runtime.RemoveDrawing(entry.DistanceText)
         runtime.ESP2D[p] = nil
     end
     cleanESP(p)

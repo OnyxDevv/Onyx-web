@@ -1,9 +1,6 @@
 --==============================================================
--- Xero | Runtime Emote Spy
+-- Xero | Runtime Emote Spy V2
 -- Creator: Kev
---
--- Ejecutar ANTES del script ofuscado.
--- No modifica llamadas; solamente observa y registra.
 --==============================================================
 
 local Players = game:GetService("Players")
@@ -17,14 +14,6 @@ local playerGui = player:WaitForChild("PlayerGui")
 local recording = false
 local logs = {}
 local hookedAnimators = setmetatable({}, {__mode = "k"})
-local connections = {}
-
-local function track(c)
-    if c then
-        connections[#connections + 1] = c
-    end
-    return c
-end
 
 --==============================================================
 -- HELPERS
@@ -49,67 +38,61 @@ local function serialize(value, depth)
         return "..."
     end
 
-    local kind = typeof(value)
+    local t = typeof(value)
 
-    if kind == "Instance" then
+    if t == "Instance" then
         return "<" .. value.ClassName .. "> " .. fullPath(value)
 
-    elseif kind == "string" then
-        if #value > 180 then
-            value = value:sub(1, 180) .. "..."
+    elseif t == "string" then
+        if #value > 150 then
+            value = value:sub(1, 150) .. "..."
         end
+
         return '"' .. value .. '"'
 
-    elseif kind == "table" then
-        local parts = {}
+    elseif t == "table" then
+        local result = {}
         local count = 0
 
         for k, v in pairs(value) do
             count += 1
 
-            if count > 12 then
-                parts[#parts + 1] = "..."
+            if count > 10 then
+                result[#result + 1] = "..."
                 break
             end
 
-            parts[#parts + 1] =
+            result[#result + 1] =
                 "[" .. serialize(k, depth + 1) .. "]=" ..
                 serialize(v, depth + 1)
         end
 
-        return "{" .. table.concat(parts, ", ") .. "}"
-
-    else
-        return tostring(value)
+        return "{" .. table.concat(result, ", ") .. "}"
     end
+
+    return tostring(value)
 end
 
-local function serializeArgs(...)
-    local args = {...}
+local function serializePackedArgs(args)
     local out = {}
 
-    for i = 1, math.min(#args, 15) do
+    local count = args.n or #args
+
+    for i = 1, math.min(count, 15) do
         out[#out + 1] =
             "[" .. i .. "] " .. serialize(args[i])
+    end
+
+    if #out == 0 then
+        return "(sin argumentos)"
     end
 
     return table.concat(out, "\n")
 end
 
 --==============================================================
--- UI
+-- GUI
 --==============================================================
-
-local old = playerGui:FindFirstChild("XeroRuntimeEmoteSpy")
-if old then
-    old:Destroy()
-end
-
-local gui = Instance.new("ScreenGui")
-gui.Name = "XeroRuntimeEmoteSpy"
-gui.ResetOnSpawn = false
-gui.IgnoreGuiInset = true
-gui.DisplayOrder = 999999
 
 local guiParent = playerGui
 
@@ -119,11 +102,24 @@ pcall(function()
     end
 end)
 
+local old =
+    guiParent:FindFirstChild("XeroRuntimeEmoteSpy")
+    or playerGui:FindFirstChild("XeroRuntimeEmoteSpy")
+
+if old then
+    old:Destroy()
+end
+
+local gui = Instance.new("ScreenGui")
+gui.Name = "XeroRuntimeEmoteSpy"
+gui.ResetOnSpawn = false
+gui.IgnoreGuiInset = true
+gui.DisplayOrder = 999999
 gui.Parent = guiParent
 
 local main = Instance.new("Frame")
-main.Size = UDim2.fromOffset(600, 450)
-main.Position = UDim2.new(0.5, -300, 0.5, -225)
+main.Size = UDim2.fromOffset(600, 440)
+main.Position = UDim2.new(0.5, -300, 0.5, -220)
 main.BackgroundColor3 = Color3.fromRGB(9, 9, 9)
 main.BorderSizePixel = 0
 main.Parent = gui
@@ -131,27 +127,28 @@ main.Parent = gui
 Instance.new("UICorner", main).CornerRadius = UDim.new(0, 16)
 
 local stroke = Instance.new("UIStroke")
-stroke.Color = Color3.fromRGB(55, 55, 55)
+stroke.Color = Color3.fromRGB(60, 60, 60)
+stroke.Thickness = 1
 stroke.Parent = main
 
 local title = Instance.new("TextLabel")
-title.Size = UDim2.new(1, -30, 0, 30)
-title.Position = UDim2.fromOffset(15, 10)
+title.Size = UDim2.new(1, -30, 0, 28)
+title.Position = UDim2.fromOffset(15, 11)
 title.BackgroundTransparency = 1
-title.Text = "XERO | RUNTIME EMOTE SPY"
+title.Text = "XERO | RUNTIME EMOTE SPY V2"
 title.TextColor3 = Color3.fromRGB(245, 245, 245)
 title.Font = Enum.Font.GothamBold
-title.TextSize = 16
+title.TextSize = 15
 title.TextXAlignment = Enum.TextXAlignment.Left
 title.Active = true
 title.Parent = main
 
 local status = Instance.new("TextLabel")
 status.Size = UDim2.new(1, -30, 0, 18)
-status.Position = UDim2.fromOffset(15, 39)
+status.Position = UDim2.fromOffset(15, 40)
 status.BackgroundTransparency = 1
-status.Text = "DETENIDO · inicia grabación antes de usar el otro script"
-status.TextColor3 = Color3.fromRGB(145, 145, 145)
+status.Text = "DETENIDO"
+status.TextColor3 = Color3.fromRGB(140, 140, 140)
 status.Font = Enum.Font.Gotham
 status.TextSize = 11
 status.TextXAlignment = Enum.TextXAlignment.Left
@@ -159,14 +156,14 @@ status.Parent = main
 
 local buttons = Instance.new("Frame")
 buttons.Size = UDim2.new(1, -30, 0, 35)
-buttons.Position = UDim2.fromOffset(15, 66)
+buttons.Position = UDim2.fromOffset(15, 67)
 buttons.BackgroundTransparency = 1
 buttons.Parent = main
 
-local list = Instance.new("UIListLayout")
-list.FillDirection = Enum.FillDirection.Horizontal
-list.Padding = UDim.new(0, 7)
-list.Parent = buttons
+local layout = Instance.new("UIListLayout")
+layout.FillDirection = Enum.FillDirection.Horizontal
+layout.Padding = UDim.new(0, 7)
+layout.Parent = buttons
 
 local function makeButton(text, width)
     local b = Instance.new("TextButton")
@@ -174,7 +171,7 @@ local function makeButton(text, width)
     b.BackgroundColor3 = Color3.fromRGB(24, 24, 24)
     b.BorderSizePixel = 0
     b.Text = text
-    b.TextColor3 = Color3.fromRGB(225, 225, 225)
+    b.TextColor3 = Color3.fromRGB(230, 230, 230)
     b.Font = Enum.Font.GothamMedium
     b.TextSize = 11
     b.Parent = buttons
@@ -206,36 +203,35 @@ padding.PaddingLeft = UDim.new(0, 8)
 padding.PaddingRight = UDim.new(0, 8)
 padding.Parent = output
 
-local outputLayout = Instance.new("UIListLayout")
-outputLayout.Padding = UDim.new(0, 5)
-outputLayout.Parent = output
+local list = Instance.new("UIListLayout")
+list.Padding = UDim.new(0, 5)
+list.Parent = output
 
-outputLayout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
+list:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
     output.CanvasSize =
-        UDim2.fromOffset(0, outputLayout.AbsoluteContentSize.Y + 16)
+        UDim2.fromOffset(0, list.AbsoluteContentSize.Y + 16)
 end)
 
-local function addLog(category, message)
-    if not recording and category ~= "SYSTEM" then
+local function addLog(category, message, force)
+    if not recording and not force then
         return
     end
 
-    local final =
+    local text =
         "[" .. tostring(category) .. "]\n" ..
         tostring(message)
 
-    logs[#logs + 1] = final
+    logs[#logs + 1] = text
 
-    print("\n[Xero Runtime Spy]\n" .. final)
+    print("\n[Xero Emote Spy]\n" .. text)
 
     local label = Instance.new("TextLabel")
     label.AutomaticSize = Enum.AutomaticSize.Y
     label.Size = UDim2.new(1, -5, 0, 0)
     label.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
-    label.BackgroundTransparency = 0.2
     label.BorderSizePixel = 0
-    label.Text = final
-    label.TextColor3 = Color3.fromRGB(210, 210, 210)
+    label.Text = text
+    label.TextColor3 = Color3.fromRGB(215, 215, 215)
     label.Font = Enum.Font.Code
     label.TextSize = 11
     label.TextWrapped = true
@@ -243,20 +239,18 @@ local function addLog(category, message)
     label.TextYAlignment = Enum.TextYAlignment.Top
     label.Parent = output
 
-    local pad = Instance.new("UIPadding")
-    pad.PaddingTop = UDim.new(0, 7)
-    pad.PaddingBottom = UDim.new(0, 7)
-    pad.PaddingLeft = UDim.new(0, 8)
-    pad.PaddingRight = UDim.new(0, 8)
-    pad.Parent = label
+    local p = Instance.new("UIPadding")
+    p.PaddingTop = UDim.new(0, 7)
+    p.PaddingBottom = UDim.new(0, 7)
+    p.PaddingLeft = UDim.new(0, 8)
+    p.PaddingRight = UDim.new(0, 8)
+    p.Parent = label
 
     Instance.new("UICorner", label).CornerRadius = UDim.new(0, 7)
 
     task.defer(function()
-        output.CanvasPosition = Vector2.new(
-            0,
-            math.max(0, outputLayout.AbsoluteContentSize.Y)
-        )
+        output.CanvasPosition =
+            Vector2.new(0, math.max(0, list.AbsoluteContentSize.Y))
     end)
 end
 
@@ -271,47 +265,43 @@ local function watchAnimator(animator)
 
     hookedAnimators[animator] = true
 
-    track(animator.AnimationPlayed:Connect(function(trackObject)
+    animator.AnimationPlayed:Connect(function(track)
         if not recording then
             return
         end
 
-        local animation = trackObject.Animation
+        local animation = track.Animation
 
         local id = "?"
-        local animationPath = "?"
+        local animPath = "?"
 
         if animation then
             id = tostring(animation.AnimationId)
-            animationPath = fullPath(animation)
+            animPath = fullPath(animation)
         end
 
         local priority = "?"
         local looped = "?"
 
         pcall(function()
-            priority = tostring(trackObject.Priority)
-            looped = tostring(trackObject.Looped)
+            priority = tostring(track.Priority)
+            looped = tostring(track.Looped)
         end)
 
         addLog(
             "ANIMATION PLAYED",
             "Animator: " .. fullPath(animator) ..
             "\nAnimationId: " .. id ..
-            "\nAnimation: " .. animationPath ..
+            "\nAnimation: " .. animPath ..
             "\nPriority: " .. priority ..
             "\nLooped: " .. looped
         )
-    end))
+    end)
 end
 
-local function scanAnimators(root)
+local function scanForAnimators(root)
     if not root then
         return
-    end
-
-    if root:IsA("Animator") then
-        watchAnimator(root)
     end
 
     for _, obj in ipairs(root:GetDescendants()) do
@@ -321,46 +311,44 @@ local function scanAnimators(root)
     end
 end
 
-scanAnimators(Workspace)
-scanAnimators(playerGui)
+scanForAnimators(Workspace)
+scanForAnimators(playerGui)
 
-track(Workspace.DescendantAdded:Connect(function(obj)
+Workspace.DescendantAdded:Connect(function(obj)
     if obj:IsA("Animator") then
         watchAnimator(obj)
     end
-end))
+end)
 
-track(playerGui.DescendantAdded:Connect(function(obj)
+playerGui.DescendantAdded:Connect(function(obj)
     if obj:IsA("Animator") then
         watchAnimator(obj)
     end
-end))
+end)
 
 --==============================================================
--- EMOTE-SPECIFIC INSTANCE WATCHER
+-- EMOTE OBJECT WATCHER
 --==============================================================
 
-local function relevantPath(obj)
+local function isEmotePath(obj)
     local p = string.lower(fullPath(obj))
 
-    return p:find("emote", 1, true)
-        or p:find("emotewheel", 1, true)
-        or p:find("emoteanimations", 1, true)
+    return p:find("emote", 1, true) ~= nil
 end
 
-local function inspectNewObject(obj)
+local function inspectCreated(obj)
     if not recording then
         return
     end
 
-    if obj:IsA("Animation") and relevantPath(obj) then
+    if obj:IsA("Animation") and isEmotePath(obj) then
         addLog(
-            "NEW ANIMATION",
+            "EMOTE ANIMATION CREATED",
             "Ruta: " .. fullPath(obj) ..
             "\nAnimationId: " .. tostring(obj.AnimationId)
         )
 
-        track(obj:GetPropertyChangedSignal("AnimationId"):Connect(function()
+        obj:GetPropertyChangedSignal("AnimationId"):Connect(function()
             if recording then
                 addLog(
                     "ANIMATION ID CHANGED",
@@ -368,61 +356,47 @@ local function inspectNewObject(obj)
                     "\nAnimationId: " .. tostring(obj.AnimationId)
                 )
             end
-        end))
-
-    elseif relevantPath(obj) then
-        if obj:IsA("StringValue")
-            or obj:IsA("IntValue")
-            or obj:IsA("NumberValue")
-            or obj:IsA("BoolValue") then
-
-            addLog(
-                "EMOTE OBJECT",
-                "Clase: " .. obj.ClassName ..
-                "\nRuta: " .. fullPath(obj) ..
-                "\nValue: " .. tostring(obj.Value)
-            )
-        end
+        end)
     end
 end
 
-track(playerGui.DescendantAdded:Connect(inspectNewObject))
-track(Workspace.DescendantAdded:Connect(inspectNewObject))
-track(ReplicatedStorage.DescendantAdded:Connect(inspectNewObject))
+Workspace.DescendantAdded:Connect(inspectCreated)
+playerGui.DescendantAdded:Connect(inspectCreated)
+ReplicatedStorage.DescendantAdded:Connect(inspectCreated)
 
 --==============================================================
--- __namecall SPY
+-- __NAMECALL SPY
 --==============================================================
 
-local namecallInstalled = false
-local hookBusy = false
+local namecallStatus = "NO SOPORTADO"
 
-if hookmetamethod and getnamecallmethod and newcclosure then
+if type(hookmetamethod) == "function"
+    and type(getnamecallmethod) == "function" then
+
     local oldNamecall
+    local busy = false
 
-    oldNamecall = hookmetamethod(
-        game,
-        "__namecall",
-        newcclosure(function(self, ...)
-            local method = getnamecallmethod()
+    local function hookFunction(self, ...)
+        local args = table.pack(...)
+        local method = getnamecallmethod()
 
-            if hookBusy or not recording then
-                return oldNamecall(self, ...)
-            end
-
+        if recording and not busy then
             local shouldLog =
                 method == "FireServer"
                 or method == "InvokeServer"
                 or method == "LoadAnimation"
 
             if shouldLog then
-                hookBusy = true
+                busy = true
 
-                pcall(function()
-                    local origin = "UNKNOWN"
+                local ok, err = pcall(function()
+                    local origin = "DESCONOCIDO"
 
-                    if checkcaller then
-                        origin = checkcaller() and "EXECUTOR" or "GAME"
+                    if type(checkcaller) == "function" then
+                        origin =
+                            checkcaller()
+                            and "EXECUTOR"
+                            or "GAME"
                     end
 
                     if method == "FireServer"
@@ -430,14 +404,13 @@ if hookmetamethod and getnamecallmethod and newcclosure then
 
                         addLog(
                             origin .. " REMOTE · " .. method,
-                            "Remote: " .. fullPath(self) ..
+                            "Ruta: " .. fullPath(self) ..
                             "\nClase: " .. tostring(self.ClassName) ..
                             "\nArgumentos:\n" ..
-                            serializeArgs(...)
+                            serializePackedArgs(args)
                         )
 
                     elseif method == "LoadAnimation" then
-                        local args = {...}
                         local animation = args[1]
 
                         local id = "?"
@@ -459,14 +432,40 @@ if hookmetamethod and getnamecallmethod and newcclosure then
                     end
                 end)
 
-                hookBusy = false
+                if not ok then
+                    warn("[Xero Spy hook]", err)
+                end
+
+                busy = false
             end
+        end
 
-            return oldNamecall(self, ...)
-        end)
-    )
+        return oldNamecall(
+            self,
+            table.unpack(args, 1, args.n)
+        )
+    end
 
-    namecallInstalled = true
+    local wrapper = hookFunction
+
+    if type(newcclosure) == "function" then
+        wrapper = newcclosure(hookFunction)
+    end
+
+    local success, result = pcall(function()
+        oldNamecall = hookmetamethod(
+            game,
+            "__namecall",
+            wrapper
+        )
+    end)
+
+    if success and oldNamecall then
+        namecallStatus = "OK"
+    else
+        namecallStatus =
+            "ERROR: " .. tostring(result)
+    end
 end
 
 --==============================================================
@@ -478,12 +477,13 @@ recordButton.MouseButton1Click:Connect(function()
 
     if recording then
         recordButton.Text = "DETENER"
-        status.Text = "GRABANDO · ahora usa UN emote del script ofuscado"
+        status.Text =
+            "GRABANDO · ahora ejecuta el otro script y haz un emote"
 
         addLog(
             "SYSTEM",
-            "Grabación iniciada.\n" ..
-            "Ahora ejecuta/usa el script ofuscado y activa solamente un emote."
+            "Grabación iniciada.",
+            true
         )
     else
         recordButton.Text = "INICIAR"
@@ -491,7 +491,8 @@ recordButton.MouseButton1Click:Connect(function()
 
         addLog(
             "SYSTEM",
-            "Grabación detenida."
+            "Grabación detenida.",
+            true
         )
     end
 end)
@@ -499,23 +500,27 @@ end)
 clearButton.MouseButton1Click:Connect(function()
     table.clear(logs)
 
-    for _, child in ipairs(output:GetChildren()) do
-        if child:IsA("TextLabel") then
-            child:Destroy()
+    for _, obj in ipairs(output:GetChildren()) do
+        if obj:IsA("TextLabel") then
+            obj:Destroy()
         end
     end
 end)
 
 copyButton.MouseButton1Click:Connect(function()
-    if setclipboard then
-        pcall(
-            setclipboard,
-            table.concat(logs, "\n\n")
-        )
+    if type(setclipboard) == "function" then
+        setclipboard(table.concat(logs, "\n\n"))
 
         addLog(
             "SYSTEM",
-            "Reporte copiado."
+            "Reporte copiado.",
+            true
+        )
+    else
+        addLog(
+            "SYSTEM",
+            "setclipboard no disponible.",
+            true
         )
     end
 end)
@@ -525,16 +530,16 @@ end)
 --==============================================================
 
 local dragging = false
-local dragStart
-local startingPosition
+local startMouse
+local startPosition
 
 title.InputBegan:Connect(function(input)
     if input.UserInputType == Enum.UserInputType.MouseButton1
         or input.UserInputType == Enum.UserInputType.Touch then
 
         dragging = true
-        dragStart = input.Position
-        startingPosition = main.Position
+        startMouse = input.Position
+        startPosition = main.Position
     end
 end)
 
@@ -546,13 +551,13 @@ UserInputService.InputChanged:Connect(function(input)
     if input.UserInputType == Enum.UserInputType.MouseMovement
         or input.UserInputType == Enum.UserInputType.Touch then
 
-        local delta = input.Position - dragStart
+        local delta = input.Position - startMouse
 
         main.Position = UDim2.new(
-            startingPosition.X.Scale,
-            startingPosition.X.Offset + delta.X,
-            startingPosition.Y.Scale,
-            startingPosition.Y.Offset + delta.Y
+            startPosition.X.Scale,
+            startPosition.X.Offset + delta.X,
+            startPosition.Y.Scale,
+            startPosition.Y.Offset + delta.Y
         )
     end
 end)
@@ -569,12 +574,12 @@ end)
 
 addLog(
     "SYSTEM",
-    "Scanner cargado.\n" ..
-    "Namecall Spy: " .. (namecallInstalled and "OK" or "NO DISPONIBLE") ..
-    "\n\nOrden:\n" ..
-    "1. INICIAR\n" ..
-    "2. Ejecutar el script ofuscado\n" ..
-    "3. Hacer UN emote\n" ..
-    "4. DETENER\n" ..
-    "5. COPIAR TODO"
+    "Scanner cargado correctamente.\n" ..
+    "__namecall: " .. namecallStatus ..
+    "\n\n1. Pulsa INICIAR" ..
+    "\n2. Ejecuta el script ofuscado" ..
+    "\n3. Selecciona UN emote" ..
+    "\n4. Pulsa DETENER" ..
+    "\n5. COPIAR TODO",
+    true
 )

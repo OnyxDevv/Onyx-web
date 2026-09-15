@@ -11318,10 +11318,10 @@ local function hideESP(targetPlayer)
     if espObj.Highlight and espObj.Highlight.Enabled then espObj.Highlight.Enabled = false end
 end
 
--- Los Highlights quedan fuera del Character. Al ser cliente-locales y descendientes
--- de Workspace (CurrentCamera), siguen renderizando sin insertar hijos en el enemigo.
+-- El Highlight permanece fuera del Character, pero se parenta directamente a
+-- Workspace, que Roblox soporta oficialmente para Highlights con Adornee externo.
 local function getESPHighlightParent()
-    return workspace.CurrentCamera or workspace
+    return workspace
 end
 
 runtime.ESPVisualCleanup = function()

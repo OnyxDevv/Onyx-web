@@ -36,6 +36,10 @@ local VERT = Vector3.new(0.07, 0.07, 0.08)
 local originals = setmetatable({}, {__mode = "k"})
 local currentReport = nil
 
+-- Textura personalizada de prueba (plantilla del cuchillo de lobby)
+local CUSTOM_KNIFE_TEXTURE_ID = "122114929807745"
+
+
 local function parentGui()
     local ok, gui = pcall(function()
         return gethui and gethui() or CoreGui
@@ -345,6 +349,43 @@ local function applyBlackLobby()
     return changed
 end
 
+local function applyXeroKnifeTexture()
+    local char = player.Character
+    if not char then
+        return false, "No hay Character cargado."
+    end
+
+    local knifeFolder = char:FindFirstChild("KnifePartsFolder", true)
+    if not knifeFolder then
+        return false, "No encontré KnifePartsFolder en tu personaje."
+    end
+
+    local knifeDisplay = knifeFolder:FindFirstChild("KnifeDisplay", true)
+    if not knifeDisplay then
+        return false, "Encontré KnifePartsFolder, pero no KnifeDisplay."
+    end
+
+    local mesh = knifeDisplay:FindFirstChildWhichIsA("SpecialMesh", true)
+    if not mesh then
+        return false, "Encontré KnifeDisplay, pero no su SpecialMesh."
+    end
+
+    -- Guardamos el original para que el botón Restaurar siga funcionando.
+    remember(mesh)
+
+    local ok, err = pcall(function()
+        -- Evita que una prueba previa de Negro mate deje la textura oscurecida.
+        mesh.VertexColor = Vector3.new(1, 1, 1)
+        mesh.TextureId = "rbxassetid://" .. CUSTOM_KNIFE_TEXTURE_ID
+    end)
+
+    if not ok then
+        return false, tostring(err)
+    end
+
+    return true, mesh:GetFullName()
+end
+
 local function restore()
     for object, data in pairs(originals) do
         pcall(function()
@@ -410,7 +451,7 @@ local sub = Instance.new("TextLabel")
 sub.Size = UDim2.new(1, -36, 0, 34)
 sub.Position = UDim2.fromOffset(18, 46)
 sub.BackgroundTransparency = 1
-sub.Text = "Escanea MeshId / TextureID / SurfaceAppearance y prueba Negro mate. By Kev"
+sub.Text = "Escanea texturas y prueba la skin XeroHub del cuchillo. By Kev"
 sub.TextColor3 = Color3.fromRGB(155, 155, 165)
 sub.Font = Enum.Font.Gotham
 sub.TextSize = 11
@@ -505,6 +546,15 @@ end)
 
 button("Escanear Replicated", function()
     showReport(scanReplicatedWeapons())
+end)
+
+button("XeroHub cuchillo", function()
+    local ok, info = applyXeroKnifeTexture()
+    if ok then
+        output.Text = "Textura XeroHub aplicada al cuchillo del lobby.\n\nID: " .. CUSTOM_KNIFE_TEXTURE_ID .. "\nRuta: " .. tostring(info) .. "\n\nSi no aparece, revisa que el asset ya haya terminado moderación."
+    else
+        output.Text = "No se pudo aplicar la textura XeroHub.\n\n" .. tostring(info)
+    end
 end)
 
 button("Negro lobby", function()

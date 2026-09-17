@@ -1,823 +1,330 @@
--- XeroHub | Texture Probe | Kev
--- Herramienta de prueba para inspeccionar texturas/meshes de armas y probar Negro mate.
--- No usa bucles permanentes.
-
 local Players = game:GetService("Players")
-local HttpService = game:GetService("HttpService")
-local CoreGui = game:GetService("CoreGui")
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local LocalPlayer = Players.LocalPlayer
+while not LocalPlayer do task.wait() LocalPlayer = Players.LocalPlayer end
 
-local WEAPON_KEYS = {
-    "gun", "pistol", "revolver", "uzi", "rifle", "sniper", "bow",
-    "knife", "blade", "sword", "reaper", "arrow", "mod",
-    "lightgun", "darknessgun", "kitsune", "bling", "dusk", "spider",
-    "spectral", "stardust", "matcha", "eclipse", "infernal", "ghostbringer",
-    "dragon", "harpon", "harpoon", "nail", "toxic", "galaxy", "gems", "water", "arma",
+local KNIFE_TEXTURE_ID = "rbxassetid://122114929807745"
+local GUN_TEXTURE_ID = "rbxassetid://77978665403713"
+
+local ORIGINAL_KNIFE_TEXTURE = "121944805"
+local ORIGINAL_GUN_TEXTURE = "91723031"
+local ORIGINAL_KNIFE_MESH = "121944778"
+local ORIGINAL_GUN_MESH = "10881397417"
+
+local state = {
+    KnifeEnabled = false,
+    GunEnabled = false,
+    Saved = setmetatable({}, {__mode = "k"}),
+    Connections = {},
 }
 
-local function looksWeapon(name)
-    name = string.lower(tostring(name or ""))
-    for i = 1, #WEAPON_KEYS do
-        if string.find(name, WEAPON_KEYS[i], 1, true) then return true end
+local function assetDigits(value)
+    return tostring(value or ""):match("(%d+)") or ""
+end
+
+local function lowerContains(text, part)
+    return string.find(string.lower(tostring(text or "")), string.lower(part), 1, true) ~= nil
+end
+
+local function track(conn)
+    state.Connections[#state.Connections + 1] = conn
+    return conn
+end
+
+local function disconnectAll()
+    for i = #state.Connections, 1, -1 do
+        pcall(function() state.Connections[i]:Disconnect() end)
+        state.Connections[i] = nil
     end
-    return false
 end
 
-local player = Players.LocalPlayer
-while not player do
-    task.wait()
-    player = Players.LocalPlayer
+local function saveOriginal(obj, key)
+    if not obj or state.Saved[obj] then return end
+    if obj:IsA("SpecialMesh") then
+        state.Saved[obj] = {Class = "SpecialMesh", Key = key, TextureId = obj.TextureId}
+    elseif obj:IsA("MeshPart") then
+        state.Saved[obj] = {Class = "MeshPart", Key = key, TextureID = obj.TextureID}
+    elseif obj:IsA("SurfaceAppearance") then
+        state.Saved[obj] = {Class = "SurfaceAppearance", Key = key, ColorMap = obj.ColorMap}
+    end
 end
 
-local BLACK = Color3.fromRGB(14, 14, 18)
-local EDGE = Color3.fromRGB(28, 28, 34)
-local VERT = Vector3.new(0.07, 0.07, 0.08)
+local function restoreKey(key)
+    for obj, data in pairs(state.Saved) do
+        if data and data.Key == key and obj and obj.Parent then
+            pcall(function()
+                if data.Class == "SpecialMesh" then
+                    obj.TextureId = data.TextureId or ""
+                elseif data.Class == "MeshPart" then
+                    obj.TextureID = data.TextureID or ""
+                elseif data.Class == "SurfaceAppearance" then
+                    obj.ColorMap = data.ColorMap or ""
+                end
+            end)
+        end
+    end
+end
 
-local originals = setmetatable({}, {__mode = "k"})
-local currentReport = nil
+local function shouldTreatAsKnife(obj)
+    local name = string.lower(tostring(obj.Name or ""))
+    if name:find("knife", 1, true) or name:find("blade", 1, true) then return true end
+    local anc = obj:FindFirstAncestorOfClass("Tool")
+    if anc then
+        local tname = string.lower(anc.Name)
+        return tname:find("knife", 1, true) or tname:find("blade", 1, true)
+    end
+    return obj:FindFirstAncestor("KnifePartsFolder") ~= nil
+end
 
--- Textura personalizada de prueba (plantilla del cuchillo de lobby)
-local CUSTOM_KNIFE_TEXTURE_ID = "122114929807745"
-local ORIGINAL_LOBBY_KNIFE_TEXTURE_ID = "121944805"
+local function shouldTreatAsGun(obj)
+    local name = string.lower(tostring(obj.Name or ""))
+    if name:find("gun", 1, true) or name:find("pistol", 1, true) or name:find("revolver", 1, true) then return true end
+    local anc = obj:FindFirstAncestorOfClass("Tool")
+    if anc then
+        local tname = string.lower(anc.Name)
+        return tname:find("gun", 1, true) or tname:find("pistol", 1, true) or tname:find("revolver", 1, true)
+    end
+    return obj:FindFirstAncestor("GunPartsFolder") ~= nil
+end
 
--- Estado de la skin custom: sin loops, sólo eventos de Character/Backpack y cambios de TextureId.
-local xeroKnifeEnabled = false
-local xeroKnifeConnections = {}
-local xeroKnifeMeshBindings = setmetatable({}, {__mode = "k"})
-local xeroKnifeApplying = setmetatable({}, {__mode = "k"})
-
-
-local function parentGui()
-    local ok, gui = pcall(function()
-        return gethui and gethui() or CoreGui
+local function applyKnifeToObject(obj)
+    if not state.KnifeEnabled or not obj then return false end
+    local changed = false
+    pcall(function()
+        if obj:IsA("SpecialMesh") then
+            local tex = assetDigits(obj.TextureId)
+            local mesh = assetDigits(obj.MeshId)
+            if tex == ORIGINAL_KNIFE_TEXTURE or mesh == ORIGINAL_KNIFE_MESH or shouldTreatAsKnife(obj) then
+                saveOriginal(obj, "knife")
+                obj.TextureId = KNIFE_TEXTURE_ID
+                changed = true
+            end
+        elseif obj:IsA("MeshPart") then
+            local tex = assetDigits(obj.TextureID)
+            local mesh = assetDigits(obj.MeshId)
+            if tex == ORIGINAL_KNIFE_TEXTURE or mesh == ORIGINAL_KNIFE_MESH or shouldTreatAsKnife(obj) then
+                saveOriginal(obj, "knife")
+                obj.TextureID = KNIFE_TEXTURE_ID
+                changed = true
+            end
+        elseif obj:IsA("SurfaceAppearance") then
+            if shouldTreatAsKnife(obj) then
+                saveOriginal(obj, "knife")
+                obj.ColorMap = KNIFE_TEXTURE_ID
+                changed = true
+            end
+        end
     end)
-    if ok and gui then return gui end
-    return player:WaitForChild("PlayerGui")
+    return changed
 end
 
-local old = parentGui():FindFirstChild("Xero_TextureProbe")
+local function applyGunToObject(obj)
+    if not state.GunEnabled or not obj then return false end
+    local changed = false
+    pcall(function()
+        if obj:IsA("SpecialMesh") then
+            local tex = assetDigits(obj.TextureId)
+            local mesh = assetDigits(obj.MeshId)
+            if tex == ORIGINAL_GUN_TEXTURE or mesh == ORIGINAL_GUN_MESH or shouldTreatAsGun(obj) then
+                saveOriginal(obj, "gun")
+                obj.TextureId = GUN_TEXTURE_ID
+                changed = true
+            end
+        elseif obj:IsA("MeshPart") then
+            local tex = assetDigits(obj.TextureID)
+            local mesh = assetDigits(obj.MeshId)
+            if tex == ORIGINAL_GUN_TEXTURE or mesh == ORIGINAL_GUN_MESH or shouldTreatAsGun(obj) then
+                saveOriginal(obj, "gun")
+                obj.TextureID = GUN_TEXTURE_ID
+                changed = true
+            end
+        elseif obj:IsA("SurfaceAppearance") then
+            if shouldTreatAsGun(obj) then
+                saveOriginal(obj, "gun")
+                obj.ColorMap = GUN_TEXTURE_ID
+                changed = true
+            end
+        end
+    end)
+    return changed
+end
+
+local function processRoot(root)
+    if not root then return end
+    applyKnifeToObject(root)
+    applyGunToObject(root)
+    for _, d in ipairs(root:GetDescendants()) do
+        applyKnifeToObject(d)
+        applyGunToObject(d)
+    end
+end
+
+local function scanAll()
+    local character = LocalPlayer.Character
+    if character then processRoot(character) end
+    local backpack = LocalPlayer:FindFirstChild("Backpack")
+    if backpack then processRoot(backpack) end
+end
+
+local function showMessage(text)
+    pcall(function()
+        game:GetService("StarterGui"):SetCore("SendNotification", {
+            Title = "XeroHub Texturas",
+            Text = text,
+            Duration = 4,
+        })
+    end)
+end
+
+local function rebuildHooks()
+    disconnectAll()
+
+    track(LocalPlayer.CharacterAdded:Connect(function(char)
+        task.wait(0.15)
+        processRoot(char)
+        track(char.DescendantAdded:Connect(function(obj)
+            task.defer(function()
+                applyKnifeToObject(obj)
+                applyGunToObject(obj)
+            end)
+        end))
+    end))
+
+    local char = LocalPlayer.Character
+    if char then
+        track(char.DescendantAdded:Connect(function(obj)
+            task.defer(function()
+                applyKnifeToObject(obj)
+                applyGunToObject(obj)
+            end)
+        end))
+    end
+
+    local backpack = LocalPlayer:FindFirstChild("Backpack")
+    if backpack then
+        track(backpack.DescendantAdded:Connect(function(obj)
+            task.defer(function()
+                applyKnifeToObject(obj)
+                applyGunToObject(obj)
+            end)
+        end))
+    end
+
+    track(LocalPlayer.ChildAdded:Connect(function(obj)
+        if obj.Name == "Backpack" then
+            task.wait(0.05)
+            track(obj.DescendantAdded:Connect(function(d)
+                task.defer(function()
+                    applyKnifeToObject(d)
+                    applyGunToObject(d)
+                end)
+            end))
+            processRoot(obj)
+        end
+    end))
+end
+
+-- GUI
+local guiParent = LocalPlayer:WaitForChild("PlayerGui")
+local old = guiParent:FindFirstChild("XeroHub_TextureProbe")
 if old then old:Destroy() end
 
-local function relativePath(root, object)
-    if object == root then return root.Name end
-    local parts = {}
-    local cursor = object
-    while cursor and cursor ~= root do
-        table.insert(parts, 1, cursor.Name)
-        cursor = cursor.Parent
-    end
-    return root.Name .. "/" .. table.concat(parts, "/")
-end
-
-local function contentId(value)
-    local text = tostring(value or "")
-    return text:match("rbxassetid://(%d+)")
-        or text:match("[?&]id=(%d+)")
-        or text:match("^%s*(%d+)%s*$")
-end
-
-local function safeRead(object, property)
-    local ok, value = pcall(function() return object[property] end)
-    if not ok then return nil end
-    return tostring(value or "")
-end
-
-local function describeVisual(root, object)
-    local item = {
-        path = relativePath(root, object),
-        class = object.ClassName,
-        name = object.Name,
-    }
-
-    if object:IsA("MeshPart") then
-        item.meshId = safeRead(object, "MeshId")
-        item.meshAssetId = contentId(item.meshId)
-        item.textureId = safeRead(object, "TextureID")
-        item.textureAssetId = contentId(item.textureId)
-    elseif object:IsA("SpecialMesh") then
-        item.meshId = safeRead(object, "MeshId")
-        item.meshAssetId = contentId(item.meshId)
-        item.textureId = safeRead(object, "TextureId")
-        item.textureAssetId = contentId(item.textureId)
-    elseif object:IsA("Decal") or object:IsA("Texture") then
-        item.texture = safeRead(object, "Texture")
-        item.textureAssetId = contentId(item.texture)
-    elseif object:IsA("SurfaceAppearance") then
-        item.colorMap = safeRead(object, "ColorMap")
-        item.colorMapAssetId = contentId(item.colorMap)
-        item.normalMap = safeRead(object, "NormalMap")
-        item.normalMapAssetId = contentId(item.normalMap)
-        item.metalnessMap = safeRead(object, "MetalnessMap")
-        item.metalnessMapAssetId = contentId(item.metalnessMap)
-        item.roughnessMap = safeRead(object, "RoughnessMap")
-        item.roughnessMapAssetId = contentId(item.roughnessMap)
-    else
-        return nil
-    end
-
-    return item
-end
-
-local function scanRoot(root, source)
-    if not root then return nil end
-    local report = {
-        root = root.Name,
-        class = root.ClassName,
-        fullName = root:GetFullName(),
-        source = source,
-        visuals = {},
-    }
-
-    local function add(object)
-        if object:IsA("MeshPart")
-            or object:IsA("SpecialMesh")
-            or object:IsA("Decal")
-            or object:IsA("Texture")
-            or object:IsA("SurfaceAppearance") then
-            local data = describeVisual(root, object)
-            if data then table.insert(report.visuals, data) end
-        end
-    end
-
-    add(root)
-    for _, object in ipairs(root:GetDescendants()) do add(object) end
-    return report
-end
-
-local function topChild(container, object)
-    if not container or not object then return nil end
-    local cursor, previous = object, object
-    while cursor and cursor ~= container do
-        previous = cursor
-        cursor = cursor.Parent
-    end
-    return cursor == container and previous or nil
-end
-
-local function candidateRoot(container, object, forceChildren)
-    if not container or not object then return nil end
-    if forceChildren then return topChild(container, object) end
-
-    local cursor = object
-    local candidate = nil
-    while cursor and cursor ~= container do
-        if cursor:IsA("Tool") or looksWeapon(cursor.Name) then
-            candidate = cursor
-        end
-        cursor = cursor.Parent
-    end
-    return candidate
-end
-
-local function collectWeaponRoots(container, forceChildren)
-    local result = {}
-    if not container then return result end
-    local seen = setmetatable({}, {__mode = "k"})
-
-    local descendants = container:GetDescendants()
-    for i = 1, #descendants do
-        local root = candidateRoot(container, descendants[i], forceChildren)
-        if root and not seen[root] then
-            seen[root] = true
-            table.insert(result, root)
-        end
-    end
-
-    local children = container:GetChildren()
-    for i = 1, #children do
-        local root = candidateRoot(container, children[i], forceChildren)
-        if root and not seen[root] then
-            seen[root] = true
-            table.insert(result, root)
-        end
-    end
-    return result
-end
-
-local function scanRoots(roots, source)
-    local weapons = {}
-    for _, root in ipairs(roots or {}) do
-        local report = scanRoot(root, source)
-        if report and #report.visuals > 0 then table.insert(weapons, report) end
-    end
-    return weapons
-end
-
-local function scanEquipped()
-    local char = player.Character
-    local tool = char and char:FindFirstChildOfClass("Tool")
-    if not tool then return {error = "No tienes un Tool equipado."} end
-    return {
-        generatedAt = os.date("!%Y-%m-%dT%H:%M:%SZ"),
-        scope = "equipped",
-        count = 1,
-        weapons = {scanRoot(tool, "character-equipped")},
-    }
-end
-
-local function scanBackpack()
-    local bag = player:FindFirstChildOfClass("Backpack")
-    local weapons = scanRoots(collectWeaponRoots(bag, false), "backpack")
-    return {
-        generatedAt = os.date("!%Y-%m-%dT%H:%M:%SZ"),
-        scope = "backpack",
-        count = #weapons,
-        weapons = weapons,
-    }
-end
-
-local function scanReplicatedWeapons()
-    local skins = ReplicatedStorage:FindFirstChild("ReplicatedSkins")
-    local weaponsFolder = skins and skins:FindFirstChild("Weapons")
-    local weapons = scanRoots(collectWeaponRoots(weaponsFolder, true), "ReplicatedSkins/Weapons")
-    return {
-        generatedAt = os.date("!%Y-%m-%dT%H:%M:%SZ"),
-        scope = "replicated-weapons",
-        count = #weapons,
-        weapons = weapons,
-    }
-end
-
-local function scanLobby()
-    local char = player.Character
-    local bag = player:FindFirstChildOfClass("Backpack")
-    local skins = ReplicatedStorage:FindFirstChild("ReplicatedSkins")
-    local weaponsFolder = skins and skins:FindFirstChild("Weapons")
-
-    local characterWeapons = scanRoots(collectWeaponRoots(char, false), "character/lobby")
-    local backpackWeapons = scanRoots(collectWeaponRoots(bag, false), "backpack")
-    local replicatedWeapons = scanRoots(collectWeaponRoots(weaponsFolder, true), "ReplicatedSkins/Weapons")
-
-    local combined = {}
-    for _, list in ipairs({characterWeapons, backpackWeapons, replicatedWeapons}) do
-        for _, item in ipairs(list) do table.insert(combined, item) end
-    end
-
-    return {
-        generatedAt = os.date("!%Y-%m-%dT%H:%M:%SZ"),
-        scope = "lobby",
-        count = #combined,
-        characterCount = #characterWeapons,
-        backpackCount = #backpackWeapons,
-        replicatedCount = #replicatedWeapons,
-        weapons = combined,
-    }
-end
-
-local function remember(object)
-    if originals[object] then return originals[object] end
-    local data = {class = object.ClassName}
-    local ok = pcall(function()
-        if object:IsA("MeshPart") then
-            data.TextureID = object.TextureID
-            data.Color = object.Color
-            data.Material = object.Material
-            data.Reflectance = object.Reflectance
-        elseif object:IsA("BasePart") then
-            data.Color = object.Color
-            data.Material = object.Material
-            data.Reflectance = object.Reflectance
-        elseif object:IsA("SpecialMesh") then
-            data.TextureId = object.TextureId
-            data.VertexColor = object.VertexColor
-        elseif object:IsA("Decal") or object:IsA("Texture") then
-            data.Texture = object.Texture
-            data.Transparency = object.Transparency
-        elseif object:IsA("SurfaceAppearance") then
-            data.ColorMap = object.ColorMap
-            data.NormalMap = object.NormalMap
-            data.MetalnessMap = object.MetalnessMap
-            data.RoughnessMap = object.RoughnessMap
-        end
-    end)
-    if not ok then return nil end
-    originals[object] = data
-    return data
-end
-
-local function applyBlackObject(object)
-    if not remember(object) then return end
-    pcall(function()
-        if object:IsA("MeshPart") then
-            object.TextureID = ""
-            object.Color = BLACK
-            object.Material = Enum.Material.SmoothPlastic
-            object.Reflectance = 0.08
-        elseif object:IsA("BasePart") then
-            object.Color = BLACK
-            object.Material = Enum.Material.SmoothPlastic
-            object.Reflectance = 0.08
-        elseif object:IsA("SpecialMesh") then
-            object.TextureId = ""
-            object.VertexColor = VERT
-        elseif object:IsA("Decal") or object:IsA("Texture") then
-            object.Texture = ""
-            object.Transparency = 1
-        elseif object:IsA("SurfaceAppearance") then
-            object.ColorMap = ""
-            object.NormalMap = ""
-            object.MetalnessMap = ""
-            object.RoughnessMap = ""
-        end
-    end)
-end
-
-local function applyBlack(tool)
-    if not tool then return false end
-    applyBlackObject(tool)
-    for _, object in ipairs(tool:GetDescendants()) do
-        applyBlackObject(object)
-    end
-    local handle = tool:FindFirstChild("Handle", true)
-    if handle and handle:IsA("BasePart") then
-        pcall(function()
-            handle.Color = EDGE
-            handle.Reflectance = 0.12
-        end)
-    end
-    return true
-end
-
-local function applyBlackRoots(roots)
-    local changed = 0
-    for _, root in ipairs(roots or {}) do
-        if applyBlack(root) then changed = changed + 1 end
-    end
-    return changed
-end
-
-local function applyBlackLobby()
-    local changed = 0
-    changed = changed + applyBlackRoots(collectWeaponRoots(player.Character, false))
-    changed = changed + applyBlackRoots(collectWeaponRoots(player:FindFirstChildOfClass("Backpack"), false))
-    local skins = ReplicatedStorage:FindFirstChild("ReplicatedSkins")
-    local weaponsFolder = skins and skins:FindFirstChild("Weapons")
-    changed = changed + applyBlackRoots(collectWeaponRoots(weaponsFolder, true))
-    return changed
-end
-
-local function disconnectXeroKnifeConnections()
-    for i = #xeroKnifeConnections, 1, -1 do
-        local connection = xeroKnifeConnections[i]
-        pcall(function() connection:Disconnect() end)
-        xeroKnifeConnections[i] = nil
-    end
-    for mesh, connection in pairs(xeroKnifeMeshBindings) do
-        pcall(function() connection:Disconnect() end)
-        xeroKnifeMeshBindings[mesh] = nil
-    end
-end
-
-local function hasKnifeAncestor(object)
-    local cursor = object
-    while cursor and cursor ~= workspace do
-        local name = string.lower(tostring(cursor.Name or ""))
-        if string.find(name, "knife", 1, true)
-            or string.find(name, "blade", 1, true) then
-            return true
-        end
-        if cursor == player.Character or cursor == player:FindFirstChildOfClass("Backpack") then
-            break
-        end
-        cursor = cursor.Parent
-    end
-    return false
-end
-
-local function isKnifeVisual(object)
-    if not object then return false end
-    if not (object:IsA("SpecialMesh") or object:IsA("MeshPart") or object:IsA("SurfaceAppearance")) then
-        return false
-    end
-
-    if object:IsA("SpecialMesh") then
-        local currentId = contentId(object.TextureId)
-        if currentId == ORIGINAL_LOBBY_KNIFE_TEXTURE_ID or currentId == CUSTOM_KNIFE_TEXTURE_ID then
-            return true
-        end
-    elseif object:IsA("MeshPart") then
-        local currentId = contentId(object.TextureID)
-        if currentId == ORIGINAL_LOBBY_KNIFE_TEXTURE_ID or currentId == CUSTOM_KNIFE_TEXTURE_ID then
-            return true
-        end
-    elseif object:IsA("SurfaceAppearance") then
-        local currentId = contentId(object.ColorMap)
-        if currentId == ORIGINAL_LOBBY_KNIFE_TEXTURE_ID or currentId == CUSTOM_KNIFE_TEXTURE_ID then
-            return true
-        end
-    end
-
-    return hasKnifeAncestor(object)
-end
-
-local applyXeroTextureToVisual
-
-local function bindKnifeVisual(object)
-    if xeroKnifeMeshBindings[object] then return end
-
-    local signal
-    if object:IsA("SpecialMesh") then
-        signal = object:GetPropertyChangedSignal("TextureId")
-    elseif object:IsA("MeshPart") then
-        signal = object:GetPropertyChangedSignal("TextureID")
-    elseif object:IsA("SurfaceAppearance") then
-        signal = object:GetPropertyChangedSignal("ColorMap")
-    end
-    if not signal then return end
-
-    xeroKnifeMeshBindings[object] = signal:Connect(function()
-        if not xeroKnifeEnabled or xeroKnifeApplying[object] or not object.Parent then return end
-        if not isKnifeVisual(object) then return end
-
-        local currentId
-        if object:IsA("SpecialMesh") then currentId = contentId(object.TextureId)
-        elseif object:IsA("MeshPart") then currentId = contentId(object.TextureID)
-        elseif object:IsA("SurfaceAppearance") then currentId = contentId(object.ColorMap) end
-
-        if currentId ~= CUSTOM_KNIFE_TEXTURE_ID then
-            task.defer(function()
-                if xeroKnifeEnabled and object.Parent then
-                    applyXeroTextureToVisual(object)
-                end
-            end)
-        end
-    end)
-end
-
-applyXeroTextureToVisual = function(object)
-    if not isKnifeVisual(object) then return false end
-    remember(object)
-    xeroKnifeApplying[object] = true
-
-    local ok = pcall(function()
-        if object:IsA("SpecialMesh") then
-            object.VertexColor = Vector3.new(1, 1, 1)
-            object.TextureId = "rbxassetid://" .. CUSTOM_KNIFE_TEXTURE_ID
-        elseif object:IsA("MeshPart") then
-            object.Color = Color3.new(1, 1, 1)
-            object.TextureID = "rbxassetid://" .. CUSTOM_KNIFE_TEXTURE_ID
-        elseif object:IsA("SurfaceAppearance") then
-            object.ColorMap = "rbxassetid://" .. CUSTOM_KNIFE_TEXTURE_ID
-        end
-    end)
-
-    xeroKnifeApplying[object] = nil
-    if ok then bindKnifeVisual(object) end
-    return ok
-end
-
-local function scanAndApplyXeroKnife(container)
-    if not container then return 0 end
-    local changed = 0
-
-    if isKnifeVisual(container) and applyXeroTextureToVisual(container) then
-        changed = changed + 1
-    end
-
-    for _, object in ipairs(container:GetDescendants()) do
-        if isKnifeVisual(object) and applyXeroTextureToVisual(object) then
-            changed = changed + 1
-        end
-    end
-    return changed
-end
-
-local function hookXeroKnifeContainer(container)
-    if not container then return end
-    table.insert(xeroKnifeConnections, container.DescendantAdded:Connect(function(object)
-        if not xeroKnifeEnabled then return end
-
-        if object:IsA("SpecialMesh") or object:IsA("MeshPart") or object:IsA("SurfaceAppearance") then
-            task.defer(function()
-                if xeroKnifeEnabled and object.Parent and isKnifeVisual(object) then
-                    applyXeroTextureToVisual(object)
-                end
-            end)
-        elseif object:IsA("Tool") or looksWeapon(object.Name) then
-            task.defer(function()
-                if xeroKnifeEnabled and object.Parent then
-                    scanAndApplyXeroKnife(object)
-                end
-            end)
-        end
-    end))
-end
-
-local function enableXeroKnifeTexture()
-    disconnectXeroKnifeConnections()
-    xeroKnifeEnabled = true
-
-    local changed = 0
-    local char = player.Character
-    local bag = player:FindFirstChildOfClass("Backpack")
-    changed = changed + scanAndApplyXeroKnife(char)
-    changed = changed + scanAndApplyXeroKnife(bag)
-
-    hookXeroKnifeContainer(char)
-    hookXeroKnifeContainer(bag)
-
-    -- Reengancha en cada respawn y cubre equipar/desequipar porque el Tool cambia de parent.
-    table.insert(xeroKnifeConnections, player.CharacterAdded:Connect(function(newChar)
-        task.wait(0.1)
-        if not xeroKnifeEnabled then return end
-        scanAndApplyXeroKnife(newChar)
-        hookXeroKnifeContainer(newChar)
-    end))
-
-    if bag then
-        table.insert(xeroKnifeConnections, bag.ChildRemoved:Connect(function(child)
-            if not xeroKnifeEnabled then return end
-            task.defer(function()
-                if child and child.Parent == player.Character then
-                    scanAndApplyXeroKnife(child)
-                else
-                    scanAndApplyXeroKnife(player.Character)
-                end
-            end)
-        end))
-        table.insert(xeroKnifeConnections, bag.ChildAdded:Connect(function(child)
-            if not xeroKnifeEnabled then return end
-            task.defer(function()
-                if child and child.Parent then scanAndApplyXeroKnife(child) end
-            end)
-        end))
-    end
-
-    if char then
-        table.insert(xeroKnifeConnections, char.ChildAdded:Connect(function(child)
-            if not xeroKnifeEnabled then return end
-            task.defer(function()
-                if child and child.Parent then scanAndApplyXeroKnife(child) end
-            end)
-        end))
-    end
-
-    return changed
-end
-
-local function disableXeroKnifeTexture()
-    xeroKnifeEnabled = false
-    disconnectXeroKnifeConnections()
-end
-
-local function applyXeroKnifeTexture()
-    local changed = enableXeroKnifeTexture()
-    if changed <= 0 then
-        return false, "No encontré todavía ningún SpecialMesh de cuchillo. Equípalo una vez; el hook queda esperando el Tool."
-    end
-    return true, tostring(changed) .. " mesh(es) encontrados entre cadera/equipada/mochila"
-end
-
-local function restore()
-    disableXeroKnifeTexture()
-    for object, data in pairs(originals) do
-        pcall(function()
-            if object:IsA("MeshPart") then
-                object.TextureID = data.TextureID
-                object.Color = data.Color
-                object.Material = data.Material
-                object.Reflectance = data.Reflectance
-            elseif object:IsA("BasePart") then
-                object.Color = data.Color
-                object.Material = data.Material
-                object.Reflectance = data.Reflectance
-            elseif object:IsA("SpecialMesh") then
-                object.TextureId = data.TextureId
-                object.VertexColor = data.VertexColor
-            elseif object:IsA("Decal") or object:IsA("Texture") then
-                object.Texture = data.Texture
-                object.Transparency = data.Transparency
-            elseif object:IsA("SurfaceAppearance") then
-                object.ColorMap = data.ColorMap
-                object.NormalMap = data.NormalMap
-                object.MetalnessMap = data.MetalnessMap
-                object.RoughnessMap = data.RoughnessMap
-            end
-        end)
-        originals[object] = nil
-    end
-end
-
--- UI -------------------------------------------------------------------------
-
 local gui = Instance.new("ScreenGui")
-gui.Name = "Xero_TextureProbe"
+gui.Name = "XeroHub_TextureProbe"
 gui.ResetOnSpawn = false
-gui.IgnoreGuiInset = true
-gui.Parent = parentGui()
+gui.Parent = guiParent
 
 local frame = Instance.new("Frame")
-frame.Size = UDim2.fromOffset(620, 468)
-frame.Position = UDim2.new(0.5, -310, 0.5, -234)
-frame.BackgroundColor3 = Color3.fromRGB(12, 12, 15)
+frame.Size = UDim2.fromOffset(270, 260)
+frame.Position = UDim2.new(1, -285, 0.5, -130)
+frame.BackgroundColor3 = Color3.fromRGB(12, 12, 16)
 frame.BorderSizePixel = 0
 frame.Parent = gui
 Instance.new("UICorner", frame).CornerRadius = UDim.new(0, 16)
 
-local stroke = Instance.new("UIStroke")
-stroke.Color = Color3.fromRGB(45, 45, 52)
-stroke.Thickness = 1
-stroke.Parent = frame
-
 local title = Instance.new("TextLabel")
-title.Size = UDim2.new(1, -50, 0, 48)
-title.Position = UDim2.fromOffset(18, 8)
+title.Size = UDim2.new(1, -20, 0, 40)
+title.Position = UDim2.fromOffset(10, 8)
 title.BackgroundTransparency = 1
-title.Text = "XERO | TEXTURE PROBE"
-title.TextColor3 = Color3.fromRGB(245, 245, 245)
+title.Text = "XERO | TEXTURAS"
+title.TextColor3 = Color3.fromRGB(245,245,245)
 title.Font = Enum.Font.GothamBold
-title.TextSize = 18
+title.TextSize = 22
 title.TextXAlignment = Enum.TextXAlignment.Left
 title.Parent = frame
 
-local sub = Instance.new("TextLabel")
-sub.Size = UDim2.new(1, -36, 0, 34)
-sub.Position = UDim2.fromOffset(18, 46)
-sub.BackgroundTransparency = 1
-sub.Text = "Escanea texturas y prueba la skin XeroHub del cuchillo. By Kev"
-sub.TextColor3 = Color3.fromRGB(155, 155, 165)
-sub.Font = Enum.Font.Gotham
-sub.TextSize = 11
-sub.TextXAlignment = Enum.TextXAlignment.Left
-sub.Parent = frame
+local info = Instance.new("TextLabel")
+info.Size = UDim2.new(1, -20, 0, 86)
+info.Position = UDim2.fromOffset(10, 44)
+info.BackgroundTransparency = 1
+info.TextWrapped = true
+info.TextYAlignment = Enum.TextYAlignment.Top
+info.TextXAlignment = Enum.TextXAlignment.Left
+info.TextColor3 = Color3.fromRGB(190,190,190)
+info.Font = Enum.Font.Gotham
+info.TextSize = 13
+info.Text = "Cuchillo: 122114929807745\nPistola: 77978665403713\nAplica cadera + equipada."
+info.Parent = frame
 
-local close = Instance.new("TextButton")
-close.Size = UDim2.fromOffset(30, 30)
-close.Position = UDim2.new(1, -42, 0, 14)
-close.Text = "×"
-close.TextSize = 22
-close.TextColor3 = Color3.fromRGB(220, 220, 220)
-close.BackgroundColor3 = Color3.fromRGB(28, 28, 34)
-close.BorderSizePixel = 0
-close.Parent = frame
-Instance.new("UICorner", close).CornerRadius = UDim.new(0, 8)
-close.MouseButton1Click:Connect(function()
-    restore()
-    gui:Destroy()
-end)
-
-local buttonRow = Instance.new("Frame")
-buttonRow.Size = UDim2.new(1, -36, 0, 102)
-buttonRow.Position = UDim2.fromOffset(18, 84)
-buttonRow.BackgroundTransparency = 1
-buttonRow.Parent = frame
-
-local layout = Instance.new("UIGridLayout")
-layout.CellPadding = UDim2.fromOffset(8, 8)
-layout.CellSize = UDim2.new(0.25, -6, 0, 30)
-layout.FillDirectionMaxCells = 4
-layout.Parent = buttonRow
-
-local output = Instance.new("TextBox")
-output.Size = UDim2.new(1, -36, 1, -208)
-output.Position = UDim2.fromOffset(18, 190)
-output.BackgroundColor3 = Color3.fromRGB(18, 18, 22)
-output.BorderSizePixel = 0
-output.TextColor3 = Color3.fromRGB(220, 220, 225)
-output.Font = Enum.Font.Code
-output.TextSize = 11
-output.TextXAlignment = Enum.TextXAlignment.Left
-output.TextYAlignment = Enum.TextYAlignment.Top
-output.TextWrapped = false
-output.MultiLine = true
-output.ClearTextOnFocus = false
-output.TextEditable = false
-output.Text = "En lobby usa «Escanear lobby»: revisa Character + Backpack + ReplicatedSkins/Weapons."
-output.Parent = frame
-Instance.new("UICorner", output).CornerRadius = UDim.new(0, 10)
-
-local pad = Instance.new("UIPadding")
-pad.PaddingTop = UDim.new(0, 10)
-pad.PaddingBottom = UDim.new(0, 10)
-pad.PaddingLeft = UDim.new(0, 10)
-pad.PaddingRight = UDim.new(0, 10)
-pad.Parent = output
-
-local function button(text, callback)
-    local b = Instance.new("TextButton")
-    b.Text = text
-    b.TextColor3 = Color3.fromRGB(235, 235, 240)
-    b.Font = Enum.Font.GothamMedium
-    b.TextSize = 11
-    b.BackgroundColor3 = Color3.fromRGB(28, 28, 34)
-    b.BorderSizePixel = 0
-    b.Parent = buttonRow
-    Instance.new("UICorner", b).CornerRadius = UDim.new(0, 8)
-    b.MouseButton1Click:Connect(callback)
-    return b
+local function makeButton(text, y, callback)
+    local button = Instance.new("TextButton")
+    button.Size = UDim2.new(1, -20, 0, 34)
+    button.Position = UDim2.fromOffset(10, y)
+    button.BackgroundColor3 = Color3.fromRGB(25, 25, 32)
+    button.TextColor3 = Color3.fromRGB(255,255,255)
+    button.Font = Enum.Font.GothamMedium
+    button.TextSize = 14
+    button.Text = text
+    button.Parent = frame
+    Instance.new("UICorner", button).CornerRadius = UDim.new(0, 12)
+    button.MouseButton1Click:Connect(callback)
+    return button
 end
 
-local function showReport(report)
-    currentReport = report
-    local ok, encoded = pcall(function()
-        return HttpService:JSONEncode(report)
-    end)
-    output.Text = ok and encoded or ("No se pudo convertir el reporte: " .. tostring(encoded))
-end
-
-button("Escanear lobby", function()
-    showReport(scanLobby())
+makeButton("XeroHub cuchillo", 132, function()
+    state.KnifeEnabled = true
+    scanAll()
+    rebuildHooks()
+    showMessage("Textura del cuchillo aplicada")
 end)
 
-button("Escanear equipada", function()
-    showReport(scanEquipped())
+makeButton("XeroHub pistola", 172, function()
+    state.GunEnabled = true
+    scanAll()
+    rebuildHooks()
+    showMessage("Textura de la pistola aplicada")
 end)
 
-button("Escanear mochila", function()
-    showReport(scanBackpack())
+makeButton("Restaurar todo", 212, function()
+    state.KnifeEnabled = false
+    state.GunEnabled = false
+    restoreKey("knife")
+    restoreKey("gun")
+    disconnectAll()
+    showMessage("Texturas originales restauradas")
 end)
 
-button("Escanear Replicated", function()
-    showReport(scanReplicatedWeapons())
-end)
-
-button("XeroHub cuchillo", function()
-    local ok, info = applyXeroKnifeTexture()
-    if ok then
-        output.Text = "Skin XeroHub ACTIVADA.\n\nID: " .. CUSTOM_KNIFE_TEXTURE_ID .. "\nAplicada a: " .. tostring(info) .. "\n\nAhora equipa/desequipa el cuchillo: el hub detectará el Tool y reaplicará la textura automáticamente, sin loop."
-    else
-        output.Text = "Hook XeroHub activado.\n\n" .. tostring(info) .. "\n\nEquipa el cuchillo ahora; debería aplicarse en cuanto aparezca el Tool."
-    end
-end)
-
-button("Negro lobby", function()
-    local changed = applyBlackLobby()
-    output.Text = "Negro mate aplicado a " .. tostring(changed) .. " raíz/raíces detectadas en Character + Backpack + ReplicatedSkins.\n\nPulsa Restaurar para volver al original."
-end)
-
-button("Restaurar", function()
-    restore()
-    output.Text = "Valores originales restaurados."
-end)
-
-button("Copiar JSON", function()
-    if not currentReport then
-        output.Text = "Primero genera un reporte."
-        return
-    end
-    local encoded = HttpService:JSONEncode(currentReport)
-    if setclipboard then
-        pcall(setclipboard, encoded)
-        output.Text = "Reporte copiado al portapapeles.\n\n" .. encoded
-    else
-        output.Text = "Tu ejecutor no tiene setclipboard.\n\n" .. encoded
-    end
-end)
-
-button("Guardar JSON", function()
-    if not currentReport then
-        output.Text = "Primero genera un reporte."
-        return
-    end
-    if not writefile then
-        output.Text = "Tu ejecutor no soporta writefile."
-        return
-    end
-
-    if makefolder then
-        if not isfolder or not isfolder("XeroHub") then pcall(makefolder, "XeroHub") end
-        if not isfolder or not isfolder("XeroHub/TextureScans") then pcall(makefolder, "XeroHub/TextureScans") end
-    end
-
-    local name = "XeroHub/TextureScans/scan_" .. tostring(os.time()) .. ".json"
-    local ok, err = pcall(writefile, name, HttpService:JSONEncode(currentReport))
-    output.Text = ok and ("Guardado en:\n" .. name) or ("No se pudo guardar:\n" .. tostring(err))
-end)
-
-button("Limpiar", function()
-    currentReport = nil
-    output.Text = ""
-end)
-
-button("Cerrar", function()
-    restore()
-    gui:Destroy()
-end)
-
--- Arrastre simple
-local UIS = game:GetService("UserInputService")
-local dragging, dragStart, startPos
-title.InputBegan:Connect(function(input)
+-- drag simple
+local dragging, dragInput, dragStart, startPos
+frame.InputBegan:Connect(function(input)
     if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-        dragging = input
+        dragging = true
         dragStart = input.Position
         startPos = frame.Position
+        input.Changed:Connect(function()
+            if input.UserInputState == Enum.UserInputState.End then dragging = false end
+        end)
     end
 end)
-title.InputChanged:Connect(function(input)
-    if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
-        dragging = input
+frame.InputChanged:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch then
+        dragInput = input
     end
 end)
-UIS.InputChanged:Connect(function(input)
-    if dragging and input == dragging then
+game:GetService("UserInputService").InputChanged:Connect(function(input)
+    if input == dragInput and dragging then
         local delta = input.Position - dragStart
-        frame.Position = UDim2.new(
-            startPos.X.Scale, startPos.X.Offset + delta.X,
-            startPos.Y.Scale, startPos.Y.Offset + delta.Y
-        )
+        frame.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
     end
 end)
-UIS.InputEnded:Connect(function(input)
-    if input == dragging then dragging = nil end
-end)
+
+showMessage("Hub de prueba cargado")

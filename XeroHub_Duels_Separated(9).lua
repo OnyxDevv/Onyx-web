@@ -5,6 +5,23 @@
 local Players = game:GetService("Players")
 local HttpService = game:GetService("HttpService")
 local CoreGui = game:GetService("CoreGui")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+local WEAPON_KEYS = {
+    "gun", "pistol", "revolver", "uzi", "rifle", "sniper", "bow",
+    "knife", "blade", "sword", "reaper", "arrow", "mod",
+    "lightgun", "darknessgun", "kitsune", "bling", "dusk", "spider",
+    "spectral", "stardust", "matcha", "eclipse", "infernal", "ghostbringer",
+    "dragon", "harpon", "harpoon", "nail", "toxic", "galaxy", "gems", "water", "arma",
+}
+
+local function looksWeapon(name)
+    name = string.lower(tostring(name or ""))
+    for i = 1, #WEAPON_KEYS do
+        if string.find(name, WEAPON_KEYS[i], 1, true) then return true end
+    end
+    return false
+end
 
 local player = Players.LocalPlayer
 while not player do
@@ -90,12 +107,13 @@ local function describeVisual(root, object)
     return item
 end
 
-local function scanTool(tool)
-    if not tool then return nil end
+local function scanRoot(root, source)
+    if not root then return nil end
     local report = {
-        tool = tool.Name,
-        class = tool.ClassName,
-        fullName = tool:GetFullName(),
+        root = root.Name,
+        class = root.ClassName,
+        fullName = root:GetFullName(),
+        source = source,
         visuals = {},
     }
 
@@ -105,38 +123,73 @@ local function scanTool(tool)
             or object:IsA("Decal")
             or object:IsA("Texture")
             or object:IsA("SurfaceAppearance") then
-            local data = describeVisual(tool, object)
+            local data = describeVisual(root, object)
             if data then table.insert(report.visuals, data) end
         end
     end
 
-    add(tool)
-    for _, object in ipairs(tool:GetDescendants()) do
-        add(object)
-    end
-
+    add(root)
+    for _, object in ipairs(root:GetDescendants()) do add(object) end
     return report
 end
 
-local function collectTools(container)
+local function topChild(container, object)
+    if not container or not object then return nil end
+    local cursor, previous = object, object
+    while cursor and cursor ~= container do
+        previous = cursor
+        cursor = cursor.Parent
+    end
+    return cursor == container and previous or nil
+end
+
+local function candidateRoot(container, object, forceChildren)
+    if not container or not object then return nil end
+    if forceChildren then return topChild(container, object) end
+
+    local cursor = object
+    local candidate = nil
+    while cursor and cursor ~= container do
+        if cursor:IsA("Tool") or looksWeapon(cursor.Name) then
+            candidate = cursor
+        end
+        cursor = cursor.Parent
+    end
+    return candidate
+end
+
+local function collectWeaponRoots(container, forceChildren)
     local result = {}
     if not container then return result end
-
     local seen = setmetatable({}, {__mode = "k"})
-    for _, object in ipairs(container:GetChildren()) do
-        if object:IsA("Tool") and not seen[object] then
-            seen[object] = true
-            table.insert(result, object)
+
+    local descendants = container:GetDescendants()
+    for i = 1, #descendants do
+        local root = candidateRoot(container, descendants[i], forceChildren)
+        if root and not seen[root] then
+            seen[root] = true
+            table.insert(result, root)
         end
     end
 
-    for _, object in ipairs(container:GetDescendants()) do
-        if object:IsA("Tool") and not seen[object] then
-            seen[object] = true
-            table.insert(result, object)
+    local children = container:GetChildren()
+    for i = 1, #children do
+        local root = candidateRoot(container, children[i], forceChildren)
+        if root and not seen[root] then
+            seen[root] = true
+            table.insert(result, root)
         end
     end
     return result
+end
+
+local function scanRoots(roots, source)
+    local weapons = {}
+    for _, root in ipairs(roots or {}) do
+        local report = scanRoot(root, source)
+        if report and #report.visuals > 0 then table.insert(weapons, report) end
+    end
+    return weapons
 end
 
 local function scanEquipped()
@@ -146,21 +199,57 @@ local function scanEquipped()
     return {
         generatedAt = os.date("!%Y-%m-%dT%H:%M:%SZ"),
         scope = "equipped",
-        weapons = {scanTool(tool)},
+        count = 1,
+        weapons = {scanRoot(tool, "character-equipped")},
     }
 end
 
 local function scanBackpack()
-    local tools = collectTools(player:FindFirstChildOfClass("Backpack"))
-    local weapons = {}
-    for _, tool in ipairs(tools) do
-        table.insert(weapons, scanTool(tool))
-    end
+    local bag = player:FindFirstChildOfClass("Backpack")
+    local weapons = scanRoots(collectWeaponRoots(bag, false), "backpack")
     return {
         generatedAt = os.date("!%Y-%m-%dT%H:%M:%SZ"),
         scope = "backpack",
         count = #weapons,
         weapons = weapons,
+    }
+end
+
+local function scanReplicatedWeapons()
+    local skins = ReplicatedStorage:FindFirstChild("ReplicatedSkins")
+    local weaponsFolder = skins and skins:FindFirstChild("Weapons")
+    local weapons = scanRoots(collectWeaponRoots(weaponsFolder, true), "ReplicatedSkins/Weapons")
+    return {
+        generatedAt = os.date("!%Y-%m-%dT%H:%M:%SZ"),
+        scope = "replicated-weapons",
+        count = #weapons,
+        weapons = weapons,
+    }
+end
+
+local function scanLobby()
+    local char = player.Character
+    local bag = player:FindFirstChildOfClass("Backpack")
+    local skins = ReplicatedStorage:FindFirstChild("ReplicatedSkins")
+    local weaponsFolder = skins and skins:FindFirstChild("Weapons")
+
+    local characterWeapons = scanRoots(collectWeaponRoots(char, false), "character/lobby")
+    local backpackWeapons = scanRoots(collectWeaponRoots(bag, false), "backpack")
+    local replicatedWeapons = scanRoots(collectWeaponRoots(weaponsFolder, true), "ReplicatedSkins/Weapons")
+
+    local combined = {}
+    for _, list in ipairs({characterWeapons, backpackWeapons, replicatedWeapons}) do
+        for _, item in ipairs(list) do table.insert(combined, item) end
+    end
+
+    return {
+        generatedAt = os.date("!%Y-%m-%dT%H:%M:%SZ"),
+        scope = "lobby",
+        count = #combined,
+        characterCount = #characterWeapons,
+        backpackCount = #backpackWeapons,
+        replicatedCount = #replicatedWeapons,
+        weapons = combined,
     }
 end
 
@@ -238,6 +327,24 @@ local function applyBlack(tool)
     return true
 end
 
+local function applyBlackRoots(roots)
+    local changed = 0
+    for _, root in ipairs(roots or {}) do
+        if applyBlack(root) then changed = changed + 1 end
+    end
+    return changed
+end
+
+local function applyBlackLobby()
+    local changed = 0
+    changed = changed + applyBlackRoots(collectWeaponRoots(player.Character, false))
+    changed = changed + applyBlackRoots(collectWeaponRoots(player:FindFirstChildOfClass("Backpack"), false))
+    local skins = ReplicatedStorage:FindFirstChild("ReplicatedSkins")
+    local weaponsFolder = skins and skins:FindFirstChild("Weapons")
+    changed = changed + applyBlackRoots(collectWeaponRoots(weaponsFolder, true))
+    return changed
+end
+
 local function restore()
     for object, data in pairs(originals) do
         pcall(function()
@@ -276,8 +383,8 @@ gui.IgnoreGuiInset = true
 gui.Parent = parentGui()
 
 local frame = Instance.new("Frame")
-frame.Size = UDim2.fromOffset(620, 430)
-frame.Position = UDim2.new(0.5, -310, 0.5, -215)
+frame.Size = UDim2.fromOffset(620, 468)
+frame.Position = UDim2.new(0.5, -310, 0.5, -234)
 frame.BackgroundColor3 = Color3.fromRGB(12, 12, 15)
 frame.BorderSizePixel = 0
 frame.Parent = gui
@@ -326,7 +433,7 @@ close.MouseButton1Click:Connect(function()
 end)
 
 local buttonRow = Instance.new("Frame")
-buttonRow.Size = UDim2.new(1, -36, 0, 72)
+buttonRow.Size = UDim2.new(1, -36, 0, 102)
 buttonRow.Position = UDim2.fromOffset(18, 84)
 buttonRow.BackgroundTransparency = 1
 buttonRow.Parent = frame
@@ -338,8 +445,8 @@ layout.FillDirectionMaxCells = 4
 layout.Parent = buttonRow
 
 local output = Instance.new("TextBox")
-output.Size = UDim2.new(1, -36, 1, -178)
-output.Position = UDim2.fromOffset(18, 160)
+output.Size = UDim2.new(1, -36, 1, -208)
+output.Position = UDim2.fromOffset(18, 190)
 output.BackgroundColor3 = Color3.fromRGB(18, 18, 22)
 output.BorderSizePixel = 0
 output.TextColor3 = Color3.fromRGB(220, 220, 225)
@@ -351,7 +458,7 @@ output.TextWrapped = false
 output.MultiLine = true
 output.ClearTextOnFocus = false
 output.TextEditable = false
-output.Text = "Equipa un arma y pulsa «Escanear equipada»."
+output.Text = "En lobby usa «Escanear lobby»: revisa Character + Backpack + ReplicatedSkins/Weapons."
 output.Parent = frame
 Instance.new("UICorner", output).CornerRadius = UDim.new(0, 10)
 
@@ -384,6 +491,10 @@ local function showReport(report)
     output.Text = ok and encoded or ("No se pudo convertir el reporte: " .. tostring(encoded))
 end
 
+button("Escanear lobby", function()
+    showReport(scanLobby())
+end)
+
 button("Escanear equipada", function()
     showReport(scanEquipped())
 end)
@@ -392,15 +503,13 @@ button("Escanear mochila", function()
     showReport(scanBackpack())
 end)
 
-button("Negro mate", function()
-    local char = player.Character
-    local tool = char and char:FindFirstChildOfClass("Tool")
-    if not tool then
-        output.Text = "No tienes un Tool equipado."
-        return
-    end
-    applyBlack(tool)
-    output.Text = "Negro mate aplicado a: " .. tool.Name .. "\n\nPulsa Restaurar para volver a la apariencia original."
+button("Escanear Replicated", function()
+    showReport(scanReplicatedWeapons())
+end)
+
+button("Negro lobby", function()
+    local changed = applyBlackLobby()
+    output.Text = "Negro mate aplicado a " .. tostring(changed) .. " raíz/raíces detectadas en Character + Backpack + ReplicatedSkins.\n\nPulsa Restaurar para volver al original."
 end)
 
 button("Restaurar", function()

@@ -38,6 +38,13 @@ local currentReport = nil
 
 -- Textura personalizada de prueba (plantilla del cuchillo de lobby)
 local CUSTOM_KNIFE_TEXTURE_ID = "122114929807745"
+local ORIGINAL_LOBBY_KNIFE_TEXTURE_ID = "121944805"
+
+-- Estado de la skin custom: sin loops, sólo eventos de Character/Backpack y cambios de TextureId.
+local xeroKnifeEnabled = false
+local xeroKnifeConnections = {}
+local xeroKnifeMeshBindings = setmetatable({}, {__mode = "k"})
+local xeroKnifeApplying = setmetatable({}, {__mode = "k"})
 
 
 local function parentGui()
@@ -349,44 +356,220 @@ local function applyBlackLobby()
     return changed
 end
 
-local function applyXeroKnifeTexture()
-    local char = player.Character
-    if not char then
-        return false, "No hay Character cargado."
+local function disconnectXeroKnifeConnections()
+    for i = #xeroKnifeConnections, 1, -1 do
+        local connection = xeroKnifeConnections[i]
+        pcall(function() connection:Disconnect() end)
+        xeroKnifeConnections[i] = nil
+    end
+    for mesh, connection in pairs(xeroKnifeMeshBindings) do
+        pcall(function() connection:Disconnect() end)
+        xeroKnifeMeshBindings[mesh] = nil
+    end
+end
+
+local function hasKnifeAncestor(object)
+    local cursor = object
+    while cursor and cursor ~= workspace do
+        local name = string.lower(tostring(cursor.Name or ""))
+        if string.find(name, "knife", 1, true)
+            or string.find(name, "blade", 1, true) then
+            return true
+        end
+        if cursor == player.Character or cursor == player:FindFirstChildOfClass("Backpack") then
+            break
+        end
+        cursor = cursor.Parent
+    end
+    return false
+end
+
+local function isKnifeVisual(object)
+    if not object then return false end
+    if not (object:IsA("SpecialMesh") or object:IsA("MeshPart") or object:IsA("SurfaceAppearance")) then
+        return false
     end
 
-    local knifeFolder = char:FindFirstChild("KnifePartsFolder", true)
-    if not knifeFolder then
-        return false, "No encontré KnifePartsFolder en tu personaje."
+    if object:IsA("SpecialMesh") then
+        local currentId = contentId(object.TextureId)
+        if currentId == ORIGINAL_LOBBY_KNIFE_TEXTURE_ID or currentId == CUSTOM_KNIFE_TEXTURE_ID then
+            return true
+        end
+    elseif object:IsA("MeshPart") then
+        local currentId = contentId(object.TextureID)
+        if currentId == ORIGINAL_LOBBY_KNIFE_TEXTURE_ID or currentId == CUSTOM_KNIFE_TEXTURE_ID then
+            return true
+        end
+    elseif object:IsA("SurfaceAppearance") then
+        local currentId = contentId(object.ColorMap)
+        if currentId == ORIGINAL_LOBBY_KNIFE_TEXTURE_ID or currentId == CUSTOM_KNIFE_TEXTURE_ID then
+            return true
+        end
     end
 
-    local knifeDisplay = knifeFolder:FindFirstChild("KnifeDisplay", true)
-    if not knifeDisplay then
-        return false, "Encontré KnifePartsFolder, pero no KnifeDisplay."
+    return hasKnifeAncestor(object)
+end
+
+local applyXeroTextureToVisual
+
+local function bindKnifeVisual(object)
+    if xeroKnifeMeshBindings[object] then return end
+
+    local signal
+    if object:IsA("SpecialMesh") then
+        signal = object:GetPropertyChangedSignal("TextureId")
+    elseif object:IsA("MeshPart") then
+        signal = object:GetPropertyChangedSignal("TextureID")
+    elseif object:IsA("SurfaceAppearance") then
+        signal = object:GetPropertyChangedSignal("ColorMap")
     end
+    if not signal then return end
 
-    local mesh = knifeDisplay:FindFirstChildWhichIsA("SpecialMesh", true)
-    if not mesh then
-        return false, "Encontré KnifeDisplay, pero no su SpecialMesh."
-    end
+    xeroKnifeMeshBindings[object] = signal:Connect(function()
+        if not xeroKnifeEnabled or xeroKnifeApplying[object] or not object.Parent then return end
+        if not isKnifeVisual(object) then return end
 
-    -- Guardamos el original para que el botón Restaurar siga funcionando.
-    remember(mesh)
+        local currentId
+        if object:IsA("SpecialMesh") then currentId = contentId(object.TextureId)
+        elseif object:IsA("MeshPart") then currentId = contentId(object.TextureID)
+        elseif object:IsA("SurfaceAppearance") then currentId = contentId(object.ColorMap) end
 
-    local ok, err = pcall(function()
-        -- Evita que una prueba previa de Negro mate deje la textura oscurecida.
-        mesh.VertexColor = Vector3.new(1, 1, 1)
-        mesh.TextureId = "rbxassetid://" .. CUSTOM_KNIFE_TEXTURE_ID
+        if currentId ~= CUSTOM_KNIFE_TEXTURE_ID then
+            task.defer(function()
+                if xeroKnifeEnabled and object.Parent then
+                    applyXeroTextureToVisual(object)
+                end
+            end)
+        end
+    end)
+end
+
+applyXeroTextureToVisual = function(object)
+    if not isKnifeVisual(object) then return false end
+    remember(object)
+    xeroKnifeApplying[object] = true
+
+    local ok = pcall(function()
+        if object:IsA("SpecialMesh") then
+            object.VertexColor = Vector3.new(1, 1, 1)
+            object.TextureId = "rbxassetid://" .. CUSTOM_KNIFE_TEXTURE_ID
+        elseif object:IsA("MeshPart") then
+            object.Color = Color3.new(1, 1, 1)
+            object.TextureID = "rbxassetid://" .. CUSTOM_KNIFE_TEXTURE_ID
+        elseif object:IsA("SurfaceAppearance") then
+            object.ColorMap = "rbxassetid://" .. CUSTOM_KNIFE_TEXTURE_ID
+        end
     end)
 
-    if not ok then
-        return false, tostring(err)
+    xeroKnifeApplying[object] = nil
+    if ok then bindKnifeVisual(object) end
+    return ok
+end
+
+local function scanAndApplyXeroKnife(container)
+    if not container then return 0 end
+    local changed = 0
+
+    if isKnifeVisual(container) and applyXeroTextureToVisual(container) then
+        changed = changed + 1
     end
 
-    return true, mesh:GetFullName()
+    for _, object in ipairs(container:GetDescendants()) do
+        if isKnifeVisual(object) and applyXeroTextureToVisual(object) then
+            changed = changed + 1
+        end
+    end
+    return changed
+end
+
+local function hookXeroKnifeContainer(container)
+    if not container then return end
+    table.insert(xeroKnifeConnections, container.DescendantAdded:Connect(function(object)
+        if not xeroKnifeEnabled then return end
+
+        if object:IsA("SpecialMesh") or object:IsA("MeshPart") or object:IsA("SurfaceAppearance") then
+            task.defer(function()
+                if xeroKnifeEnabled and object.Parent and isKnifeVisual(object) then
+                    applyXeroTextureToVisual(object)
+                end
+            end)
+        elseif object:IsA("Tool") or looksWeapon(object.Name) then
+            task.defer(function()
+                if xeroKnifeEnabled and object.Parent then
+                    scanAndApplyXeroKnife(object)
+                end
+            end)
+        end
+    end))
+end
+
+local function enableXeroKnifeTexture()
+    disconnectXeroKnifeConnections()
+    xeroKnifeEnabled = true
+
+    local changed = 0
+    local char = player.Character
+    local bag = player:FindFirstChildOfClass("Backpack")
+    changed = changed + scanAndApplyXeroKnife(char)
+    changed = changed + scanAndApplyXeroKnife(bag)
+
+    hookXeroKnifeContainer(char)
+    hookXeroKnifeContainer(bag)
+
+    -- Reengancha en cada respawn y cubre equipar/desequipar porque el Tool cambia de parent.
+    table.insert(xeroKnifeConnections, player.CharacterAdded:Connect(function(newChar)
+        task.wait(0.1)
+        if not xeroKnifeEnabled then return end
+        scanAndApplyXeroKnife(newChar)
+        hookXeroKnifeContainer(newChar)
+    end))
+
+    if bag then
+        table.insert(xeroKnifeConnections, bag.ChildRemoved:Connect(function(child)
+            if not xeroKnifeEnabled then return end
+            task.defer(function()
+                if child and child.Parent == player.Character then
+                    scanAndApplyXeroKnife(child)
+                else
+                    scanAndApplyXeroKnife(player.Character)
+                end
+            end)
+        end))
+        table.insert(xeroKnifeConnections, bag.ChildAdded:Connect(function(child)
+            if not xeroKnifeEnabled then return end
+            task.defer(function()
+                if child and child.Parent then scanAndApplyXeroKnife(child) end
+            end)
+        end))
+    end
+
+    if char then
+        table.insert(xeroKnifeConnections, char.ChildAdded:Connect(function(child)
+            if not xeroKnifeEnabled then return end
+            task.defer(function()
+                if child and child.Parent then scanAndApplyXeroKnife(child) end
+            end)
+        end))
+    end
+
+    return changed
+end
+
+local function disableXeroKnifeTexture()
+    xeroKnifeEnabled = false
+    disconnectXeroKnifeConnections()
+end
+
+local function applyXeroKnifeTexture()
+    local changed = enableXeroKnifeTexture()
+    if changed <= 0 then
+        return false, "No encontré todavía ningún SpecialMesh de cuchillo. Equípalo una vez; el hook queda esperando el Tool."
+    end
+    return true, tostring(changed) .. " mesh(es) encontrados entre cadera/equipada/mochila"
 end
 
 local function restore()
+    disableXeroKnifeTexture()
     for object, data in pairs(originals) do
         pcall(function()
             if object:IsA("MeshPart") then
@@ -551,9 +734,9 @@ end)
 button("XeroHub cuchillo", function()
     local ok, info = applyXeroKnifeTexture()
     if ok then
-        output.Text = "Textura XeroHub aplicada al cuchillo del lobby.\n\nID: " .. CUSTOM_KNIFE_TEXTURE_ID .. "\nRuta: " .. tostring(info) .. "\n\nSi no aparece, revisa que el asset ya haya terminado moderación."
+        output.Text = "Skin XeroHub ACTIVADA.\n\nID: " .. CUSTOM_KNIFE_TEXTURE_ID .. "\nAplicada a: " .. tostring(info) .. "\n\nAhora equipa/desequipa el cuchillo: el hub detectará el Tool y reaplicará la textura automáticamente, sin loop."
     else
-        output.Text = "No se pudo aplicar la textura XeroHub.\n\n" .. tostring(info)
+        output.Text = "Hook XeroHub activado.\n\n" .. tostring(info) .. "\n\nEquipa el cuchillo ahora; debería aplicarse en cuanto aparezca el Tool."
     end
 end)
 

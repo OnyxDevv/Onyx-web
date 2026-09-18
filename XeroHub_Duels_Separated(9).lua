@@ -2251,10 +2251,47 @@ local function stopLocalAttackMonitoring()
     end
 end
 
-local function isRoundDeathEligible(targetPlayer, character)
+-- Varias partidas pueden existir al mismo tiempo dentro del mismo servidor.
+-- Estar fuera del lobby NO significa estar en la misma ronda que el LocalPlayer.
+local ROUND_FALLBACK_RADIUS = 420
+local ROUND_FALLBACK_RADIUS_SQ = ROUND_FALLBACK_RADIUS * ROUND_FALLBACK_RADIUS
+local ROUND_SIGNATURE_KEYS = {
+    "RoundId", "RoundID", "roundId", "roundID",
+    "MatchId", "MatchID", "matchId", "matchID",
+    "ArenaId", "ArenaID", "arenaId", "arenaID",
+    "RoomId", "RoomID", "roomId", "roomID",
+    "DuelId", "DuelID", "duelId", "duelID",
+    "GameId", "GameID", "gameId", "gameID",
+    "InstanceId", "InstanceID", "instanceId", "instanceID",
+}
+
+local function getRoundSignature(targetPlayer, character)
+    local function readFrom(instance)
+        if not instance then return nil end
+        for i = 1, #ROUND_SIGNATURE_KEYS do
+            local key = ROUND_SIGNATURE_KEYS[i]
+            local ok, value = pcall(function() return instance:GetAttribute(key) end)
+            if ok and value ~= nil and type(value) ~= "boolean" and tostring(value) ~= "" then
+                return key:lower() .. "=" .. tostring(value)
+            end
+
+            local child = instance:FindFirstChild(key)
+            if child and child:IsA("ValueBase") then
+                local childValue = child.Value
+                if childValue ~= nil and type(childValue) ~= "boolean" and tostring(childValue) ~= "" then
+                    return key:lower() .. "=" .. tostring(childValue)
+                end
+            end
+        end
+        return nil
+    end
+
+    return readFrom(targetPlayer) or readFrom(character)
+end
+
+local function isCombatCharacter(targetPlayer, character)
     if not targetPlayer or not character or not character.Parent then return false end
 
-    -- Lobby / espectador / menú nunca dispara el death sound personalizado.
     local team = targetPlayer.Team
     if team then
         local teamName = string.lower(tostring(team.Name or ""))
@@ -2266,23 +2303,52 @@ local function isRoundDeathEligible(targetPlayer, character)
         end
     end
 
-    -- Spawn protegido / fuera de combate.
     if character:FindFirstChildOfClass("ForceField") then return false end
 
-    -- Las zonas seguras ya usadas por XeroHub también filtran muertes de lobby/votación.
     local root = character:FindFirstChild("HumanoidRootPart")
-    if root then
-        local pos = root.Position
-        for i = 1, #ZONAS_SEGURAS do
-            local zona = ZONAS_SEGURAS[i]
-            local delta = pos - zona.Centro
-            if delta:Dot(delta) <= zona.RadioSq then
-                return false
-            end
+    if not root then return false end
+
+    local pos = root.Position
+    for i = 1, #ZONAS_SEGURAS do
+        local zona = ZONAS_SEGURAS[i]
+        local delta = pos - zona.Centro
+        if delta:Dot(delta) <= zona.RadioSq then
+            return false
         end
     end
 
     return true
+end
+
+local function isRoundDeathEligible(targetPlayer, character)
+    if not isCombatCharacter(targetPlayer, character) then return false end
+
+    local myCharacter = player.Character
+    if not myCharacter or not myCharacter.Parent then return false end
+
+    -- Nuestra propia muerte siempre pertenece a nuestra ronda si seguimos en zona de combate.
+    if targetPlayer == player then
+        return true
+    end
+
+    -- Si nosotros estamos en lobby/espectador, ninguna muerte ajena debe sonar.
+    if not isCombatCharacter(player, myCharacter) then return false end
+
+    -- Si el juego expone un identificador real de partida/arena, éste manda.
+    local mySignature = getRoundSignature(player, myCharacter)
+    local targetSignature = getRoundSignature(targetPlayer, character)
+    if mySignature and targetSignature then
+        return mySignature == targetSignature
+    end
+
+    -- Fallback para Duels cuando no hay RoundId visible: sólo acepta jugadores de
+    -- nuestra arena física. Así las otras rondas simultáneas del servidor no disparan audio.
+    local myRoot = myCharacter:FindFirstChild("HumanoidRootPart")
+    local targetRoot = character:FindFirstChild("HumanoidRootPart")
+    if not myRoot or not targetRoot then return false end
+
+    local delta = targetRoot.Position - myRoot.Position
+    return delta:Dot(delta) <= ROUND_FALLBACK_RADIUS_SQ
 end
 
 local function startLocalAttackMonitoring()
@@ -2299,8 +2365,8 @@ local function startLocalAttackMonitoring()
         boundHumanoids[humanoid] = true
 
         local function triggerDeath()
-            -- Suena para cualquier participante real de la ronda: tú, aliado o enemigo.
-            -- Muertes de lobby, votación, espectador o spawn protegido se ignoran.
+            -- Suena sólo para participantes de TU ronda: tú, aliado o enemigo.
+            -- Otras rondas simultáneas, lobby, votación y espectador se ignoran.
             if not isRoundDeathEligible(targetPlayer, character) then return end
             playKillReplacement(humanoid)
         end
@@ -2468,7 +2534,7 @@ local function activateKillEntry(entry, changedSelection, silent)
         if not silent then
             showBottomMessage(
                 (changedSelection and "Sonido de muerte cambiado a " or "Sonido de muerte activado: ")
-                    .. entry.label .. " · Death sound de ronda.",
+                    .. entry.label .. " · tu ronda lista.",
                 {title = "XeroHub · Sonidos", key = "sounds:kill:state"}
             )
         end

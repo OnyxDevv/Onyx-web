@@ -2868,7 +2868,7 @@ refreshSoundCatalog(false)
 -- Sin notificaciones del origen; sólo se avisa cuando una skin queda aplicada.
 -- ==========================================
 do
-Tabs.Texturas = MainSection:Tab({Title = "Texturas", Icon = "solar:palette-bold"})
+Tabs.Texturas = MainSection:Tab({Title = "Texturas Armas", Icon = "solar:palette-bold"})
 
 local textureEnv = (getgenv and getgenv()) or _G
 local textureAssetLoader = getcustomasset

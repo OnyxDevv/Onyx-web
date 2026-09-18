@@ -1216,7 +1216,7 @@ local function downloadSound(entry)
     if not validCache then
         local body, status = soundRequest(entry.url)
         if not SoundCatalogCore.isAudioPayload(status, body, entry.extension) then
-            return nil, "Erros " .. string.upper(entry.extension) .. " válido (HTTP " .. tostring(status) .. ")."
+            return nil, "GitHub no devolvió un " .. string.upper(entry.extension) .. " válido (HTTP " .. tostring(status) .. ")."
         end
         local ok, writeError = pcall(writefile, localPath, body)
         if not ok then return nil, "No se pudo guardar el audio: " .. tostring(writeError) end
@@ -1992,8 +1992,8 @@ local function armNativeDeathTarget(character, tool, forceExactTarget)
 end
 
 runtime.ArmNativeDeathTarget = function(character, tool)
-    -- El modo global escucha Humanoid.Died; no necesita armar una víctima ni
-    -- modificar GunKill, lo que evita dos reproducciones para la misma muerte.
+    -- El modo de ronda escucha Humanoid.Died y filtra lobby/espectador/zona segura;
+    -- no necesita modificar GunKill, evitando dos reproducciones para la misma muerte.
     return false
 end
 
@@ -2047,7 +2047,7 @@ local function playKillReplacement(humanoid)
     -- Cada muerte obtiene su propia instancia. Dos jugadores que mueran casi al
     -- mismo tiempo no se cortan entre sí y cada Humanoid sólo puede dispararla una vez.
     local oneShot = replacement:Clone()
-    oneShot.Name = "XeroHub_GlobalDeathSound"
+    oneShot.Name = "XeroHub_RoundDeathSound"
     oneShot.Looped = false
     oneShot.TimePosition = 0
     oneShot.Parent = SoundService
@@ -2107,7 +2107,7 @@ local function bindKillSound(sound)
         end))
     else
         -- GunKill ya no dispara el personalizado: se silencia porque la muerte
-        -- global del Humanoid producirá exactamente una reproducción.
+        -- válida de ronda del Humanoid producirá exactamente una reproducción.
         local function enforceGunKillMute()
             if killSoundState.Enabled and sound.Parent then
                 suppressGunKillSound(sound)
@@ -2251,20 +2251,57 @@ local function stopLocalAttackMonitoring()
     end
 end
 
+local function isRoundDeathEligible(targetPlayer, character)
+    if not targetPlayer or not character or not character.Parent then return false end
+
+    -- Lobby / espectador / menú nunca dispara el death sound personalizado.
+    local team = targetPlayer.Team
+    if team then
+        local teamName = string.lower(tostring(team.Name or ""))
+        if string.find(teamName, "lobby", 1, true)
+            or string.find(teamName, "spectat", 1, true)
+            or string.find(teamName, "espectador", 1, true)
+            or string.find(teamName, "menu", 1, true) then
+            return false
+        end
+    end
+
+    -- Spawn protegido / fuera de combate.
+    if character:FindFirstChildOfClass("ForceField") then return false end
+
+    -- Las zonas seguras ya usadas por XeroHub también filtran muertes de lobby/votación.
+    local root = character:FindFirstChild("HumanoidRootPart")
+    if root then
+        local pos = root.Position
+        for i = 1, #ZONAS_SEGURAS do
+            local zona = ZONAS_SEGURAS[i]
+            local delta = pos - zona.Centro
+            if delta:Dot(delta) <= zona.RadioSq then
+                return false
+            end
+        end
+    end
+
+    return true
+end
+
 local function startLocalAttackMonitoring()
     stopLocalAttackMonitoring()
 
     local boundPlayers = setmetatable({}, {__mode = "k"})
     local boundHumanoids = setmetatable({}, {__mode = "k"})
 
-    local function bindCharacter(character)
-        if not killSoundState.Enabled or not character then return end
+    local function bindCharacter(targetPlayer, character)
+        if not killSoundState.Enabled or not targetPlayer or not character then return end
         local humanoid = character:FindFirstChildOfClass("Humanoid")
             or character:WaitForChild("Humanoid", 5)
         if not humanoid or boundHumanoids[humanoid] then return end
         boundHumanoids[humanoid] = true
 
         local function triggerDeath()
+            -- Suena para cualquier participante real de la ronda: tú, aliado o enemigo.
+            -- Muertes de lobby, votación, espectador o spawn protegido se ignoran.
+            if not isRoundDeathEligible(targetPlayer, character) then return end
             playKillReplacement(humanoid)
         end
         table.insert(killSoundState.AttackMonitorConnections, humanoid.Died:Connect(triggerDeath))
@@ -2276,9 +2313,9 @@ local function startLocalAttackMonitoring()
     local function bindPlayer(targetPlayer)
         if boundPlayers[targetPlayer] then return end
         boundPlayers[targetPlayer] = true
-        if targetPlayer.Character then task.defer(bindCharacter, targetPlayer.Character) end
+        if targetPlayer.Character then task.defer(bindCharacter, targetPlayer, targetPlayer.Character) end
         table.insert(killSoundState.AttackMonitorConnections, targetPlayer.CharacterAdded:Connect(function(character)
-            task.defer(bindCharacter, character)
+            task.defer(bindCharacter, targetPlayer, character)
         end))
     end
 
@@ -2431,7 +2468,7 @@ local function activateKillEntry(entry, changedSelection, silent)
         if not silent then
             showBottomMessage(
                 (changedSelection and "Sonido de muerte cambiado a " or "Sonido de muerte activado: ")
-                    .. entry.label .. " · modo global listo.",
+                    .. entry.label .. " · Death sound de ronda.",
                 {title = "XeroHub · Sonidos", key = "sounds:kill:state"}
             )
         end
@@ -2682,13 +2719,13 @@ UIElements.TogMuteGunshot = muteGunshotToggle
 
 Tabs.Sonidos:Section({Title = "Sonido de muerte"})
 Tabs.Sonidos:Paragraph({
-    Title = "Death sound global",
-    Desc = "Suena cuando muere cualquier jugador, incluso tú.",
+    Title = "Death sound de ronda",
+    Desc = "Suena cuando muere un jugador durante la ronda: tú, aliado o enemigo.",
 })
 
 killSoundDropdown = Tabs.Sonidos:Dropdown({
     Title = "Sonido de muerte",
-    Desc = "Elige el sonido para cualquier muerte.",
+    Desc = "Elige el sonido que se usará en las muertes de la ronda.",
     Values = {"Cargando catálogo…"},
     Value = "Cargando catálogo…",
     Callback = function(value)
@@ -2716,7 +2753,7 @@ Tabs.Sonidos:Button({
 
 killSoundToggle = Tabs.Sonidos:Toggle({
     Title = "Cambiar sonido de muerte",
-    Desc = "Reproduce el sonido cuando muere cualquier jugador.",
+    Desc = "Reproduce el sonido solo en muertes válidas de la ronda.",
     Value = false,
     Callback = function(enabled)
         if killSoundState.SyncingToggle then return end

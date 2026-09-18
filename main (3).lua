@@ -19,6 +19,9 @@ local XERO_BACKGROUND_FOLDER = "XeroHub/Assets"
 
 local function canonicalThemeName(name)
     local key = string.lower(tostring(name or ""))
+    if key == "sakura" or key == "cherry" or key == "cerezo" or key == "pink" or key == "rosa" then
+        return "Sakura"
+    end
     if key == "blanco" or key == "white" or key == "light" or key == "claro" then
         return "Blanco"
     end
@@ -30,6 +33,11 @@ local THEME_BACKGROUNDS = {
         URL = tostring(XeroEnv.XERO_BACKGROUND_URL or
             "https://raw.githubusercontent.com/OnyxDevv/Onyx-web/refs/heads/main/assets/backgrounds/xero_anime.png"),
         CACHE = tostring(XeroEnv.XERO_BACKGROUND_CACHE or "XeroHub/Assets/xero_anime_v2.png"),
+    },
+    Sakura = {
+        URL = tostring(XeroEnv.XERO_BACKGROUND_SAKURA_URL or
+            "https://raw.githubusercontent.com/OnyxDevv/Onyx-web/refs/heads/main/assets/backgrounds/xero_sakura.png"),
+        CACHE = tostring(XeroEnv.XERO_BACKGROUND_SAKURA_CACHE or "XeroHub/Assets/xero_sakura_v1.png"),
     },
     Blanco = {
         URL = tostring(XeroEnv.XERO_BACKGROUND_LIGHT_URL or XeroEnv.XERO_BACKGROUND_WHITE_URL or
@@ -119,6 +127,85 @@ local THEMES = {
             SliderThumbStroke = Color3.fromRGB(72,72,76),
         },
     },
+    Sakura = {
+        Name = "Sakura",
+        Colors = {
+            Window = Color3.fromRGB(6,9,10), Panel = Color3.fromRGB(11,16,17),
+            Row = Color3.fromRGB(17,23,24), Field = Color3.fromRGB(8,13,14),
+            Hover = Color3.fromRGB(24,34,34), Border = Color3.fromRGB(67,105,101),
+            Text = Color3.fromRGB(249,235,241), Muted = Color3.fromRGB(199,163,177),
+            Faint = Color3.fromRGB(119,139,136), White = Color3.fromRGB(245,166,190),
+        },
+        Glass = {
+            Root = 0.08,
+            Sidebar = 0.24,
+            Row = 0.28,
+            Field = 0.33,
+            Button = 0.24,
+            NavIdle = 0.38,
+            NavHover = 0.22,
+            NavActive = 0.10,
+            Popup = 0.10,
+        },
+        Visuals = {
+            RootBase = Color3.fromRGB(5,8,9),
+            RootStroke = Color3.fromRGB(55,102,95),
+            RootGradient = {
+                Color3.fromRGB(4,8,8),
+                Color3.fromRGB(11,16,17),
+                Color3.fromRGB(6,10,11),
+            },
+            AnimeImageTransparency = 0.02,
+            AnimeShadeColor = Color3.fromRGB(3,7,8),
+            AnimeShadeTransparency = 0.42,
+            AnimeShadeStops = {0.05, 0.14, 0.35},
+            SidebarBase = Color3.fromRGB(9,14,15),
+            SidebarStroke = Color3.fromRGB(46,92,85),
+            SearchStroke = Color3.fromRGB(64,118,108),
+            OpenStroke = Color3.fromRGB(154,83,109),
+            OpenButtonBase = Color3.fromRGB(8,13,14),
+            BackdropGlowA = Color3.fromRGB(74,28,47),
+            BackdropGlowB = Color3.fromRGB(21,79,72),
+            BackdropWatermarkTransparency = 0.95,
+            GridColor = Color3.fromRGB(111,229,207),
+            GridVTransparency = 0.94,
+            GridHTransparency = 0.96,
+            NavButtonIdle = Color3.fromRGB(10,16,17),
+            NavButtonHover = Color3.fromRGB(18,29,29),
+            ResizeGuideTransparency = 0.25,
+            ControlStroke = Color3.fromRGB(47,88,83),
+            FieldStroke = Color3.fromRGB(49,103,94),
+            ButtonBase = Color3.fromRGB(13,18,19),
+            ButtonStroke = Color3.fromRGB(55,103,95),
+            DropdownStroke = Color3.fromRGB(54,105,96),
+            PopupStroke = Color3.fromRGB(130,78,96),
+            GothicShell = Color3.fromRGB(246,186,202),
+            GothicShellStroke = Color3.fromRGB(157,91,112),
+            GothicGlow = Color3.fromRGB(85,31,53),
+            GothicBar = Color3.fromRGB(92,203,184),
+            GothicCorner = Color3.fromRGB(211,126,150),
+            GothicWatermark = Color3.fromRGB(255,190,209),
+            GothicWatermarkTransparency = 0.92,
+            GothicRow = Color3.fromRGB(12,16,18),
+            GothicStroke = Color3.fromRGB(55,95,90),
+            GothicDesc = Color3.fromRGB(200,165,177),
+            GothicBadgeText = Color3.fromRGB(251,236,242),
+            GothicBadgeBackground = Color3.fromRGB(20,27,28),
+            GothicBadgeStroke = Color3.fromRGB(129,78,96),
+            SliderValueBackground = Color3.fromRGB(8,13,14),
+            SliderValueText = Color3.fromRGB(249,235,241),
+            SliderValueStroke = Color3.fromRGB(55,103,95),
+            SliderRail = Color3.fromRGB(14,22,22),
+            SliderRailStroke = Color3.fromRGB(47,88,83),
+            SliderTrack = Color3.fromRGB(24,47,44),
+            SliderTrackGradient = {Color3.fromRGB(19,39,37),Color3.fromRGB(37,71,65),Color3.fromRGB(19,39,37)},
+            SliderFill = Color3.fromRGB(245,166,190),
+            SliderFillGradient = {Color3.fromRGB(255,188,207),Color3.fromRGB(100,222,201)},
+            SliderHalo = Color3.fromRGB(100,222,201),
+            SliderThumb = Color3.fromRGB(255,211,223),
+            SliderThumbStroke = Color3.fromRGB(147,82,104),
+        },
+    },
     Blanco = {
         Name = "Blanco",
         Colors = {
@@ -200,9 +287,9 @@ local THEMES = {
     },
 }
 
-local CURRENT_THEME_NAME = canonicalThemeName(XeroEnv.XERO_THEME or "Xero")
+local CURRENT_THEME_NAME = canonicalThemeName(XeroEnv.XERO_THEME or "Sakura")
 local CURRENT_THEME = THEMES[CURRENT_THEME_NAME] or THEMES.Xero
-local Nox = { Version = "3.0.0", Brand = "XeroHub", SupportsGameLabels = true, Creator = "Kev", UIScale = 1 }
+local Nox = { Version = "3.1.0-sakura", Brand = "XeroHub", SupportsGameLabels = true, Creator = "Kev", UIScale = 1 }
 local C, Glass = {}, {}
 
 local function overwriteTable(target, source)
@@ -598,25 +685,57 @@ end
 
 function Control:ApplyTheme()
     if self.Destroyed then return self end
-    local light = (self.Window and self.Window.ThemeName == "Blanco") or CURRENT_THEME_NAME == "Blanco"
+    local themeName = (self.Window and self.Window.ThemeName) or CURRENT_THEME_NAME
+    local themeDef = (self.Window and self.Window.ThemeDef) or getThemeDefinition(themeName)
+    local light = themeName == "Blanco"
+    local sakura = themeName == "Sakura"
+
     if self.ElementFrame and self.ElementFrame.Parent then
-        self.ElementFrame.BackgroundColor3 = light and (self.LightColor or C.Row) or (self.DarkColor or C.Row)
+        if light then
+            self.ElementFrame.BackgroundColor3 = self.LightColor or themeDef.Colors.Row
+        elseif sakura then
+            self.ElementFrame.BackgroundColor3 = self.SakuraColor or themeDef.Colors.Row
+        else
+            self.ElementFrame.BackgroundColor3 = self.DarkColor or themeDef.Colors.Row
+        end
     end
     if self.RowStroke and self.RowStroke.Parent then
-        self.RowStroke.Color = light and (self.LightStrokeColor or C.Border) or (self.DarkStrokeColor or THEMES.Xero.Visuals.ControlStroke)
+        if light then
+            self.RowStroke.Color = self.LightStrokeColor or themeDef.Colors.Border
+        elseif sakura then
+            self.RowStroke.Color = self.SakuraStrokeColor or themeDef.Visuals.ControlStroke
+        else
+            self.RowStroke.Color = self.DarkStrokeColor or themeDef.Visuals.ControlStroke
+        end
     end
     if self.TitleLabel and self.TitleLabel.Parent then
         if self.Locked then
             self.TitleLabel.TextColor3 = C.Faint
+        elseif light then
+            self.TitleLabel.TextColor3 = self.LightTitleColor or themeDef.Colors.Text
+        elseif sakura then
+            self.TitleLabel.TextColor3 = self.SakuraTitleColor or themeDef.Colors.Text
         else
-            self.TitleLabel.TextColor3 = light and (self.LightTitleColor or C.Text) or (self.DarkTitleColor or C.Text)
+            self.TitleLabel.TextColor3 = self.DarkTitleColor or themeDef.Colors.Text
         end
     end
     if self.DescLabel and self.DescLabel.Parent then
-        self.DescLabel.TextColor3 = light and (self.LightDescColor or C.Muted) or (self.DarkDescColor or C.Muted)
+        if light then
+            self.DescLabel.TextColor3 = self.LightDescColor or themeDef.Colors.Muted
+        elseif sakura then
+            self.DescLabel.TextColor3 = self.SakuraDescColor or themeDef.Colors.Muted
+        else
+            self.DescLabel.TextColor3 = self.DarkDescColor or themeDef.Colors.Muted
+        end
     end
     if self.PictureStroke and self.PictureStroke.Parent then
-        self.PictureStroke.Color = light and (self.LightImageStrokeColor or C.Border) or (self.DarkImageStrokeColor or C.Text)
+        if light then
+            self.PictureStroke.Color = self.LightImageStrokeColor or themeDef.Colors.Border
+        elseif sakura then
+            self.PictureStroke.Color = self.SakuraImageStrokeColor or themeDef.Colors.Border
+        else
+            self.PictureStroke.Color = self.DarkImageStrokeColor or themeDef.Colors.Text
+        end
     end
     if self._applyThemeExtras then self:_applyThemeExtras(light) end
     return self
@@ -697,16 +816,22 @@ end
 function Tab:_control(kind, options)
     local o = options or {}
     self._order += 1
-    local lightTheme = self.Window.ThemeName == "Blanco"
+    local themeName = self.Window.ThemeName
+    local lightTheme = themeName == "Blanco"
+    local sakuraTheme = themeName == "Sakura"
     local darkColor = o.Color or THEMES.Xero.Colors.Row
     local lightColor = o.LightColor or THEMES.Blanco.Colors.Row
+    local sakuraColor = o.SakuraColor or o.Color or THEMES.Sakura.Colors.Row
     local darkStrokeColor = o.StrokeColor or THEMES.Xero.Visuals.ControlStroke
     local lightStrokeColor = o.LightStrokeColor or THEMES.Blanco.Visuals.ControlStroke
+    local sakuraStrokeColor = o.SakuraStrokeColor or o.StrokeColor or THEMES.Sakura.Visuals.ControlStroke
+    local initialColor = lightTheme and lightColor or (sakuraTheme and sakuraColor or darkColor)
+    local initialStrokeColor = lightTheme and lightStrokeColor or (sakuraTheme and sakuraStrokeColor or darkStrokeColor)
     local slot = new("Frame", {Name="Slot",BackgroundTransparency=1,
         Size=UDim2.new(1,-4,0,0),LayoutOrder=self._order},self.Content)
-    local row = new("Frame", {Name=kind,BackgroundColor3=lightTheme and lightColor or darkColor,BackgroundTransparency=Glass.Row,
+    local row = new("Frame", {Name=kind,BackgroundColor3=initialColor,BackgroundTransparency=Glass.Row,
         Size=UDim2.new(1,0,0,0),LayoutOrder=self._order,ClipsDescendants=true},slot)
-    round(row,11); local rowStroke=stroke(row,lightTheme and lightStrokeColor or darkStrokeColor); rowStroke.Transparency=.18
+    round(row,11); local rowStroke=stroke(row,initialStrokeColor); rowStroke.Transparency=.18
     local head = new("Frame", {Name="Heading",BackgroundTransparency=1,
         Size=UDim2.new(1,0,0,0),LayoutOrder=1},row)
     local copy = new("Frame", {Name="Copy",BackgroundTransparency=1,
@@ -718,8 +843,10 @@ function Tab:_control(kind, options)
     local control = setmetatable({Title=plain(o.Title or kind),Desc=plain(o.Desc),__type=kind,
         Window=self.Window,Tab=self,ElementFrame=row,Slot=slot,Head=head,Copy=copy,RowStroke=rowStroke,
         TitleLabel=title,DescLabel=desc,Callback=o.Callback,GroupTitle=self._groupTitle,Locked=false,
-        DarkColor=darkColor,LightColor=lightColor,DarkStrokeColor=darkStrokeColor,LightStrokeColor=lightStrokeColor,
-        DarkTitleColor=o.TitleColor,LightTitleColor=o.LightTitleColor,DarkDescColor=o.DescColor,LightDescColor=o.LightDescColor},Control)
+        DarkColor=darkColor,LightColor=lightColor,SakuraColor=sakuraColor,
+        DarkStrokeColor=darkStrokeColor,LightStrokeColor=lightStrokeColor,SakuraStrokeColor=sakuraStrokeColor,
+        DarkTitleColor=o.TitleColor,LightTitleColor=o.LightTitleColor,SakuraTitleColor=o.SakuraTitleColor or o.TitleColor,
+        DarkDescColor=o.DescColor,LightDescColor=o.LightDescColor,SakuraDescColor=o.SakuraDescColor or o.DescColor},Control)
     desc.AutomaticSize=Enum.AutomaticSize.None; desc.TextYAlignment=Enum.TextYAlignment.Top
     table.insert(self.Elements,control)
     connect(self.Window,row:GetPropertyChangedSignal("Visible"),function() self:_queueFilter() end)
@@ -734,7 +861,7 @@ function Tab:Section(options)
     local c = self:_control("Section",o)
     c.ElementFrame.BackgroundTransparency = 1
     c.ElementFrame.UIStroke:Destroy(); c.RowStroke=nil
-    c.DarkTitleColor=THEMES.Xero.Colors.Muted; c.LightTitleColor=THEMES.Blanco.Colors.Muted
+    c.DarkTitleColor=THEMES.Xero.Colors.Muted; c.LightTitleColor=THEMES.Blanco.Colors.Muted; c.SakuraTitleColor=THEMES.Sakura.Colors.Muted
     c.TitleLabel.TextColor3=C.Muted; c.TitleLabel.TextSize=10; c.TitleLabel.Font=BOLD
     local rule = new("Frame",{Size=UDim2.new(1,0,0,1),BackgroundColor3=C.Border,LayoutOrder=3},c.ElementFrame)
     c.Rule = rule
@@ -758,11 +885,15 @@ function Tab:Paragraph(options)
         round(picture,o.CircleImage and math.floor(pictureSize/2) or 10)
         local darkImageStroke=o.ImageStrokeColor or Color3.fromRGB(238,238,238)
         local lightImageStroke=o.LightImageStrokeColor or THEMES.Blanco.Colors.Border
-        local pictureStroke=stroke(picture,(c.Window.ThemeName=="Blanco") and lightImageStroke or darkImageStroke,o.ImageStrokeThickness or 1)
+        local sakuraImageStroke=o.SakuraImageStrokeColor or THEMES.Sakura.Colors.Border
+        local initialImageStroke=(c.Window.ThemeName=="Blanco") and lightImageStroke
+            or ((c.Window.ThemeName=="Sakura") and sakuraImageStroke or darkImageStroke)
+        local pictureStroke=stroke(picture,initialImageStroke,o.ImageStrokeThickness or 1)
         c.Thumbnail=picture
         c.PictureStroke=pictureStroke
         c.DarkImageStrokeColor=darkImageStroke
         c.LightImageStrokeColor=lightImageStroke
+        c.SakuraImageStrokeColor=sakuraImageStroke
     end
     if o.Gothic then
         local decor=new("Frame",{Name="Decor",BackgroundTransparency=1,Size=UDim2.fromScale(1,1),ZIndex=0},c.ElementFrame)
@@ -780,10 +911,13 @@ function Tab:Paragraph(options)
             Size=UDim2.fromScale(.46,.30),Font=BOLD,TextTransparency=gothicVisuals.GothicWatermarkTransparency,TextXAlignment=Enum.TextXAlignment.Right,TextYAlignment=Enum.TextYAlignment.Bottom,ZIndex=0})
         c.DarkColor=o.Color or THEMES.Xero.Visuals.GothicRow
         c.LightColor=o.LightColor or THEMES.Blanco.Visuals.GothicRow
+        c.SakuraColor=o.SakuraColor or o.Color or THEMES.Sakura.Visuals.GothicRow
         c.DarkStrokeColor=o.StrokeColor or THEMES.Xero.Visuals.GothicStroke
         c.LightStrokeColor=o.LightStrokeColor or THEMES.Blanco.Visuals.GothicStroke
+        c.SakuraStrokeColor=o.SakuraStrokeColor or o.StrokeColor or THEMES.Sakura.Visuals.GothicStroke
         c.DarkDescColor=o.DescColor or THEMES.Xero.Visuals.GothicDesc
         c.LightDescColor=o.LightDescColor or THEMES.Blanco.Visuals.GothicDesc
+        c.SakuraDescColor=o.SakuraDescColor or o.DescColor or THEMES.Sakura.Visuals.GothicDesc
         c.TitleLabel.Font=BOLD
         c.TitleLabel.TextSize=math.max(c.TitleLabel.TextSize,14)
         c.DescLabel.TextSize=math.max(c.DescLabel.TextSize,11)
@@ -1997,7 +2131,8 @@ function Nox:CreateWindow(options)
         end
         refreshBackgroundForTheme(resolved)
         if not silent and Nox.Notify and Nox.Window == self then
-            Nox:Notify({Title = "Tema", Content = "Interfaz cambiada a " .. (resolved == "Blanco" and "Blanco" or "Oscuro")})
+            local displayName = resolved == "Blanco" and "Blanco" or (resolved == "Sakura" and "Sakura" or "Oscuro")
+            Nox:Notify({Title = "Tema", Content = "Interfaz cambiada a " .. displayName})
         end
         return self
     end
@@ -2153,6 +2288,9 @@ function Nox:GetThemes()
         Xero = {Name = "Xero"},
         Nox = {Name = "Xero"},
         Onyx = {Name = "Xero"},
+        Sakura = {Name = "Sakura"},
+        Cherry = {Name = "Sakura"},
+        Rosa = {Name = "Sakura"},
         Blanco = {Name = "Blanco"},
         White = {Name = "Blanco"},
     }

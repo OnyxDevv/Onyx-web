@@ -363,6 +363,9 @@ local movementState = {
     AutoRotate = nil,
     PlatformStand = nil,
     CameraSubject = nil,
+    -- Humanoid creado por Auto Steal. El original se reemplaza a propósito;
+    -- estos campos conservan el estado que debe restaurarse al apagarlo.
+    StealHumanoid = nil,
     WalkSpeedOverrideHumanoid = nil,
     WalkSpeedBeforeOverride = nil,
     JumpOverrideHumanoid = nil,
@@ -506,6 +509,32 @@ function r.restoreJumpPower()
     movementState.UseJumpPowerBeforeOverride = nil
 end
 
+-- Al reemplazar Humanoid, el LocalScript Animate suele seguir enlazado al
+-- Humanoid destruido. Reiniciarlo obliga a enlazar el Animator del nuevo
+-- Humanoid y evita que el personaje se quede en T-pose.
+function r.restartCharacterAnimations(character, humanoid)
+    if not character or not humanoid or not humanoid.Parent then return end
+
+    pcall(function()
+        if not humanoid:FindFirstChildOfClass("Animator") then
+            local animator = Instance.new("Animator")
+            animator.Parent = humanoid
+        end
+    end)
+
+    local animate = character:FindFirstChild("Animate")
+    if animate and animate:IsA("LocalScript") and not animate.Disabled then
+        pcall(function() animate.Disabled = true end)
+        c.Heartbeat:Wait()
+        pcall(function() animate.Disabled = false end)
+    end
+
+    task.defer(function()
+        if not s or not humanoid or not humanoid.Parent then return end
+        pcall(function() humanoid:ChangeState(Enum.HumanoidStateType.Running) end)
+    end)
+end
+
 function r.stopFly()
     local root = r.getRoot()
     if root then
@@ -548,14 +577,28 @@ function r.restoreStealMovement()
             else
                 hum.AutoRotate = true
             end
+
+            -- Auto Steal sí usa WalkSpeed alto en el Humanoid reemplazado,
+            -- pero al apagarlo debe volver al valor normal (o al slider manual).
+            if type(r.isOn) == "function" and r.isOn("WalkSpeedEnabled") then
+                hum.WalkSpeed = math.min(tonumber(r.optionValue("WalkSpeed", 32)) or 32, bi)
+            elseif movementState.Humanoid == hum then
+                hum.WalkSpeed = tonumber(movementState.WalkSpeed) or 16
+            else
+                hum.WalkSpeed = 16
+            end
         end)
 
         local cam = h.CurrentCamera
         if cam then
             pcall(function() cam.CameraSubject = hum end)
         end
+
+        local character = m.Character
+        if character then pcall(r.restartCharacterAnimations, character, hum) end
     end
 
+    movementState.StealHumanoid = nil
     r.restorePushBackScripts()
 end
 
@@ -753,9 +796,8 @@ function r.swapStealHumanoid()
     local character = m.Character
     if not character then return false end
 
-    -- La versión anterior destruía scripts PushBack y reemplazaba el Humanoid.
-    -- Eso podía dejar el avatar en T-pose. Ahora sólo pausamos PushBack de forma
-    -- reversible mientras Auto Steal está activo.
+    -- PushBack se pausa de forma reversible. El reemplazo del Humanoid se hace
+    -- después, dentro de prepareStealHumanoid(), porque forma parte del bypass.
     for _, object in ipairs(character:GetDescendants()) do
         if object:IsA("LocalScript") and string.find(object.Name, "PushBack", 1, true) then
             if movementState.PushBackScripts[object] == nil then
@@ -770,27 +812,86 @@ end
 function r.prepareStealHumanoid()
     local character = m.Character
     if not character then return nil end
-    local hum = character:FindFirstChildOfClass("Humanoid")
-    if not hum then return nil end
+    local oldHumanoid = character:FindFirstChildOfClass("Humanoid")
+    if not oldHumanoid then return nil end
 
-    r.captureMovementDefaults(false)
     r.swapStealHumanoid()
 
-    -- No clonamos ni destruimos el Humanoid. El movimiento del farm ya se hace
-    -- por CFrame, por lo que tocar WalkSpeed aquí era innecesario y dejaba la
-    -- velocidad pegada al apagar Auto Steal.
-    pcall(function()
-        hum.Sit = false
-        hum.PlatformStand = false
-        hum.AutoRotate = true
-    end)
+    local camera = h.CurrentCamera
+    local cameraCFrame = camera and camera.CFrame or nil
 
-    local cam = h.CurrentCamera
-    if cam then
-        pcall(function() cam.CameraSubject = hum end)
+    -- Si éste ya era un Humanoid creado por Auto Steal, no tomamos su
+    -- WalkSpeed alto como "normal". Conservamos la base capturada antes.
+    local baseWalkSpeed = oldHumanoid.WalkSpeed
+    local baseJumpPower = oldHumanoid.JumpPower
+    local baseUseJumpPower = oldHumanoid.UseJumpPower
+    local baseAutoRotate = oldHumanoid.AutoRotate
+    local basePlatformStand = oldHumanoid.PlatformStand
+    if movementState.StealHumanoid == oldHumanoid and movementState.Humanoid == oldHumanoid then
+        baseWalkSpeed = tonumber(movementState.WalkSpeed) or baseWalkSpeed
+        baseJumpPower = tonumber(movementState.JumpPower) or baseJumpPower
+        if movementState.UseJumpPower ~= nil then baseUseJumpPower = movementState.UseJumpPower end
+        if movementState.AutoRotate ~= nil then baseAutoRotate = movementState.AutoRotate end
+        if movementState.PlatformStand ~= nil then basePlatformStand = movementState.PlatformStand end
     end
 
-    return hum
+    local newHumanoid = nil
+    local cloned, cloneResult = pcall(function()
+        oldHumanoid.Archivable = true
+        return oldHumanoid:Clone()
+    end)
+
+    if cloned and cloneResult then
+        newHumanoid = cloneResult
+        newHumanoid.Parent = character
+        c.Heartbeat:Wait()
+        pcall(function()
+            if oldHumanoid and oldHumanoid.Parent then oldHumanoid:Destroy() end
+        end)
+    else
+        newHumanoid = oldHumanoid
+    end
+
+    task.wait(0.05)
+    newHumanoid = character:FindFirstChildOfClass("Humanoid") or newHumanoid
+    if not newHumanoid then return nil end
+
+    -- El Humanoid original se reemplaza intencionalmente; movemos también las
+    -- referencias de los overrides para que luego puedan restaurarse bien.
+    if movementState.WalkSpeedOverrideHumanoid == oldHumanoid then
+        movementState.WalkSpeedOverrideHumanoid = newHumanoid
+    end
+    if movementState.JumpOverrideHumanoid == oldHumanoid then
+        movementState.JumpOverrideHumanoid = newHumanoid
+    end
+
+    movementState.Humanoid = newHumanoid
+    movementState.StealHumanoid = newHumanoid
+    movementState.WalkSpeed = baseWalkSpeed
+    movementState.JumpPower = baseJumpPower
+    movementState.UseJumpPower = baseUseJumpPower
+    movementState.AutoRotate = baseAutoRotate
+    movementState.PlatformStand = basePlatformStand
+    movementState.CameraSubject = camera and camera.CameraSubject or newHumanoid
+
+    pcall(function()
+        newHumanoid.Sit = false
+        newHumanoid.PlatformStand = false
+        newHumanoid.WalkSpeed = r.stealSpeed()
+        newHumanoid.AutoRotate = true
+    end)
+
+    if camera then
+        pcall(function()
+            camera.CameraSubject = newHumanoid
+            if cameraCFrame then camera.CFrame = cameraCFrame end
+        end)
+    end
+
+    -- Reengancha Animate al nuevo Humanoid para que el swap no deje T-pose.
+    pcall(r.restartCharacterAnimations, character, newHumanoid)
+
+    return newHumanoid
 end
 
 function r.buildStealPath(dq, dr)
@@ -812,6 +913,9 @@ function r.humanoidStealMoveTo(dq, dr)
     dt.Sit = false
     dt.PlatformStand = false
     dt.AutoRotate = true
+    -- Conserva el comportamiento original del bypass: el Humanoid reemplazado
+    -- usa la velocidad configurada mientras Auto Steal está trabajando.
+    dt.WalkSpeed = r.stealSpeed()
 
     local dv = r.groundedY(dq.X, dq.Z, du.Position.Y)
     local dw = Vector3.new(dq.X, dv, dq.Z)
@@ -2737,7 +2841,7 @@ do
     })
     dt.AddParagraph(fv, {
         Title = "Velocidad del robo",
-        Content = "La velocidad de Auto Steal controla el desplazamiento del farm; ya no modifica el WalkSpeed de tu personaje."
+        Content = "Auto Steal reemplaza el Humanoid a propósito. Mientras trabaja usa la velocidad configurada y al apagarlo XeroHub restaura tu velocidad normal y las animaciones."
     })
     dt.AddParagraph(fv, {
         Title = "Filtros",
@@ -2775,7 +2879,7 @@ do
     dt.AddSlider(fx, {
         Id = "StealMoveSpeed",
         Title = "Velocidad del robo",
-        Desc = "Velocidad del desplazamiento del Auto Steal. No modifica tu WalkSpeed.",
+        Desc = "Velocidad usada por el Humanoid reemplazado durante Auto Steal. Se restaura al apagarlo.",
         Min = 16, Max = 2000,
         Default = bj,
         Step = 1,

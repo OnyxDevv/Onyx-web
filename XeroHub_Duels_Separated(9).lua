@@ -352,6 +352,26 @@ local cw, cx, cy = 0, 0, 0
 local cz, da = {}, {}
 local db, dc = {}, {}
 
+-- Estado de movimiento de XeroHub.
+-- Guardamos/restauramos propiedades del personaje para que Auto Steal,
+-- WalkSpeed, JumpPower, NoClip y Fly no dejen efectos pegados al apagarse.
+local movementState = {
+    Humanoid = nil,
+    WalkSpeed = nil,
+    JumpPower = nil,
+    UseJumpPower = nil,
+    AutoRotate = nil,
+    PlatformStand = nil,
+    CameraSubject = nil,
+    WalkSpeedOverrideHumanoid = nil,
+    WalkSpeedBeforeOverride = nil,
+    JumpOverrideHumanoid = nil,
+    JumpPowerBeforeOverride = nil,
+    UseJumpPowerBeforeOverride = nil,
+    PushBackScripts = setmetatable({}, {__mode = "k"}),
+    NoClipParts = setmetatable({}, {__mode = "k"}),
+}
+
 local dd = {}
 if getgenv then
     local de = getgenv().ApexHubHopHistory
@@ -409,6 +429,139 @@ function r.getRoot()
     local dq = m.Character
     return dq and dq:FindFirstChild("HumanoidRootPart") or nil
 end
+
+function r.captureMovementDefaults(force)
+    local hum = r.getHumanoid()
+    if not hum then return nil end
+    if force or movementState.Humanoid ~= hum then
+        movementState.Humanoid = hum
+        movementState.WalkSpeed = hum.WalkSpeed
+        movementState.JumpPower = hum.JumpPower
+        movementState.UseJumpPower = hum.UseJumpPower
+        movementState.AutoRotate = hum.AutoRotate
+        movementState.PlatformStand = hum.PlatformStand
+        local cam = h.CurrentCamera
+        movementState.CameraSubject = cam and cam.CameraSubject or hum
+    end
+    return hum
+end
+
+function r.restorePushBackScripts()
+    for scriptObject, wasDisabled in pairs(movementState.PushBackScripts) do
+        if scriptObject and scriptObject.Parent then
+            pcall(function() scriptObject.Disabled = wasDisabled == true end)
+        end
+        movementState.PushBackScripts[scriptObject] = nil
+    end
+end
+
+function r.restoreWalkSpeed()
+    local hum = r.getHumanoid()
+    if not hum then
+        movementState.WalkSpeedOverrideHumanoid = nil
+        movementState.WalkSpeedBeforeOverride = nil
+        return
+    end
+
+    local saved
+    if movementState.WalkSpeedOverrideHumanoid == hum then
+        saved = movementState.WalkSpeedBeforeOverride
+    elseif movementState.Humanoid == hum then
+        saved = movementState.WalkSpeed
+    end
+
+    pcall(function() hum.WalkSpeed = tonumber(saved) or 16 end)
+    movementState.WalkSpeedOverrideHumanoid = nil
+    movementState.WalkSpeedBeforeOverride = nil
+end
+
+function r.restoreJumpPower()
+    local hum = r.getHumanoid()
+    if not hum then
+        movementState.JumpOverrideHumanoid = nil
+        movementState.JumpPowerBeforeOverride = nil
+        movementState.UseJumpPowerBeforeOverride = nil
+        return
+    end
+
+    local savedPower
+    local savedUseJumpPower
+    if movementState.JumpOverrideHumanoid == hum then
+        savedPower = movementState.JumpPowerBeforeOverride
+        savedUseJumpPower = movementState.UseJumpPowerBeforeOverride
+    elseif movementState.Humanoid == hum then
+        savedPower = movementState.JumpPower
+        savedUseJumpPower = movementState.UseJumpPower
+    end
+
+    pcall(function()
+        if savedUseJumpPower ~= nil then
+            hum.UseJumpPower = savedUseJumpPower
+        end
+        hum.JumpPower = tonumber(savedPower) or 50
+    end)
+
+    movementState.JumpOverrideHumanoid = nil
+    movementState.JumpPowerBeforeOverride = nil
+    movementState.UseJumpPowerBeforeOverride = nil
+end
+
+function r.stopFly()
+    local root = r.getRoot()
+    if root then
+        local lv = root:FindFirstChild("ApexFlyLV")
+        if lv then pcall(function() lv:Destroy() end) end
+        local attachment = root:FindFirstChild("ApexFlyAttachment")
+        if attachment then pcall(function() attachment:Destroy() end) end
+        pcall(function()
+            root.AssemblyLinearVelocity = Vector3.zero
+            root.AssemblyAngularVelocity = Vector3.zero
+        end)
+    end
+    local hum = r.getHumanoid()
+    if hum then pcall(function() hum.PlatformStand = false end) end
+end
+
+function r.restoreStealMovement()
+    local root = r.getRoot()
+    if root then
+        for _, name in ipairs({"ApexBypassMove", "ApexBypassGyro", "ApexSoftMove"}) do
+            local mover = root:FindFirstChild(name)
+            if mover then pcall(function() mover:Destroy() end) end
+        end
+        pcall(function()
+            root.Anchored = false
+            root.AssemblyLinearVelocity = Vector3.zero
+            root.AssemblyAngularVelocity = Vector3.zero
+        end)
+    end
+
+    local hum = r.getHumanoid()
+    if hum then
+        pcall(function()
+            hum.Sit = false
+            if not (type(r.isOn) == "function" and r.isOn("Fly")) then
+                hum.PlatformStand = false
+            end
+            if movementState.Humanoid == hum and movementState.AutoRotate ~= nil then
+                hum.AutoRotate = movementState.AutoRotate
+            else
+                hum.AutoRotate = true
+            end
+        end)
+
+        local cam = h.CurrentCamera
+        if cam then
+            pcall(function() cam.CameraSubject = hum end)
+        end
+    end
+
+    r.restorePushBackScripts()
+end
+
+-- Captura una base limpia al arrancar; al respawn se vuelve a capturar.
+r.captureMovementDefaults(true)
+
 function r.getSave()
     if not t or typeof(t.Get) ~= "function" then return nil end
     local dq, dr = pcall(t.Get)
@@ -522,11 +675,16 @@ function r.getZoneLaneCenter(dq)
 end
 function r.stripCheatMovers(dq)
     if not dq then return end
+    -- Sólo limpiamos movers creados por ESTE script. La versión anterior
+    -- destruía cualquier BodyMover/LinearVelocity del personaje y podía
+    -- romper controladores legítimos del juego.
+    local owned = {
+        ApexBypassMove = true,
+        ApexBypassGyro = true,
+        ApexSoftMove = true,
+    }
     for _, dr in ipairs(dq:GetChildren()) do
-        local ds = dr.ClassName
-        if ds == "BodyVelocity" or ds == "BodyPosition" or ds == "BodyGyro"
-            or ds == "BodyAngularVelocity" or ds == "LinearVelocity"
-            or ds == "VectorForce" or ds == "AlignOrientation" then
+        if owned[dr.Name] then
             pcall(function() dr:Destroy() end)
         end
     end
@@ -534,7 +692,9 @@ end
 function r.stopSoftMove(dq)
     if not dq then return end
     for _, dr in ipairs(dq:GetChildren()) do
-        if dr:IsA("AlignPosition") then pcall(function() dr.Enabled = false; dr:Destroy() end) end
+        if dr:IsA("AlignPosition") and string.sub(dr.Name, 1, 4) == "Apex" then
+            pcall(function() dr.Enabled = false; dr:Destroy() end)
+        end
     end
 end
 function r.placeRoot(dq, dr)
@@ -590,60 +750,47 @@ function r.bypassSpeed()
 end
 
 function r.swapStealHumanoid()
-    local dq = m.Character
-    if not dq then return false end
-    for _, dr in ipairs(dq:GetDescendants()) do
-        if dr:IsA("LocalScript") and string.find(dr.Name, "PushBack") then
-            pcall(function() dr.Disabled = true; dr:Destroy() end)
+    local character = m.Character
+    if not character then return false end
+
+    -- La versión anterior destruía scripts PushBack y reemplazaba el Humanoid.
+    -- Eso podía dejar el avatar en T-pose. Ahora sólo pausamos PushBack de forma
+    -- reversible mientras Auto Steal está activo.
+    for _, object in ipairs(character:GetDescendants()) do
+        if object:IsA("LocalScript") and string.find(object.Name, "PushBack", 1, true) then
+            if movementState.PushBackScripts[object] == nil then
+                movementState.PushBackScripts[object] = object.Disabled == true
+            end
+            pcall(function() object.Disabled = true end)
         end
     end
     return true
 end
 
 function r.prepareStealHumanoid()
-    local dq = m.Character
-    if not dq then return nil end
-    local dr = dq:FindFirstChildOfClass("Humanoid")
-    if not dr then return nil end
+    local character = m.Character
+    if not character then return nil end
+    local hum = character:FindFirstChildOfClass("Humanoid")
+    if not hum then return nil end
 
-    local ds = h.CurrentCamera
-    local dt = ds and ds.CFrame or nil
+    r.captureMovementDefaults(false)
+    r.swapStealHumanoid()
 
-    local du = nil
-    local dv, dw = pcall(function()
-        dr.Archivable = true
-        return dr:Clone()
+    -- No clonamos ni destruimos el Humanoid. El movimiento del farm ya se hace
+    -- por CFrame, por lo que tocar WalkSpeed aquí era innecesario y dejaba la
+    -- velocidad pegada al apagar Auto Steal.
+    pcall(function()
+        hum.Sit = false
+        hum.PlatformStand = false
+        hum.AutoRotate = true
     end)
 
-    if dv and dw then
-        du = dw
-        du.Parent = dq
-        c.Heartbeat:Wait()
-        pcall(function()
-            if dr and dr.Parent then dr:Destroy() end
-        end)
-    else
-        du = dr
+    local cam = h.CurrentCamera
+    if cam then
+        pcall(function() cam.CameraSubject = hum end)
     end
 
-    task.wait(0.1)
-
-    du = dq:FindFirstChildOfClass("Humanoid") or du
-    if du then
-        du.Sit = false
-        du.PlatformStand = false
-        du.WalkSpeed = r.stealSpeed()
-        du.AutoRotate = true
-    end
-
-    if ds and du then
-        pcall(function()
-            ds.CameraSubject = du
-            if dt then ds.CFrame = dt end
-        end)
-    end
-
-    return du
+    return hum
 end
 
 function r.buildStealPath(dq, dr)
@@ -665,7 +812,6 @@ function r.humanoidStealMoveTo(dq, dr)
     dt.Sit = false
     dt.PlatformStand = false
     dt.AutoRotate = true
-    dt.WalkSpeed = r.stealSpeed()
 
     local dv = r.groundedY(dq.X, dq.Z, du.Position.Y)
     local dw = Vector3.new(dq.X, dv, dq.Z)
@@ -1058,7 +1204,16 @@ function r.runAutoSteal()
     if bu or r.eggInventoryFull() then return false end
     local dq = r.pickStealTarget()
     if not dq then return false end
-    return r.stealEgg(dq)
+
+    -- Failsafe: si el flujo falla a mitad de movimiento, liberamos anchor,
+    -- PlatformStand y movers propios para no dejar al jugador congelado.
+    local ok, result = pcall(r.stealEgg, dq)
+    if not ok then
+        pcall(r.restoreStealMovement)
+        warn("[XeroHub] Auto Steal se recuperó de un error: " .. tostring(result))
+        return false
+    end
+    return result == true
 end
 function r.runAutoDropEgg()
     if not bu then return false end
@@ -2229,17 +2384,19 @@ local tabNames = {
     farm = "AutoFarm",
     pets = "Mascotas",
     progress = "Progreso",
-    player = "Jugador",
+    visuals = "Visuales",
+    movement = "Movimiento",
     system = "Configuración",
 }
 
 local tabDescriptions = {
-    home = "Estado de la sesión, cuenta y acciones rápidas.",
-    farm = "Automatizaciones de huevos, filtros y servidor.",
-    pets = "Mascotas, fusión automática y venta.",
+    home = "Estado de la sesión y guía rápida.",
+    farm = "Robo, colocación y apertura automática de huevos.",
+    pets = "Equipar, fusionar y vender mascotas.",
     progress = "Mejoras, recompensas, equipo y entrenamiento.",
-    player = "ESP, movimiento y teletransportes.",
-    system = "Sesión, rendimiento, webhooks y datos del hub.",
+    visuals = "ESP y distancia de visualización.",
+    movement = "Movimiento manual y teletransportes.",
+    system = "Rendimiento, sesión, webhooks y créditos.",
 }
 
 local function tabFromContainer(container, ensureSection)
@@ -2274,10 +2431,18 @@ function dt.AddSection(tabContainer, options)
     }
 end
 
+local function cloneStateTable(value)
+    local copy = {}
+    for key, item in pairs(typeof(value) == "table" and value or {}) do
+        copy[key] = item
+    end
+    return copy
+end
+
 local function prepareState(id, value)
     if id ~= nil then
         if typeof(value) == "table" then
-            dt.__state[id] = r.cloneList(value)
+            dt.__state[id] = cloneStateTable(value)
         else
             dt.__state[id] = value
         end
@@ -2329,25 +2494,105 @@ function dt.AddSlider(container, options)
     return control
 end
 
+local dropdownLabels = {
+    ["Common"] = "Común",
+    ["Uncommon"] = "Poco común",
+    ["Rare"] = "Raro",
+    ["Epic"] = "Épico",
+    ["Legendary"] = "Legendario",
+    ["Mythic"] = "Mítico",
+    ["Cosmic"] = "Cósmico",
+    ["Secret"] = "Secreto",
+    ["Eternal"] = "Eterno",
+    ["Divine"] = "Divino",
+    ["Golden"] = "Dorado",
+    ["Rainbow"] = "Arcoíris",
+    ["Silver"] = "Plateado",
+    ["Rarest"] = "Más raro",
+    ["Nearest"] = "Más cercano",
+    ["Furthest"] = "Más lejano",
+    ["Biggest Size"] = "Más grande",
+    ["Highest Rarity"] = "Mayor rareza",
+    ["Lowest Rarity"] = "Menor rareza",
+    ["Most Duplicates"] = "Más repetidos",
+    ["Treadmill"] = "Cinta",
+    ["Auto Steal Egg"] = "Robar huevo",
+    ["Auto Place Egg"] = "Colocar huevo",
+    ["Auto Hatch"] = "Abrir huevo",
+    ["Auto Treadmill"] = "Entrenar en cinta",
+    ["No Matching Eggs"] = "Sin huevos compatibles",
+    ["Timed Interval"] = "Por tiempo",
+    ["After Steal Count"] = "Tras cierta cantidad de robos",
+    ["Forest"] = "Bosque",
+    ["Lake"] = "Lago",
+    ["Desert"] = "Desierto",
+    ["Jungle"] = "Jungla",
+    ["Snow"] = "Nieve",
+    ["Volcano"] = "Volcán",
+    ["Abyss Ocean"] = "Océano abisal",
+    ["Prehistoric"] = "Prehistórico",
+}
+local dropdownInternal = {}
+for internal, display in pairs(dropdownLabels) do
+    dropdownInternal[display] = internal
+end
+
+local function dropdownToDisplay(value)
+    return dropdownLabels[value] or value
+end
+
+local function dropdownToInternal(value)
+    return dropdownInternal[value] or value
+end
+
+local function mapDropdownValue(value, mapper)
+    if typeof(value) ~= "table" then
+        return mapper(value)
+    end
+    local result = {}
+    for key, item in pairs(value) do
+        if item == true and typeof(key) == "string" then
+            result[mapper(key)] = true
+        elseif typeof(key) == "number" then
+            result[key] = mapper(item)
+        else
+            result[key] = item
+        end
+    end
+    return result
+end
+
 function dt.AddDropdown(container, options)
     local tab = tabFromContainer(container, true)
     local multi = options.Multi == true or options.MultiSelect == true
-    local default = options.Default
-    if multi then
-        default = typeof(default) == "table" and r.cloneList(default) or {}
-    elseif default == nil and typeof(options.Options) == "table" then
-        default = options.Options[1]
+    local originalOptions = options.Options or options.Values or {}
+    local displayOptions = {}
+    for index, value in ipairs(originalOptions) do
+        displayOptions[index] = dropdownToDisplay(value)
     end
-    prepareState(options.Id, default)
+
+    local internalDefault = options.Default
+    if multi then
+        internalDefault = typeof(internalDefault) == "table" and cloneStateTable(internalDefault) or {}
+    elseif internalDefault == nil and typeof(originalOptions) == "table" then
+        internalDefault = originalOptions[1]
+    end
+
+    prepareState(options.Id, internalDefault)
+    local displayDefault = mapDropdownValue(internalDefault, dropdownToDisplay)
+
     local control = tab:Dropdown({
-        Title = options.Title or "Dropdown",
+        Title = options.Title or "Lista",
         Desc = options.Description or options.Desc,
-        Values = options.Options or options.Values or {},
-        Value = default,
+        Values = displayOptions,
+        Value = displayDefault,
         Multi = multi,
         Callback = function(value)
-            local stateValue = multi and r.cloneList(value or {}) or value
-            runControlCallback(options, stateValue)
+            local internalValue = mapDropdownValue(value or (multi and {} or nil), dropdownToInternal)
+            if multi and typeof(internalValue) == "table" then
+                internalValue = cloneStateTable(internalValue)
+            end
+            runControlCallback(options, internalValue)
         end,
     })
     if options.Id then dt.__controls[options.Id] = control end
@@ -2441,61 +2686,96 @@ end)
 local fq = {}
 
 do
-    local fr = dt.AddTab({ Id = "home", Title = "Home" })
-    local fs = dt.AddSection(fr, { Title = "Session", Description = "Live status" })
-    local ft = dt.AddSection(fr, { Title = "Account", Description = "Save data" })
-    local fu = dt.AddSection(fr, { Title = "Quick Actions" })
-    local fv = dt.AddSection(fr, { Title = "Quick Start" })
+    local function restoreStealIfStopped()
+        task.defer(function()
+            if not r.stealingEnabled() then
+                pcall(r.restoreStealMovement)
+            end
+        end)
+    end
 
-    fq.statusRow = dt.AddStatus(fs, { Title = "Automation", Value = "Ready" })
+    local fr = dt.AddTab({ Id = "home", Title = "Inicio" })
+    local fs = dt.AddSection(fr, { Title = "Estado", Description = "Información en vivo de la sesión." })
+    local ft = dt.AddSection(fr, { Title = "Cuenta", Description = "Datos principales de tu progreso." })
+    local fu = dt.AddSection(fr, { Title = "Acciones rápidas" })
+    local fv = dt.AddSection(fr, { Title = "Guía rápida" })
+
+    fq.statusRow = dt.AddStatus(fs, { Title = "Automatización", Value = "Lista" })
     fq.statusRow:SetStatus("Success")
-    fq.jobRow = dt.AddStatus(fs, { Title = "Current Job", Value = "Idle" })
-    fq.stolenRow = dt.AddStatus(fs, { Title = "Stolen Eggs", Value = "0" })
-    fq.carryingRow = dt.AddStatus(fs, { Title = "Carrying Egg", Value = "No" })
-    fq.runtimeRow = dt.AddStatus(fs, { Title = "Runtime", Value = "0m" })
-    dt.AddStatus(fs, { Title = "Server", Value = bt })
+    fq.jobRow = dt.AddStatus(fs, { Title = "Tarea actual", Value = "En espera" })
+    fq.stolenRow = dt.AddStatus(fs, { Title = "Huevos robados", Value = "0" })
+    fq.carryingRow = dt.AddStatus(fs, { Title = "Llevando huevo", Value = "No" })
+    fq.runtimeRow = dt.AddStatus(fs, { Title = "Tiempo activo", Value = "0m" })
+    dt.AddStatus(fs, { Title = "Servidor", Value = bt })
 
-    fq.inventoryProgress = dt.AddStatus(ft, { Title = "Egg Inventory", Value = tostring(r.eggInventoryCount()) })
-    fq.moneyRow = dt.AddStatus(ft, { Title = "Money", Value = "0" })
-    fq.speedRow = dt.AddStatus(ft, { Title = "Speed Power", Value = "0" })
+    fq.inventoryProgress = dt.AddStatus(ft, { Title = "Inventario de huevos", Value = tostring(r.eggInventoryCount()) })
+    fq.moneyRow = dt.AddStatus(ft, { Title = "Dinero", Value = "0" })
+    fq.speedRow = dt.AddStatus(ft, { Title = "Poder de velocidad", Value = "0" })
     fq.rebirthRow = dt.AddStatus(ft, { Title = "Rebirths", Value = "0" })
-    fq.petsOwnedRow = dt.AddStatus(ft, { Title = "Pets Owned", Value = "0" })
+    fq.petsOwnedRow = dt.AddStatus(ft, { Title = "Mascotas", Value = "0" })
 
-    dt.AddButton(fu, { Title = "Return to Base", Text = "Return", Callback = function()
+    dt.AddButton(fu, { Title = "Volver a la base", Text = "Volver", Callback = function()
         task.spawn(function()
             if not r.getBasePosition() or not r.returnToBaseBypass(nil) then
-                r.notify("Return", "Base unavailable", "Warning", 3)
+                r.notify("Base", "No se encontró la base.", "Warning", 3)
             end
         end)
     end })
-    dt.AddButton(fu, { Title = "Place Eggs", Text = "Place", Callback = function()
+    dt.AddButton(fu, { Title = "Colocar huevos ahora", Text = "Colocar", Callback = function()
         task.spawn(function() r.runAutoPlaceEggs(true) end)
     end })
-    dt.AddButton(fu, { Title = "Server Hop", Text = "Hop", Callback = function()
+    dt.AddButton(fu, { Title = "Cambiar de servidor", Text = "Cambiar", Callback = function()
         task.spawn(function() cb = 0; r.serverHop("Manual") end)
     end })
-    dt.AddButton(fu, { Title = "Fuse Now", Text = "Fuse", Callback = function()
+    dt.AddButton(fu, { Title = "Fusionar mascotas ahora", Text = "Fusionar", Callback = function()
         task.spawn(function() r.runAutoFusePets(true) end)
     end })
 
-    dt.AddParagraph(fv, { Title = "Farm flow",
-        Content = "Grab1 -> Hold 3s -> Release -> Grab2 -> Return Base. Hold time " .. bp .. "s." })
-    dt.AddParagraph(fv, { Title = "Filters",
-        Content = "Empty multi-select filters mean everything matches." })
+    dt.AddParagraph(fv, {
+        Title = "Cómo usar AutoFarm",
+        Content = "Usa «Robar según filtros» para elegir rarezas/zonas o «Robar cualquier huevo» para ignorar filtros. No necesitas activar ambos."
+    })
+    dt.AddParagraph(fv, {
+        Title = "Velocidad del robo",
+        Content = "La velocidad de Auto Steal controla el desplazamiento del farm; ya no modifica el WalkSpeed de tu personaje."
+    })
+    dt.AddParagraph(fv, {
+        Title = "Filtros",
+        Content = "Si dejas un selector múltiple vacío, XeroHub interpreta que cualquier opción es válida."
+    })
 
-    local fw = dt.AddTab({ Id = "farm", Title = "Farm" })
-    local fx = dt.AddSection(fw, { Title = "Steal Eggs", Description = "Main egg farming" })
-    local fy = dt.AddSection(fw, { Title = "Egg Handling" })
-    local fz = dt.AddSection(fw, { Title = "Server Hop" })
-    local ga = dt.AddSection(fw, { Title = "Task Order" })
+    local fw = dt.AddTab({ Id = "farm", Title = "AutoFarm" })
+    local fx = dt.AddSection(fw, { Title = "Robo automático", Description = "Selecciona sólo un modo principal de robo." })
+    local fy = dt.AddSection(fw, { Title = "Gestión de huevos", Description = "Colocación, apertura y venta automática." })
+    local fz = dt.AddSection(fw, { Title = "Cambio de servidor", Description = "Busca otro servidor cuando se cumpla la condición." })
+    local ga = dt.AddSection(fw, { Title = "Prioridad de tareas", Description = "Orden en que se ejecutan las automatizaciones disponibles." })
 
-    dt.AddToggle(fx, { Id = "AutoStealSelected", Title = "Auto Steal Selected", Description = "Use filters below", Default = false })
-    dt.AddToggle(fx, { Id = "AutoStealAll", Title = "Auto Steal All", Description = "Ignore rarity/mutation", Default = false })
-    dt.AddToggle(fx, { Id = "StealBigEggs", Title = "Steal Big Eggs", Default = false })
+    dt.AddToggle(fx, {
+        Id = "AutoStealSelected",
+        Title = "Robar según filtros",
+        Description = "Roba sólo huevos que coincidan con las zonas, rarezas o mutaciones elegidas.",
+        Default = false,
+        Callback = restoreStealIfStopped,
+    })
+    dt.AddToggle(fx, {
+        Id = "AutoStealAll",
+        Title = "Robar cualquier huevo",
+        Description = "Ignora los filtros de rareza y mutación.",
+        Default = false,
+        Callback = restoreStealIfStopped,
+    })
+    dt.AddToggle(fx, {
+        Id = "StealBigEggs",
+        Title = "Robar huevos grandes",
+        Description = "Permite tomar huevos que superen el tamaño mínimo configurado.",
+        Default = false,
+        Callback = restoreStealIfStopped,
+    })
 
     dt.AddSlider(fx, {
         Id = "StealMoveSpeed",
-        Title = "Steal Speed",
+        Title = "Velocidad del robo",
+        Desc = "Velocidad del desplazamiento del Auto Steal. No modifica tu WalkSpeed.",
         Min = 16, Max = 2000,
         Default = bj,
         Step = 1,
@@ -2504,169 +2784,237 @@ do
 
     dt.AddSlider(fx, {
         Id = "BypassReturnSpeed",
-        Title = "Return Speed",
+        Title = "Velocidad de regreso",
+        Desc = "Velocidad usada para volver a la base después de recoger un huevo.",
         Min = 16, Max = 2000,
         Default = bk,
         Step = 1,
         Suffix = " studs/s",
     })
 
-    dt.AddDivider(fx, { Title = "Target filters" })
-    dt.AddDropdown(fx, { Id = "StealZones", Title = "Areas", Options = bd, Multi = true, Default = {} })
-    dt.AddDropdown(fx, { Id = "StealRarities", Title = "Rarities", Options = at, Multi = true, Default = {} })
-    dt.AddDropdown(fx, { Id = "StealMutations", Title = "Mutations", Options = av, Multi = true, Default = {} })
-    dt.AddDropdown(fx, { Id = "StealPriority", Title = "Target Priority", Options = aw, Default = "Rarest" })
-    dt.AddSlider(fx, { Id = "StealBigEggScale", Title = "Minimum Big Egg Size", Min = 1, Max = 50, Default = 1.5, Step = 0.1, Suffix = "x" })
-    dt.AddDivider(fx, { Title = "Carry behavior" })
-    dt.AddToggle(fx, { Id = "AutoReturn", Title = "Auto Return to Base", Default = true })
-    dt.AddToggle(fx, { Id = "AutoDropEgg", Title = "Auto Drop Held Egg", Default = false })
+    dt.AddDivider(fx, { Title = "Filtros del objetivo" })
+    dt.AddDropdown(fx, { Id = "StealZones", Title = "Zonas", Desc = "Vacío = todas las zonas.", Options = bd, Multi = true, Default = {} })
+    dt.AddDropdown(fx, { Id = "StealRarities", Title = "Rarezas", Desc = "Vacío = todas las rarezas.", Options = at, Multi = true, Default = {} })
+    dt.AddDropdown(fx, { Id = "StealMutations", Title = "Mutaciones", Desc = "Vacío = todas las mutaciones.", Options = av, Multi = true, Default = {} })
+    dt.AddDropdown(fx, { Id = "StealPriority", Title = "Prioridad del objetivo", Options = aw, Default = "Rarest" })
+    dt.AddSlider(fx, { Id = "StealBigEggScale", Title = "Tamaño mínimo de huevo grande", Min = 1, Max = 50, Default = 1.5, Step = 0.1, Suffix = "x" })
+    dt.AddDivider(fx, { Title = "Después de recoger" })
+    dt.AddToggle(fx, { Id = "AutoReturn", Title = "Regresar automáticamente a la base", Default = true })
+    dt.AddToggle(fx, { Id = "AutoDropEgg", Title = "Soltar automáticamente el huevo", Default = false })
 
-    dt.AddToggle(fy, { Id = "AutoPlaceSelected", Title = "Auto Place Selected", Default = false })
-    dt.AddToggle(fy, { Id = "AutoPlaceAll", Title = "Auto Place All", Default = false })
-    dt.AddToggle(fy, { Id = "AutoOpenReadyEggs", Title = "Auto Hatch Ready", Default = false })
-    dt.AddDropdown(fy, { Id = "LifecycleRarities", Title = "Lifecycle Rarities", Options = at, Multi = true, Default = {} })
-    dt.AddDropdown(fy, { Id = "LifecycleMutations", Title = "Lifecycle Mutations", Options = av, Multi = true, Default = {} })
-    dt.AddDivider(fy, { Title = "Egg selling" })
-    dt.AddToggle(fy, { Id = "AutoSellEggs", Title = "Auto Sell Eggs", Default = false })
-    dt.AddDropdown(fy, { Id = "SellEggRarities", Title = "Sell Rarities", Options = at, Multi = true, Default = {} })
-    dt.AddSlider(fy, { Id = "SellEggInterval", Title = "Sell Interval", Min = 1, Max = 120, Default = 8, Step = 1, Suffix = " s" })
+    dt.AddToggle(fy, { Id = "AutoPlaceSelected", Title = "Colocar huevos según filtros", Default = false })
+    dt.AddToggle(fy, { Id = "AutoPlaceAll", Title = "Colocar todos los huevos", Default = false })
+    dt.AddToggle(fy, { Id = "AutoOpenReadyEggs", Title = "Abrir huevos listos", Default = false })
+    dt.AddDropdown(fy, { Id = "LifecycleRarities", Title = "Rarezas para colocar/abrir", Options = at, Multi = true, Default = {} })
+    dt.AddDropdown(fy, { Id = "LifecycleMutations", Title = "Mutaciones para colocar/abrir", Options = av, Multi = true, Default = {} })
+    dt.AddDivider(fy, { Title = "Venta de huevos" })
+    dt.AddToggle(fy, { Id = "AutoSellEggs", Title = "Vender huevos automáticamente", Default = false })
+    dt.AddDropdown(fy, { Id = "SellEggRarities", Title = "Rarezas que se pueden vender", Options = at, Multi = true, Default = {} })
+    dt.AddSlider(fy, { Id = "SellEggInterval", Title = "Intervalo de venta", Min = 1, Max = 120, Default = 8, Step = 1, Suffix = " s" })
 
-    dt.AddToggle(fz, { Id = "AutoServerHop", Title = "Auto Server Hop", Default = false })
-    dt.AddDropdown(fz, { Id = "HopMode", Title = "Hop When", Options = bb, Default = "No Matching Eggs" })
-    dt.AddSlider(fz, { Id = "HopValue", Title = "Wait Before Hop", Min = 1, Max = 200, Default = 15, Step = 1 })
-    dt.AddButton(fz, { Title = "Hop Now", Text = "Hop", Callback = function()
+    dt.AddToggle(fz, { Id = "AutoServerHop", Title = "Cambio automático de servidor", Default = false })
+    dt.AddDropdown(fz, { Id = "HopMode", Title = "Cambiar cuando", Options = bb, Default = "No Matching Eggs" })
+    dt.AddSlider(fz, { Id = "HopValue", Title = "Valor de espera / cantidad", Desc = "Se interpreta según la condición seleccionada.", Min = 1, Max = 200, Default = 15, Step = 1 })
+    dt.AddButton(fz, { Title = "Cambiar de servidor ahora", Text = "Cambiar", Callback = function()
         task.spawn(function() cb = 0; r.serverHop("Manual") end)
     end })
 
-    dt.AddParagraph(ga, { Content = "Runs the first ready task in this order." })
+    dt.AddParagraph(ga, { Content = "XeroHub ejecuta primero la tarea disponible que aparezca más arriba en esta prioridad." })
     for gb, gc in ipairs(ba) do
-        dt.AddDropdown(ga, { Id = gc, Title = "Priority " .. gb, Options = az, Default = az[gb] })
+        dt.AddDropdown(ga, { Id = gc, Title = "Prioridad " .. gb, Options = az, Default = az[gb] })
     end
 
-    local gb = dt.AddTab({ Id = "pets", Title = "Pets" })
-    local gc = dt.AddSection(gb, { Title = "Pets" })
-    local gd = dt.AddSection(gb, { Title = "Auto Fuse" })
-    local ge = dt.AddSection(gb, { Title = "Auto Sell Pets" })
+    local gb = dt.AddTab({ Id = "pets", Title = "Mascotas" })
+    local gc = dt.AddSection(gb, { Title = "Mascotas", Description = "Equipamiento y visualización." })
+    local gd = dt.AddSection(gb, { Title = "Fusión automática", Description = "Configura qué mascotas puede fusionar." })
+    local ge = dt.AddSection(gb, { Title = "Venta automática", Description = "Configura qué mascotas puede vender." })
 
-    dt.AddToggle(gc, { Id = "AutoEquipBest", Title = "Auto Equip Best Pets", Default = false })
-    dt.AddToggle(gc, { Id = "AutoDeleteOwnPets", Title = "Hide Own Pet Renders", Default = false })
-    dt.AddToggle(gd, { Id = "AutoFusePets", Title = "Auto Fuse Pets", Default = false })
-    dt.AddDropdown(gd, { Id = "FuseRarities", Title = "Fuse Rarities", Options = at, Multi = true, Default = {} })
-    dt.AddDropdown(gd, { Id = "FuseMutations", Title = "Fuse Mutations", Options = av, Multi = true, Default = {} })
-    dt.AddDropdown(gd, { Id = "FuseTarget", Title = "Pick Group By", Options = ax, Default = "Highest Rarity" })
-    dt.AddToggle(gd, { Id = "FuseKeepMutated", Title = "Never Fuse Mutated", Default = true })
-    dt.AddToggle(gd, { Id = "FuseKeepEquipped", Title = "Never Fuse Equipped", Default = true })
-    dt.AddToggle(gd, { Id = "FuseAutoReveal", Title = "Auto Complete Reveal", Default = true })
-    dt.AddSlider(gd, { Id = "FuseMaxScale", Title = "Maximum Scale to Fuse", Min = 0, Max = 10, Default = 10, Step = 0.1 })
-    dt.AddSlider(gd, { Id = "FuseKeepPerCategory", Title = "Keep Per Pet Type", Min = 0, Max = 20, Default = 0, Step = 1 })
-    dt.AddSlider(gd, { Id = "FuseInterval", Title = "Fuse Interval", Min = 1, Max = 120, Default = 8, Step = 1, Suffix = " s" })
-    dt.AddButton(gd, { Title = "Fuse Now", Text = "Fuse", Callback = function() task.spawn(function() r.runAutoFusePets(true) end) end })
+    dt.AddToggle(gc, { Id = "AutoEquipBest", Title = "Equipar mejores mascotas", Default = false })
+    dt.AddToggle(gc, { Id = "AutoDeleteOwnPets", Title = "Ocultar mis mascotas renderizadas", Desc = "Sólo oculta su render en tu cliente.", Default = false })
 
-    dt.AddToggle(ge, { Id = "AutoSellPets", Title = "Auto Sell Pets", Default = false })
-    dt.AddDropdown(ge, { Id = "SellRarities", Title = "Sell Rarities", Options = at, Multi = true, Default = {} })
-    dt.AddDropdown(ge, { Id = "SellMutations", Title = "Sell Mutations", Options = av, Multi = true, Default = {} })
-    dt.AddToggle(ge, { Id = "SellKeepMutated", Title = "Never Sell Mutated", Default = true })
-    dt.AddToggle(ge, { Id = "SellKeepEquipped", Title = "Never Sell Equipped", Default = true })
-    dt.AddSlider(ge, { Id = "SellMaxScale", Title = "Maximum Scale to Sell", Min = 0, Max = 10, Default = 10, Step = 0.1 })
-    dt.AddSlider(ge, { Id = "SellInterval", Title = "Sell Interval", Min = 1, Max = 120, Default = 6, Step = 1, Suffix = " s" })
+    dt.AddToggle(gd, { Id = "AutoFusePets", Title = "Fusionar mascotas automáticamente", Default = false })
+    dt.AddDropdown(gd, { Id = "FuseRarities", Title = "Rarezas permitidas", Options = at, Multi = true, Default = {} })
+    dt.AddDropdown(gd, { Id = "FuseMutations", Title = "Mutaciones permitidas", Options = av, Multi = true, Default = {} })
+    dt.AddDropdown(gd, { Id = "FuseTarget", Title = "Agrupar por", Options = ax, Default = "Highest Rarity" })
+    dt.AddToggle(gd, { Id = "FuseKeepMutated", Title = "Nunca fusionar mutadas", Default = true })
+    dt.AddToggle(gd, { Id = "FuseKeepEquipped", Title = "Nunca fusionar equipadas", Default = true })
+    dt.AddToggle(gd, { Id = "FuseAutoReveal", Title = "Completar reveal automáticamente", Default = true })
+    dt.AddSlider(gd, { Id = "FuseMaxScale", Title = "Escala máxima para fusionar", Min = 0, Max = 10, Default = 10, Step = 0.1 })
+    dt.AddSlider(gd, { Id = "FuseKeepPerCategory", Title = "Conservar por tipo de mascota", Min = 0, Max = 20, Default = 0, Step = 1 })
+    dt.AddSlider(gd, { Id = "FuseInterval", Title = "Intervalo de fusión", Min = 1, Max = 120, Default = 8, Step = 1, Suffix = " s" })
+    dt.AddButton(gd, { Title = "Fusionar ahora", Text = "Fusionar", Callback = function() task.spawn(function() r.runAutoFusePets(true) end) end })
 
-    local gf = dt.AddTab({ Id = "progress", Title = "Progress" })
-    local gg = dt.AddSection(gf, { Title = "Upgrades" })
-    local gh = dt.AddSection(gf, { Title = "Rewards" })
-    local gi = dt.AddSection(gf, { Title = "Equipment" })
-    local gj = dt.AddSection(gf, { Title = "Training" })
-    dt.AddToggle(gg, { Id = "AutoUpgrades", Title = "Auto Buy Upgrades", Default = false })
-    dt.AddDropdown(gg, { Id = "UpgradeTypes", Title = "Upgrade Types", Options = ay, Multi = true, Default = { "Base", "Treadmill" } })
-    dt.AddToggle(gh, { Id = "AutoClaimIndex", Title = "Auto Claim Index", Default = false })
-    dt.AddToggle(gh, { Id = "AutoClaimGroupReward", Title = "Auto Claim Group Reward", Default = false })
-    dt.AddToggle(gh, { Id = "AutoClaimOffline", Title = "Claim Offline Earnings", Default = false })
-    dt.AddToggle(gi, { Id = "AutoBuyTrail", Title = "Auto Buy Trail", Default = false })
-    dt.AddDropdown(gi, { Id = "TrailWanted", Title = "Trails", Options = be, Multi = true, Default = {} })
-    dt.AddToggle(gi, { Id = "AutoEquipBestTrail", Title = "Auto Equip Best Trail", Default = false })
-    dt.AddToggle(gi, { Id = "AutoEquipBestGear", Title = "Auto Equip Best Gear", Default = false })
-    dt.AddToggle(gj, { Id = "AutoTreadmill", Title = "Auto Treadmill Training", Default = false })
+    dt.AddToggle(ge, { Id = "AutoSellPets", Title = "Vender mascotas automáticamente", Default = false })
+    dt.AddDropdown(ge, { Id = "SellRarities", Title = "Rarezas permitidas", Options = at, Multi = true, Default = {} })
+    dt.AddDropdown(ge, { Id = "SellMutations", Title = "Mutaciones permitidas", Options = av, Multi = true, Default = {} })
+    dt.AddToggle(ge, { Id = "SellKeepMutated", Title = "Nunca vender mutadas", Default = true })
+    dt.AddToggle(ge, { Id = "SellKeepEquipped", Title = "Nunca vender equipadas", Default = true })
+    dt.AddSlider(ge, { Id = "SellMaxScale", Title = "Escala máxima para vender", Min = 0, Max = 10, Default = 10, Step = 0.1 })
+    dt.AddSlider(ge, { Id = "SellInterval", Title = "Intervalo de venta", Min = 1, Max = 120, Default = 6, Step = 1, Suffix = " s" })
 
-    local gk = dt.AddTab({ Id = "player", Title = "Player" })
-    local gl = dt.AddSection(gk, { Title = "ESP" })
-    local gm = dt.AddSection(gk, { Title = "Movement" })
-    local gn = dt.AddSection(gk, { Title = "Teleports" })
-    dt.AddToggle(gl, { Id = "EspWorldEggs", Title = "World Egg ESP", Default = false })
-    dt.AddToggle(gl, { Id = "EspCarriedEggs", Title = "Carried and Dropped Egg ESP", Default = false })
-    dt.AddToggle(gl, { Id = "EspGuards", Title = "Guard ESP", Default = false })
-    dt.AddToggle(gl, { Id = "EspPets", Title = "Pet ESP", Default = false })
-    dt.AddToggle(gl, { Id = "EspPlayers", Title = "Player ESP", Default = false })
-    dt.AddToggle(gl, { Id = "EspMachines", Title = "Machine ESP", Default = false })
-    dt.AddToggle(gl, { Id = "EspPlots", Title = "Plot ESP", Default = false })
-    dt.AddSlider(gl, { Id = "EspDistance", Title = "Render Distance", Min = 100, Max = 6000, Default = 2000, Step = 50, Suffix = " studs" })
-    dt.AddToggle(gm, { Id = "WalkSpeedEnabled", Title = "Walk Speed Override", Default = false })
-    dt.AddSlider(gm, { Id = "WalkSpeed", Title = "Walk Speed", Min = 16, Max = 500, Default = 32, Step = 1 })
-    dt.AddToggle(gm, { Id = "JumpPowerEnabled", Title = "Jump Power Override", Default = false })
-    dt.AddSlider(gm, { Id = "JumpPower", Title = "Jump Power", Min = 10, Max = 500, Default = 50, Step = 1 })
-    dt.AddToggle(gm, { Id = "InfJump", Title = "Infinite Jump", Default = false })
-    dt.AddToggle(gm, { Id = "NoClip", Title = "NoClip", Default = false })
+    local gf = dt.AddTab({ Id = "progress", Title = "Progreso" })
+    local gg = dt.AddSection(gf, { Title = "Mejoras" })
+    local gh = dt.AddSection(gf, { Title = "Recompensas" })
+    local gi = dt.AddSection(gf, { Title = "Equipo" })
+    local gj = dt.AddSection(gf, { Title = "Entrenamiento" })
+
+    dt.AddToggle(gg, { Id = "AutoUpgrades", Title = "Comprar mejoras automáticamente", Default = false })
+    dt.AddDropdown(gg, { Id = "UpgradeTypes", Title = "Tipos de mejora", Options = ay, Multi = true, Default = { "Base", "Treadmill" } })
+
+    dt.AddToggle(gh, { Id = "AutoClaimIndex", Title = "Reclamar índice automáticamente", Default = false })
+    dt.AddToggle(gh, { Id = "AutoClaimGroupReward", Title = "Reclamar recompensa de grupo", Default = false })
+    dt.AddToggle(gh, { Id = "AutoClaimOffline", Title = "Reclamar ganancias offline", Default = false })
+
+    dt.AddToggle(gi, { Id = "AutoBuyTrail", Title = "Comprar trails automáticamente", Default = false })
+    dt.AddDropdown(gi, { Id = "TrailWanted", Title = "Trails permitidos", Options = be, Multi = true, Default = {} })
+    dt.AddToggle(gi, { Id = "AutoEquipBestTrail", Title = "Equipar mejor trail", Default = false })
+    dt.AddToggle(gi, { Id = "AutoEquipBestGear", Title = "Equipar mejor gear", Default = false })
+
+    dt.AddToggle(gj, { Id = "AutoTreadmill", Title = "Entrenar automáticamente en cinta", Default = false })
+
+    local gk = dt.AddTab({ Id = "visuals", Title = "Visuales" })
+    local gl = dt.AddSection(gk, { Title = "ESP", Description = "Elige qué elementos quieres resaltar." })
+    dt.AddToggle(gl, { Id = "EspWorldEggs", Title = "ESP de huevos del mundo", Default = false })
+    dt.AddToggle(gl, { Id = "EspCarriedEggs", Title = "ESP de huevos cargados/soltados", Default = false })
+    dt.AddToggle(gl, { Id = "EspGuards", Title = "ESP de guardias", Default = false })
+    dt.AddToggle(gl, { Id = "EspPets", Title = "ESP de mascotas", Default = false })
+    dt.AddToggle(gl, { Id = "EspPlayers", Title = "ESP de jugadores", Default = false })
+    dt.AddToggle(gl, { Id = "EspMachines", Title = "ESP de máquinas", Default = false })
+    dt.AddToggle(gl, { Id = "EspPlots", Title = "ESP de parcelas", Default = false })
+    dt.AddSlider(gl, { Id = "EspDistance", Title = "Distancia de renderizado", Min = 100, Max = 6000, Default = 2000, Step = 50, Suffix = " studs" })
+
+    local gmTab = dt.AddTab({ Id = "movement", Title = "Movimiento" })
+    local gm = dt.AddSection(gmTab, { Title = "Movimiento manual", Description = "Estos ajustes son independientes del Auto Steal." })
+    local gn = dt.AddSection(gmTab, { Title = "Teletransportes" })
+
+    dt.AddToggle(gm, {
+        Id = "WalkSpeedEnabled",
+        Title = "Modificar WalkSpeed",
+        Desc = "Al apagarlo se restaura automáticamente la velocidad original.",
+        Default = false,
+        Callback = function(enabled)
+            if enabled then
+                local hum = r.getHumanoid()
+                if hum then
+                    movementState.WalkSpeedOverrideHumanoid = hum
+                    movementState.WalkSpeedBeforeOverride = hum.WalkSpeed
+                    hum.WalkSpeed = math.min(tonumber(r.optionValue("WalkSpeed", 32)) or 32, bi)
+                end
+            else
+                r.restoreWalkSpeed()
+            end
+        end,
+    })
+    dt.AddSlider(gm, { Id = "WalkSpeed", Title = "WalkSpeed", Min = 16, Max = 500, Default = 32, Step = 1 })
+
+    dt.AddToggle(gm, {
+        Id = "JumpPowerEnabled",
+        Title = "Modificar JumpPower",
+        Desc = "Al apagarlo se restaura automáticamente el salto original.",
+        Default = false,
+        Callback = function(enabled)
+            if enabled then
+                local hum = r.getHumanoid()
+                if hum then
+                    movementState.JumpOverrideHumanoid = hum
+                    movementState.JumpPowerBeforeOverride = hum.JumpPower
+                    movementState.UseJumpPowerBeforeOverride = hum.UseJumpPower
+                    hum.UseJumpPower = true
+                    hum.JumpPower = tonumber(r.optionValue("JumpPower", 50)) or 50
+                end
+            else
+                r.restoreJumpPower()
+            end
+        end,
+    })
+    dt.AddSlider(gm, { Id = "JumpPower", Title = "JumpPower", Min = 10, Max = 500, Default = 50, Step = 1 })
+    dt.AddToggle(gm, { Id = "InfJump", Title = "Salto infinito", Default = false })
+    dt.AddToggle(gm, {
+        Id = "NoClip",
+        Title = "NoClip",
+        Desc = "Al apagarlo se restauran las colisiones que tenía tu personaje.",
+        Default = false,
+        Callback = function(enabled)
+            task.defer(function()
+                if r.SetNoClip then pcall(r.SetNoClip, enabled) end
+            end)
+        end,
+    })
+
     dt.AddDivider(gm, { Title = "Fly" })
-    dt.AddToggle(gm, { Id = "Fly", Title = "Fly", Default = false, Callback = function(go)
-        if not go then
-            local gp = r.getHumanoid(); if gp then gp.PlatformStand = false end
-            local gq = r.getRoot()
-            local gr = gq and gq:FindFirstChild("ApexFlyLV")
-            if gr then gr:Destroy() end
-        end
-    end })
-    dt.AddSlider(gm, { Id = "FlySpeed", Title = "Fly Speed", Min = 10, Max = 400, Default = 60, Step = 1 })
-    dt.AddDropdown(gn, { Id = "WaypointTarget", Title = "Waypoint", Options = dq, Default = "Base" })
-    dt.AddButton(gn, { Title = "Teleport to Waypoint", Text = "Go", Callback = function()
+    dt.AddToggle(gm, {
+        Id = "Fly",
+        Title = "Volar",
+        Default = false,
+        Callback = function(enabled)
+            if enabled then
+                r.captureMovementDefaults(false)
+            else
+                r.stopFly()
+            end
+        end,
+    })
+    dt.AddSlider(gm, { Id = "FlySpeed", Title = "Velocidad de vuelo", Min = 10, Max = 400, Default = 60, Step = 1 })
+
+    dt.AddDropdown(gn, { Id = "WaypointTarget", Title = "Destino", Options = dq, Default = "Base" })
+    dt.AddButton(gn, { Title = "Ir al destino", Text = "Ir", Callback = function()
         task.spawn(function()
             local go = r.resolveWaypoint(r.optionValue("WaypointTarget", "Base"))
-            if not go then r.notify("Waypoint", "Unavailable", "Warning", 3); return end
-            if not r.bypassMoveTo(go, nil, r.bypassSpeed()) then r.notify("Waypoint", "Failed", "Error", 3) end
+            if not go then r.notify("Destino", "No disponible.", "Warning", 3); return end
+            if not r.bypassMoveTo(go, nil, r.bypassSpeed()) then
+                r.notify("Destino", "No se pudo completar el movimiento.", "Error", 3)
+            end
         end)
     end })
 
-    local go = dt.AddTab({ Id = "system", Title = "System" })
-    local gp = dt.AddSection(go, { Title = "Session" })
-    local gq = dt.AddSection(go, { Title = "Performance" })
-    local gr = dt.AddSection(go, { Title = "Webhooks" })
-    local gs = dt.AddSection(go, { Title = "About" })
+    local go = dt.AddTab({ Id = "system", Title = "Configuración" })
+    local gp = dt.AddSection(go, { Title = "Sesión" })
+    local gq = dt.AddSection(go, { Title = "Rendimiento" })
+    local gr = dt.AddSection(go, { Title = "Webhooks", Description = "Opciones avanzadas de Discord." })
+    local gs = dt.AddSection(go, { Title = "Créditos" })
+
     dt.AddToggle(gp, { Id = "AntiAfk", Title = "Anti-AFK", Default = true })
-    dt.AddToggle(gp, { Id = "AntiGameplayPause", Title = "No Gameplay Paused", Default = true,
+    dt.AddToggle(gp, { Id = "AntiGameplayPause", Title = "Evitar pausa de gameplay", Default = true,
         Callback = function(gt) r.applyAntiGameplayPause(gt) end })
-    dt.AddToggle(gp, { Id = "AutoReconnect", Title = "Auto Reconnect", Default = false })
-    dt.AddButton(gp, { Title = "Rejoin Server", Text = "Rejoin", Callback = function() r.rejoinServer() end })
-    dt.AddButton(gp, { Title = "Copy Join Script", Text = "Copy", Callback = function()
+    dt.AddToggle(gp, { Id = "AutoReconnect", Title = "Reconectar automáticamente", Default = false })
+    dt.AddButton(gp, { Title = "Volver a entrar al servidor", Text = "Reentrar", Callback = function() r.rejoinServer() end })
+    dt.AddButton(gp, { Title = "Copiar script para volver al servidor", Text = "Copiar", Callback = function()
         pcall(function() setclipboard(string.format(
             'game:GetService("TeleportService"):TeleportToPlaceInstance(%d, "%s", game:GetService("Players").LocalPlayer)',
             game.PlaceId, bs)) end)
-        r.notify("Copied", "Join script copied", "Success", 3)
+        r.notify("Copiado", "Script de acceso copiado.", "Success", 3)
     end })
+
     dt.AddToggle(gq, { Id = "FpsBoost", Title = "FPS Boost", Default = false,
         Callback = function(gt) if gt then r.enableFpsBoost() else r.disableFpsBoost() end end })
-    dt.AddToggle(gq, { Id = "DisableRendering", Title = "Disable 3D Rendering", Default = false,
+    dt.AddToggle(gq, { Id = "DisableRendering", Title = "Desactivar renderizado 3D", Default = false,
         Callback = function(gt) r.applyRendering(gt) end })
-    dt.AddSlider(gq, { Id = "FpsCap", Title = "FPS Cap", Min = 15, Max = 360, Default = 60, Step = 1, Suffix = " fps",
+    dt.AddSlider(gq, { Id = "FpsCap", Title = "Límite de FPS", Min = 15, Max = 360, Default = 60, Step = 1, Suffix = " fps",
         Callback = function(gt) r.applyFpsCap(gt) end })
-    dt.AddToggle(gr, { Id = "WebhookEnabled", Title = "Enable Webhooks", Default = false })
-    dt.AddInput(gr, { Id = "WebhookUrl", Title = "Webhook URL", Placeholder = "https://discord.com/api/webhooks/...", Default = "" })
-    dt.AddInput(gr, { Id = "WebhookPingId", Title = "Ping User ID", Placeholder = "123456789012345678", Default = "" })
-    dt.AddSlider(gr, { Id = "WebhookInterval", Title = "Summary Interval", Min = 1, Max = 180, Default = 15, Step = 1, Suffix = " min" })
-    dt.AddToggle(gr, { Id = "WebhookEggSpawns", Title = "List Spawned Eggs", Default = true })
-    dt.AddDropdown(gr, { Id = "WebhookRarities", Title = "Rarities", Options = at, Multi = true, Default = {} })
-    dt.AddToggle(gr, { Id = "WebhookDisconnectAlerts", Title = "Disconnect Alerts", Default = false })
-    dt.AddButton(gr, { Title = "Send Summary Now", Text = "Send", Callback = function()
+
+    dt.AddToggle(gr, { Id = "WebhookEnabled", Title = "Activar webhooks", Default = false })
+    dt.AddInput(gr, { Id = "WebhookUrl", Title = "URL del webhook", Placeholder = "https://discord.com/api/webhooks/...", Default = "" })
+    dt.AddInput(gr, { Id = "WebhookPingId", Title = "ID de usuario para ping", Placeholder = "123456789012345678", Default = "" })
+    dt.AddSlider(gr, { Id = "WebhookInterval", Title = "Intervalo del resumen", Min = 1, Max = 180, Default = 15, Step = 1, Suffix = " min" })
+    dt.AddToggle(gr, { Id = "WebhookEggSpawns", Title = "Incluir huevos aparecidos", Default = true })
+    dt.AddDropdown(gr, { Id = "WebhookRarities", Title = "Rarezas a reportar", Options = at, Multi = true, Default = {} })
+    dt.AddToggle(gr, { Id = "WebhookDisconnectAlerts", Title = "Avisar desconexiones", Default = false })
+    dt.AddButton(gr, { Title = "Enviar resumen ahora", Text = "Enviar", Callback = function()
         task.spawn(function()
             local gt = r.sendSummary()
-            r.notify("Webhook", gt and "Sent" or "Failed", gt and "Success" or "Error", 3)
+            r.notify("Webhook", gt and "Resumen enviado." or "No se pudo enviar.", gt and "Success" or "Error", 3)
         end)
     end })
-    dt.AddParagraph(gs, { Title = "Creator", Content = "Kev" })
-    dt.AddParagraph(gs, { Title = "UI", Content = "XeroHub" })
+
+    dt.AddParagraph(gs, { Title = "Creador", Content = "Kev" })
+    dt.AddParagraph(gs, { Title = "Interfaz", Content = "XeroHub" })
     dt.AddParagraph(gs, { Title = "Discord", Content = n })
-    dt.AddButton(gs, { Title = "Copy Discord Link", Text = "Copy", Callback = function()
+    dt.AddButton(gs, { Title = "Copiar Discord", Text = "Copiar", Callback = function()
         pcall(function() setclipboard(n) end)
-        r.notify("Copied", "Discord link copied", "Success", 3)
+        r.notify("Copiado", "Enlace de Discord copiado.", "Success", 3)
     end })
-    dt.AddDivider(gs, { Title = "Danger Zone" })
-    dt.AddButton(gs, { Title = "Unload Script", Text = "Unload", Callback = function() r.unload() end })
+    dt.AddDivider(gs, { Title = "Zona de riesgo" })
+    dt.AddButton(gs, { Title = "Cerrar XeroHub de esta sesión", Text = "Cerrar", Callback = function() r.unload() end })
 end
 
 -- ============================================================
@@ -2676,7 +3024,7 @@ local function fr()
     if not s then return end
     pcall(function()
         if fq.carryingRow then
-            fq.carryingRow:SetValue(bu and "Yes" or "No")
+            fq.carryingRow:SetValue(bu and "Sí" or "No")
             fq.carryingRow:SetStatus(bu and "Warning" or "Neutral")
         end
         if fq.runtimeRow then fq.runtimeRow:SetValue(r.formatElapsed(os.clock() - cp)) end
@@ -2702,6 +3050,16 @@ fr()
 function r.unload()
     if not s then return end
     s = false
+
+    -- Limpieza de movimiento: nada debe quedarse pegado al cerrar/re-ejecutar.
+    pcall(r.stopFly)
+    pcall(r.restoreStealMovement)
+    pcall(r.restoreWalkSpeed)
+    pcall(r.restoreJumpPower)
+    pcall(function()
+        if r.SetNoClip then r.SetNoClip(false) end
+    end)
+
     pcall(r.stopTreadmillTraining)
     pcall(function() r.applyAntiGameplayPause(false) end)
     pcall(function() r.applyRendering(false) end)
@@ -2727,17 +3085,40 @@ a.__APEX_HUB_SHUTDOWN = r.unload
 -- CONNECTIONS
 -- ============================================================
 local function fs(ft)
-    if ft and ft:IsA("BasePart") then ft.CanCollide = false end
+    if ft and ft:IsA("BasePart") then
+        if movementState.NoClipParts[ft] == nil then
+            movementState.NoClipParts[ft] = ft.CanCollide == true
+        end
+        ft.CanCollide = false
+    end
 end
+
 local fu = nil
 local function fv(fw)
-    if fu then pcall(function() fu:Disconnect() end); fu = nil end
-    local fy = m.Character
-    if not fw or not fy then return end
-    for _, fz in ipairs(fy:GetDescendants()) do fs(fz) end
-    fu = fy.DescendantAdded:Connect(fs)
+    if fu then
+        pcall(function() fu:Disconnect() end)
+        fu = nil
+    end
+
+    if not fw then
+        for part, wasCollidable in pairs(movementState.NoClipParts) do
+            if part and part.Parent then
+                pcall(function() part.CanCollide = wasCollidable == true end)
+            end
+            movementState.NoClipParts[part] = nil
+        end
+        return
+    end
+
+    local character = m.Character
+    if not character then return end
+    for _, object in ipairs(character:GetDescendants()) do
+        fs(object)
+    end
+    fu = character.DescendantAdded:Connect(fs)
     r.track(fu)
 end
+r.SetNoClip = fv
 
 r.track(f.JumpRequest:Connect(function()
     if not s or not r.isOn("InfJump") then return end
@@ -2791,6 +3172,8 @@ end))
 r.track(m.CharacterAdded:Connect(function()
     if not s then return end
     task.delay(0.35, function()
+        if not s then return end
+        r.captureMovementDefaults(true)
         if r.stealingEnabled() then r.swapStealHumanoid() end
         if r.isOn("NoClip") then fv(true) end
     end)

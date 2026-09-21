@@ -1,5 +1,5 @@
--- XeroHub | MVSD Native Hitbox Test | Kev
--- Expande las hitboxes NATIVAS del juego (BodyPart.Part).
+-- XeroHub | MVSD Unified Native Hitbox | Kev
+-- Usa SOLO UpperTorso.Part como hitbox nativa principal.
 -- No crea hitboxes falsas y no toca ShootGun/FireServer.
 
 local Players = game:GetService("Players")
@@ -14,16 +14,20 @@ end
 
 local env = (getgenv and getgenv()) or _G
 
-if env.__XERO_MVSD_NATIVE_HITBOX_CLEANUP then
-    pcall(env.__XERO_MVSD_NATIVE_HITBOX_CLEANUP)
+if env.__XERO_MVSD_UNIFIED_HITBOX_CLEANUP then
+    pcall(env.__XERO_MVSD_UNIFIED_HITBOX_CLEANUP)
 end
 
 local state = {
     Alive = true,
     Enabled = false,
     Visible = true,
-    Mode = "TORSO",
-    Multiplier = 2.5,
+
+    -- Tamaño ABSOLUTO de la caja unificada.
+    Size = 8,
+    MinSize = 2,
+    MaxSize = 50,
+
     Connections = {},
     OriginalSize = setmetatable({}, {__mode = "k"}),
     Adornments = setmetatable({}, {__mode = "k"}),
@@ -60,8 +64,10 @@ local function isEnemy(plr)
         return player.Team ~= plr.Team
     end
 
-    if player.TeamColor ~= nil and plr.TeamColor ~= nil
-        and player.Neutral == false and plr.Neutral == false
+    if player.TeamColor ~= nil
+        and plr.TeamColor ~= nil
+        and player.Neutral == false
+        and plr.Neutral == false
     then
         return player.TeamColor ~= plr.TeamColor
     end
@@ -69,48 +75,23 @@ local function isEnemy(plr)
     return true
 end
 
-local TORSO_PARENT_NAMES = {
-    UpperTorso = true,
-    LowerTorso = true,
-    HumanoidRootPart = true,
-    Head = true,
-}
+local function getNativeUnifiedHitbox(char)
+    if not char then return nil end
 
-local FULL_PARENT_NAMES = {
-    Head = true,
-    HumanoidRootPart = true,
-    UpperTorso = true,
-    LowerTorso = true,
-    LeftUpperArm = true,
-    LeftLowerArm = true,
-    LeftHand = true,
-    RightUpperArm = true,
-    RightLowerArm = true,
-    RightHand = true,
-    LeftUpperLeg = true,
-    LeftLowerLeg = true,
-    LeftFoot = true,
-    RightUpperLeg = true,
-    RightLowerLeg = true,
-    RightFoot = true,
-}
+    local upperTorso = char:FindFirstChild("UpperTorso")
+        or char:FindFirstChild("Torso")
 
-local function isNativeHitbox(part)
-    if not part
-        or not part:IsA("BasePart")
-        or part.Name ~= "Part"
-        or not part.Parent
-    then
-        return false
+    if not upperTorso then
+        return nil
     end
 
-    local parentName = part.Parent.Name
+    local part = upperTorso:FindFirstChild("Part")
 
-    if state.Mode == "FULL" then
-        return FULL_PARENT_NAMES[parentName] == true
+    if part and part:IsA("BasePart") then
+        return part
     end
 
-    return TORSO_PARENT_NAMES[parentName] == true
+    return nil
 end
 
 local function ensureAdornment(part)
@@ -121,7 +102,7 @@ local function ensureAdornment(part)
     end
 
     box = Instance.new("BoxHandleAdornment")
-    box.Name = "XeroNativeHitboxBox"
+    box.Name = "XeroUnifiedNativeHitboxBox"
     box.Adornee = part
     box.AlwaysOnTop = true
     box.ZIndex = 10
@@ -146,7 +127,9 @@ local function restorePart(part)
 
     local box = state.Adornments[part]
     if box then
-        pcall(function() box:Destroy() end)
+        pcall(function()
+            box:Destroy()
+        end)
         state.Adornments[part] = nil
     end
 
@@ -154,24 +137,29 @@ local function restorePart(part)
 end
 
 local function restoreAll()
-    local parts = {}
+    local list = {}
 
     for part in pairs(state.OriginalSize) do
-        parts[#parts + 1] = part
+        list[#list + 1] = part
     end
 
-    for i = 1, #parts do
-        restorePart(parts[i])
+    for i = 1, #list do
+        restorePart(list[i])
     end
 end
 
-local function applyToPart(part)
+local function applyUnified(part)
     if not state.OriginalSize[part] then
         state.OriginalSize[part] = part.Size
     end
 
-    local original = state.OriginalSize[part]
-    local wanted = original * state.Multiplier
+    local size = math.clamp(
+        tonumber(state.Size) or 8,
+        state.MinSize,
+        state.MaxSize
+    )
+
+    local wanted = Vector3.new(size, size, size)
 
     if part.Size ~= wanted then
         pcall(function()
@@ -179,9 +167,18 @@ local function applyToPart(part)
         end)
     end
 
+    -- Conservamos las propiedades nativas que hacen que el raycast
+    -- pueda detectar la Part, pero sin colisión física.
+    pcall(function()
+        part.CanCollide = false
+        part.CanQuery = true
+        part.Transparency = 1
+        part.Massless = true
+    end)
+
     local box = ensureAdornment(part)
     if box then
-        box.Size = part.Size
+        box.Size = wanted
         box.Visible = state.Visible
     end
 end
@@ -191,29 +188,32 @@ local function scanAndApply()
         return
     end
 
-    local stillValid = {}
+    local active = {}
 
     for _, plr in ipairs(Players:GetPlayers()) do
         if isEnemy(plr) then
             local char = plr.Character
             local hum = char and char:FindFirstChildOfClass("Humanoid")
 
-            if char and hum and hum.Health > 0
+            if char
+                and hum
+                and hum.Health > 0
                 and not char:FindFirstChildOfClass("ForceField")
             then
-                for _, obj in ipairs(char:GetDescendants()) do
-                    if isNativeHitbox(obj) then
-                        stillValid[obj] = true
-                        applyToPart(obj)
-                    end
+                local hitbox = getNativeUnifiedHitbox(char)
+
+                if hitbox then
+                    active[hitbox] = true
+                    applyUnified(hitbox)
                 end
             end
         end
     end
 
     local stale = {}
+
     for part in pairs(state.OriginalSize) do
-        if not stillValid[part] then
+        if not active[part] then
             stale[#stale + 1] = part
         end
     end
@@ -224,6 +224,7 @@ local function scanAndApply()
 end
 
 local accumulator = 0
+
 track(RunService.Heartbeat:Connect(function(dt)
     accumulator += dt
 
@@ -238,7 +239,10 @@ track(RunService.Heartbeat:Connect(function(dt)
     end
 end))
 
+-- =========================
 -- UI
+-- =========================
+
 local guiParent = player:WaitForChild("PlayerGui")
 pcall(function()
     if gethui then
@@ -246,11 +250,13 @@ pcall(function()
     end
 end)
 
-local oldGui = guiParent:FindFirstChild("XeroMVSDNativeHitbox")
-if oldGui then oldGui:Destroy() end
+local oldGui = guiParent:FindFirstChild("XeroMVSDUnifiedHitbox")
+if oldGui then
+    oldGui:Destroy()
+end
 
 local gui = Instance.new("ScreenGui")
-gui.Name = "XeroMVSDNativeHitbox"
+gui.Name = "XeroMVSDUnifiedHitbox"
 gui.ResetOnSpawn = false
 gui.IgnoreGuiInset = true
 gui.DisplayOrder = 2147483647
@@ -259,7 +265,7 @@ gui.Parent = guiParent
 local frame = Instance.new("Frame")
 frame.AnchorPoint = Vector2.new(0.5, 0.5)
 frame.Position = UDim2.fromScale(0.5, 0.5)
-frame.Size = UDim2.fromOffset(420, 330)
+frame.Size = UDim2.fromOffset(420, 350)
 frame.BackgroundColor3 = Color3.fromRGB(8, 8, 8)
 frame.BorderSizePixel = 0
 frame.Parent = gui
@@ -274,7 +280,7 @@ local title = Instance.new("TextLabel")
 title.Position = UDim2.fromOffset(16, 12)
 title.Size = UDim2.new(1, -32, 0, 26)
 title.BackgroundTransparency = 1
-title.Text = "XERO | MVSD NATIVE HITBOX"
+title.Text = "XERO | MVSD UNIFIED HITBOX"
 title.TextColor3 = Color3.fromRGB(245, 245, 245)
 title.Font = Enum.Font.GothamBold
 title.TextSize = 17
@@ -285,7 +291,7 @@ local subtitle = Instance.new("TextLabel")
 subtitle.Position = UDim2.fromOffset(16, 38)
 subtitle.Size = UDim2.new(1, -32, 0, 18)
 subtitle.BackgroundTransparency = 1
-subtitle.Text = "Prueba hitboxes reales · by Kev"
+subtitle.Text = "Una sola hitbox nativa · by Kev"
 subtitle.TextColor3 = Color3.fromRGB(125, 125, 125)
 subtitle.Font = Enum.Font.Gotham
 subtitle.TextSize = 11
@@ -300,18 +306,19 @@ status.TextColor3 = Color3.fromRGB(220, 220, 220)
 status.Font = Enum.Font.GothamMedium
 status.TextSize = 11
 status.TextWrapped = true
-status.Text = "Desactivado · TORSO · x2.5"
 status.Parent = frame
 Instance.new("UICorner", status).CornerRadius = UDim.new(0, 10)
 
 local function refreshStatus()
     status.Text = (
         (state.Enabled and "ACTIVO" or "DESACTIVADO")
-        .. " · "
-        .. state.Mode
-        .. " · x"
-        .. string.format("%.1f", state.Multiplier)
-        .. (state.Visible and " · visible" or " · oculto")
+        .. " · Caja única "
+        .. tostring(state.Size)
+        .. "x"
+        .. tostring(state.Size)
+        .. "x"
+        .. tostring(state.Size)
+        .. (state.Visible and " · visible" or " · oculta")
     )
 end
 
@@ -335,33 +342,23 @@ local enableButton
 enableButton = button("ACTIVAR", 16, 126, 120, function()
     state.Enabled = not state.Enabled
 
-    if not state.Enabled then
-        restoreAll()
-    else
+    if state.Enabled then
         scanAndApply()
+    else
+        restoreAll()
     end
 
     enableButton.Text = state.Enabled and "DESACTIVAR" or "ACTIVAR"
     refreshStatus()
 end)
 
-local modeButton
-modeButton = button("MODO: TORSO", 150, 126, 120, function()
-    restoreAll()
-    state.Mode = state.Mode == "TORSO" and "FULL" or "TORSO"
-    modeButton.Text = "MODO: " .. state.Mode
-
-    if state.Enabled then
-        scanAndApply()
-    end
-
-    refreshStatus()
-end)
-
 local visibleButton
-visibleButton = button("OCULTAR CAJAS", 284, 126, 120, function()
+visibleButton = button("OCULTAR CAJA", 150, 126, 120, function()
     state.Visible = not state.Visible
-    visibleButton.Text = state.Visible and "OCULTAR CAJAS" or "MOSTRAR CAJAS"
+
+    visibleButton.Text = state.Visible
+        and "OCULTAR CAJA"
+        or "MOSTRAR CAJA"
 
     for part, box in pairs(state.Adornments) do
         if part and part.Parent and box and box.Parent then
@@ -372,33 +369,78 @@ visibleButton = button("OCULTAR CAJAS", 284, 126, 120, function()
     refreshStatus()
 end)
 
-button("-0.5", 16, 178, 88, function()
-    state.Multiplier = math.max(1, state.Multiplier - 0.5)
+button("RESET 8", 284, 126, 120, function()
+    state.Size = 8
     if state.Enabled then scanAndApply() end
     refreshStatus()
 end)
 
-button("+0.5", 116, 178, 88, function()
-    state.Multiplier = math.min(8, state.Multiplier + 0.5)
+button("-1", 16, 178, 72, function()
+    state.Size = math.max(state.MinSize, state.Size - 1)
     if state.Enabled then scanAndApply() end
     refreshStatus()
 end)
 
-button("x2", 216, 178, 88, function()
-    state.Multiplier = 2
+button("+1", 98, 178, 72, function()
+    state.Size = math.min(state.MaxSize, state.Size + 1)
     if state.Enabled then scanAndApply() end
     refreshStatus()
 end)
 
-button("x4", 316, 178, 88, function()
-    state.Multiplier = 4
+button("+5", 180, 178, 72, function()
+    state.Size = math.min(state.MaxSize, state.Size + 5)
     if state.Enabled then scanAndApply() end
     refreshStatus()
+end)
+
+button("15", 262, 178, 64, function()
+    state.Size = 15
+    if state.Enabled then scanAndApply() end
+    refreshStatus()
+end)
+
+button("25", 336, 178, 68, function()
+    state.Size = 25
+    if state.Enabled then scanAndApply() end
+    refreshStatus()
+end)
+
+local sizeBox = Instance.new("TextBox")
+sizeBox.Position = UDim2.fromOffset(16, 230)
+sizeBox.Size = UDim2.fromOffset(240, 36)
+sizeBox.BackgroundColor3 = Color3.fromRGB(18, 18, 18)
+sizeBox.TextColor3 = Color3.fromRGB(235, 235, 235)
+sizeBox.PlaceholderColor3 = Color3.fromRGB(95, 95, 95)
+sizeBox.PlaceholderText = "Tamaño exacto: 2 - 50"
+sizeBox.Text = ""
+sizeBox.ClearTextOnFocus = false
+sizeBox.Font = Enum.Font.Gotham
+sizeBox.TextSize = 11
+sizeBox.Parent = frame
+Instance.new("UICorner", sizeBox).CornerRadius = UDim.new(0, 10)
+
+button("APLICAR", 268, 230, 136, function()
+    local value = tonumber(sizeBox.Text)
+
+    if value then
+        state.Size = math.clamp(
+            math.floor(value + 0.5),
+            state.MinSize,
+            state.MaxSize
+        )
+
+        if state.Enabled then
+            scanAndApply()
+        end
+
+        sizeBox.Text = ""
+        refreshStatus()
+    end
 end)
 
 local info = Instance.new("TextLabel")
-info.Position = UDim2.fromOffset(16, 230)
-info.Size = UDim2.new(1, -32, 0, 78)
+info.Position = UDim2.fromOffset(16, 282)
+info.Size = UDim2.new(1, -32, 0, 48)
 info.BackgroundColor3 = Color3.fromRGB(11, 11, 11)
 info.TextColor3 = Color3.fromRGB(145, 145, 145)
 info.Font = Enum.Font.Gotham
@@ -407,9 +449,8 @@ info.TextWrapped = true
 info.TextXAlignment = Enum.TextXAlignment.Left
 info.TextYAlignment = Enum.TextYAlignment.Top
 info.Text =
-    "Este test modifica SOLO las Part invisibles nativas que ya usa MVSD.\n"
-    .. "TORSO: Head/UpperTorso/LowerTorso/HRP.Part.\n"
-    .. "FULL: también brazos y piernas. Al desactivar restaura el tamaño original."
+    "Usa únicamente UpperTorso.Part, la hitbox nativa que vimos en ShootGun. "
+    .. "Ahora es UNA sola caja uniforme. Rango: 2 - 50."
 info.Parent = frame
 Instance.new("UICorner", info).CornerRadius = UDim.new(0, 10)
 
@@ -441,6 +482,7 @@ end)
 track(UserInputService.InputChanged:Connect(function(input)
     if dragging and input == dragInput then
         local delta = input.Position - dragStart
+
         frame.Position = UDim2.new(
             startPos.X.Scale,
             startPos.X.Offset + delta.X,
@@ -458,6 +500,7 @@ end))
 
 local function cleanup()
     if not state.Alive then return end
+
     state.Alive = false
     state.Enabled = false
 
@@ -465,13 +508,19 @@ local function cleanup()
 
     for i = #state.Connections, 1, -1 do
         local c = state.Connections[i]
-        pcall(function() c:Disconnect() end)
+        pcall(function()
+            c:Disconnect()
+        end)
         state.Connections[i] = nil
     end
 
-    pcall(function() gui:Destroy() end)
+    pcall(function()
+        gui:Destroy()
+    end)
 end
 
-env.__XERO_MVSD_NATIVE_HITBOX_CLEANUP = cleanup
+env.__XERO_MVSD_UNIFIED_HITBOX_CLEANUP = cleanup
 
-print("[XeroHub] MVSD Native Hitbox Test cargado | by Kev")
+refreshStatus()
+
+print("[XeroHub] MVSD Unified Native Hitbox cargado | by Kev")

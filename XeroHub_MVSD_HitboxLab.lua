@@ -1,11 +1,6 @@
--- XeroHub | MVSD Wall -> Target Probe | Kev
--- Controlled test:
--- 1) Arm
--- 2) Fire ONE natural shot at a wall/environment
--- 3) After short delay, sends ONE ShootGun call to nearest enemy native hitbox
--- 4) Auto-disarms
--- No continuous spam.
---estsss
+-- XeroHub | MVSD RapidFire Lab | Kev
+-- Bounded burst tester. No infinite loop.
+-- Captures ONE natural ShootGun call, then repeats it a fixed number of times.
 
 local Players = game:GetService("Players")
 local UserInputService = game:GetService("UserInputService")
@@ -18,17 +13,19 @@ end
 
 local env = (getgenv and getgenv()) or _G
 
-if env.__XERO_MVSD_WALLTARGET_CLEANUP then
-    pcall(env.__XERO_MVSD_WALLTARGET_CLEANUP)
+if env.__XERO_MVSD_RAPIDFIRE_CLEANUP then
+    pcall(env.__XERO_MVSD_RAPIDFIRE_CLEANUP)
 end
 
 local state = {
     Alive = true,
     Armed = false,
     Pending = false,
-    Delay = 0.18,
+
+    Interval = 0.05,
+    Count = 8,
+
     Lines = {},
-    TargetName = nil,
 }
 
 local function push(s)
@@ -62,116 +59,15 @@ local function vec3(v)
     return string.format("(%.3f, %.3f, %.3f)", v.X, v.Y, v.Z)
 end
 
-local function getHumanoidFromInstance(inst)
-    if typeof(inst) ~= "Instance" then
-        return nil, nil
-    end
-
-    local node = inst
-
-    for _ = 1, 8 do
-        if not node then break end
-
-        local hum = node:FindFirstChildOfClass("Humanoid")
-        if hum then
-            return hum, node
-        end
-
-        node = node.Parent
-    end
-
-    return nil, nil
-end
-
-local function sameMatch(plr)
-    local mine = player:GetAttribute("Match")
-    local theirs = plr:GetAttribute("Match")
-
-    if mine ~= nil and theirs ~= nil then
-        return mine == theirs
-    end
-
-    return true
-end
-
-local function isEnemy(plr)
-    if not plr or plr == player then
-        return false
-    end
-
-    if not sameMatch(plr) then
-        return false
-    end
-
-    if player.Team ~= nil and plr.Team ~= nil then
-        return player.Team ~= plr.Team
-    end
-
-    if player.TeamColor ~= nil
-        and plr.TeamColor ~= nil
-        and player.Neutral == false
-        and plr.Neutral == false
-    then
-        return player.TeamColor ~= plr.TeamColor
-    end
-
-    return true
-end
-
-local function getNativeHitbox(char)
-    if not char then return nil end
-
-    local torso = char:FindFirstChild("UpperTorso")
-        or char:FindFirstChild("Torso")
-
-    if not torso then
-        return nil
-    end
-
-    local part = torso:FindFirstChild("Part")
-
-    if part and part:IsA("BasePart") then
-        return part
-    end
-
-    return nil
-end
-
-local function getNearestEnemy(origin)
-    local bestPlr, bestHum, bestPart
-    local bestDist = math.huge
-
-    for _, plr in ipairs(Players:GetPlayers()) do
-        if isEnemy(plr) then
-            local char = plr.Character
-            local hum = char and char:FindFirstChildOfClass("Humanoid")
-            local part = char and getNativeHitbox(char)
-
-            if hum and hum.Health > 0 and part then
-                local d = (part.Position - origin).Magnitude
-
-                if d < bestDist then
-                    bestDist = d
-                    bestPlr = plr
-                    bestHum = hum
-                    bestPart = part
-                end
-            end
-        end
-    end
-
-    return bestPlr, bestHum, bestPart, bestDist
-end
-
-local hookState = env.__XERO_MVSD_WALLTARGET_HOOK
+local hookState = env.__XERO_MVSD_RAPIDFIRE_HOOK
 
 if type(hookState) ~= "table" then
     hookState = {Current = state}
-    env.__XERO_MVSD_WALLTARGET_HOOK = hookState
+    env.__XERO_MVSD_RAPIDFIRE_HOOK = hookState
 
     local oldNamecall
     oldNamecall = hookmetamethod(game, "__namecall", function(self, ...)
-        local shared = env.__XERO_MVSD_WALLTARGET_HOOK
+        local shared = env.__XERO_MVSD_RAPIDFIRE_HOOK
         local s = shared and shared.Current
 
         if s
@@ -187,172 +83,102 @@ if type(hookState) ~= "table" then
                 and method == "FireServer"
             then
                 local args = table.pack(...)
-                local origin = args[1]
-                local naturalHit = args[3]
                 local naturalAt = os.clock()
 
-                -- Only continue if natural shot did NOT hit a humanoid.
-                local naturalHum = getHumanoidFromInstance(naturalHit)
+                s.Armed = false
+                s.Pending = true
 
-                if naturalHum then
-                    s.Armed = false
-                    push("[ABORTADO] El tiro natural pegó a un jugador. Prueba apuntando a pared.")
-                elseif typeof(origin) ~= "Vector3" then
-                    s.Armed = false
-                    push("[ABORTADO] ShootGun no trajo origin Vector3.")
-                else
-                    s.Armed = false
-                    s.Pending = true
+                task.defer(function()
+                    if not s.Alive then return end
 
-                    task.defer(function()
-                        if not s.Alive then return end
+                    push(string.rep("=", 58))
+                    push("[NATURAL SHOT CAPTURED]")
+                    push("t = " .. string.format("%.6f", naturalAt))
+                    push("Remote: " .. pathOf(self))
 
-                        push(string.rep("=", 58))
-                        push("[NATURAL -> PARED]")
-                        push("t = " .. string.format("%.6f", naturalAt))
-                        push("Origin: " .. vec3(origin))
-                        push("Hit natural: " .. pathOf(naturalHit))
+                    if typeof(args[1]) == "Vector3" then
+                        push("Origin: " .. vec3(args[1]))
+                    end
 
-                        local targetPlr, targetHum, targetPart, dist =
-                            getNearestEnemy(origin)
+                    push("Hit: " .. pathOf(args[3]))
 
-                        if not targetPlr or not targetHum or not targetPart then
-                            push("[ABORTADO] No encontré enemigo válido en tu Match.")
-                            s.Pending = false
-                            return
+                    if typeof(args[4]) == "Vector3" then
+                        push("HitPos: " .. vec3(args[4]))
+                    end
+
+                    push(
+                        "Burst: "
+                        .. tostring(s.Count)
+                        .. " replay(s) cada "
+                        .. string.format("%.3f s", s.Interval)
+                    )
+
+                    local startedAt = os.clock()
+                    local sent = 0
+                    local errors = 0
+
+                    for i = 1, s.Count do
+                        if not s.Alive then break end
+
+                        task.wait(s.Interval)
+
+                        local stamp = os.clock()
+
+                        local ok, err = pcall(function()
+                            self:FireServer(
+                                table.unpack(args, 1, args.n)
+                            )
+                        end)
+
+                        if ok then
+                            sent += 1
+                            push(
+                                ("Replay %d/%d · Δ %.4f s · OK"):format(
+                                    i,
+                                    s.Count,
+                                    stamp - naturalAt
+                                )
+                            )
+                        else
+                            errors += 1
+                            push(
+                                ("Replay %d/%d · ERROR: %s"):format(
+                                    i,
+                                    s.Count,
+                                    tostring(err)
+                                )
+                            )
                         end
+                    end
 
-                        s.TargetName = targetPlr.Name
+                    local endedAt = os.clock()
 
-                        push("")
-                        push("[TARGET SELECCIONADO]")
-                        push("Jugador: " .. targetPlr.Name)
-                        push("Health antes: " .. tostring(targetHum.Health))
-                        push("Hitbox: " .. pathOf(targetPart))
-                        push("Distancia: " .. string.format("%.2f", dist))
-                        push("Replay en: " .. string.format("%.3f s", s.Delay))
+                    push("")
+                    push("[RESUMEN]")
+                    push("Enviados OK: " .. tostring(sent))
+                    push("Errores cliente: " .. tostring(errors))
+                    push(
+                        "Duración burst: "
+                        .. string.format("%.4f s", endedAt - startedAt)
+                    )
 
-                        local died = false
-                        local diedAt = nil
-
-                        local diedConn
-                        diedConn = targetHum.Died:Connect(function()
-                            died = true
-                            diedAt = os.clock()
-                        end)
-
-                        task.delay(s.Delay, function()
-                            local current = env.__XERO_MVSD_WALLTARGET_HOOK
-
-                            if not current
-                                or current.Current ~= s
-                                or not s.Alive
-                            then
-                                pcall(function()
-                                    diedConn:Disconnect()
-                                end)
-                                s.Pending = false
-                                return
-                            end
-
-                            if not targetPart.Parent
-                                or not targetHum.Parent
-                                or targetHum.Health <= 0
-                            then
-                                push("[ABORTADO] Target dejó de ser válido antes del replay.")
-                                pcall(function()
-                                    diedConn:Disconnect()
-                                end)
-                                s.Pending = false
-                                return
-                            end
-
-                            local hitPos = targetPart.Position
-                            local delta = hitPos - origin
-
-                            if delta.Magnitude <= 0.01 then
-                                push("[ABORTADO] Dirección inválida.")
-                                pcall(function()
-                                    diedConn:Disconnect()
-                                end)
-                                s.Pending = false
-                                return
-                            end
-
-                            -- Arg[2] observed in MVSD is a point farther along the shot line.
-                            -- Use a long point on the same ray; arg[3]/arg[4] are the native
-                            -- hitbox and actual impact position.
-                            local aimPoint = origin + delta.Unit * 1000
-
-                            local replayAt = os.clock()
-
-                            local ok, err = pcall(function()
-                                self:FireServer(
-                                    origin,
-                                    aimPoint,
-                                    targetPart,
-                                    hitPos
-                                )
-                            end)
-
-                            push("")
-                            push("[REPLAY -> ENEMIGO]")
-                            push("t = " .. string.format("%.6f", replayAt))
-                            push(
-                                "Δ real = "
-                                .. string.format("%.4f s", replayAt - naturalAt)
+                    if endedAt > startedAt and sent > 0 then
+                        push(
+                            "Cadencia enviada aprox: "
+                            .. string.format(
+                                "%.2f llamadas/s",
+                                sent / (endedAt - startedAt)
                             )
-                            push("Aim: " .. vec3(aimPoint))
-                            push("Hit: " .. pathOf(targetPart))
-                            push("HitPos: " .. vec3(hitPos))
-                            push(
-                                "FireServer: "
-                                .. (
-                                    ok
-                                    and "OK"
-                                    or ("ERROR: " .. tostring(err))
-                                )
-                            )
+                        )
+                    end
 
-                            task.delay(0.55, function()
-                                if not s.Alive then return end
+                    push(
+                        "Ojo: FireServer=OK solo confirma envío desde cliente; "
+                        .. "mira si el juego muestra múltiples tracers/sonidos."
+                    )
 
-                                push("")
-                                push("[RESULTADO]")
-                                push("Target: " .. targetPlr.Name)
-                                push("Health después: " .. tostring(targetHum.Health))
-                                push("Died observado: " .. tostring(died))
-
-                                if diedAt then
-                                    push(
-                                        "Died Δ desde replay: "
-                                        .. string.format("%.4f s", diedAt - replayAt)
-                                    )
-                                end
-
-                                if died then
-                                    push(
-                                        "CONFIRMACIÓN FUERTE: el enemigo murió después "
-                                        .. "del replay, mientras el tiro natural fue a pared."
-                                    )
-                                else
-                                    push(
-                                        "No se confirmó kill con este replay. "
-                                        .. "Puede existir validación adicional."
-                                    )
-                                end
-
-                                push("Prueba terminada y desarmada.")
-
-                                pcall(function()
-                                    diedConn:Disconnect()
-                                end)
-
-                                s.Pending = false
-                            end)
-                        end)
-                    end)
-                end
+                    s.Pending = false
+                end)
             end
         end
 
@@ -367,20 +193,19 @@ end
 -- =========================
 
 local guiParent = player:WaitForChild("PlayerGui")
-
 pcall(function()
     if gethui then
         guiParent = gethui()
     end
 end)
 
-local oldGui = guiParent:FindFirstChild("XeroMVSDWallTargetProbe")
+local oldGui = guiParent:FindFirstChild("XeroMVSDRapidFireLab")
 if oldGui then
     oldGui:Destroy()
 end
 
 local gui = Instance.new("ScreenGui")
-gui.Name = "XeroMVSDWallTargetProbe"
+gui.Name = "XeroMVSDRapidFireLab"
 gui.ResetOnSpawn = false
 gui.IgnoreGuiInset = true
 gui.DisplayOrder = 2147483647
@@ -389,7 +214,7 @@ gui.Parent = guiParent
 local frame = Instance.new("Frame")
 frame.AnchorPoint = Vector2.new(0.5, 0.5)
 frame.Position = UDim2.fromScale(0.5, 0.5)
-frame.Size = UDim2.fromOffset(440, 405)
+frame.Size = UDim2.fromOffset(450, 430)
 frame.BackgroundColor3 = Color3.fromRGB(8, 8, 8)
 frame.BorderSizePixel = 0
 frame.Parent = gui
@@ -404,7 +229,7 @@ local title = Instance.new("TextLabel")
 title.Position = UDim2.fromOffset(16, 12)
 title.Size = UDim2.new(1, -32, 0, 26)
 title.BackgroundTransparency = 1
-title.Text = "XERO | MVSD WALL → TARGET"
+title.Text = "XERO | MVSD RAPIDFIRE LAB"
 title.TextColor3 = Color3.fromRGB(245, 245, 245)
 title.Font = Enum.Font.GothamBold
 title.TextSize = 17
@@ -416,7 +241,7 @@ local subtitle = Instance.new("TextLabel")
 subtitle.Position = UDim2.fromOffset(16, 38)
 subtitle.Size = UDim2.new(1, -32, 0, 18)
 subtitle.BackgroundTransparency = 1
-subtitle.Text = "Prueba definitiva de cooldown · by Kev"
+subtitle.Text = "Burst limitado de ShootGun · by Kev"
 subtitle.TextColor3 = Color3.fromRGB(125, 125, 125)
 subtitle.Font = Enum.Font.Gotham
 subtitle.TextSize = 11
@@ -433,7 +258,7 @@ dragBar.Parent = frame
 
 local status = Instance.new("TextLabel")
 status.Position = UDim2.fromOffset(16, 68)
-status.Size = UDim2.new(1, -32, 0, 52)
+status.Size = UDim2.new(1, -32, 0, 50)
 status.BackgroundColor3 = Color3.fromRGB(14, 14, 14)
 status.TextColor3 = Color3.fromRGB(220, 220, 220)
 status.Font = Enum.Font.GothamMedium
@@ -444,15 +269,20 @@ Instance.new("UICorner", status).CornerRadius = UDim.new(0, 10)
 
 local function refreshStatus()
     if state.Pending then
-        status.Text = "PRUEBA EN CURSO · espera el resultado"
+        status.Text = "BURST EN CURSO · espera a que termine"
     elseif state.Armed then
         status.Text = (
-            "ARMADO · apunta a una PARED y haz UN disparo · replay "
-            .. string.format("%.2f s", state.Delay)
+            "ARMADO · haz UN tiro normal · "
+            .. tostring(state.Count)
+            .. " replay(s) @ "
+            .. string.format("%.3f s", state.Interval)
         )
     else
         status.Text = (
-            "Desarmado · selecciona delay y pulsa ARMAR"
+            "Desarmado · "
+            .. tostring(state.Count)
+            .. " replay(s) @ "
+            .. string.format("%.3f s", state.Interval)
         )
     end
 end
@@ -472,43 +302,78 @@ local function button(label, x, y, w, cb)
     b.Activated:Connect(cb)
 end
 
-button("ARMAR", 16, 136, 110, function()
+button("ARMAR", 16, 134, 100, function()
     if not state.Pending then
         state.Armed = true
-        push("[SYSTEM] Wall -> Target Probe armado.")
+        push("[SYSTEM] RapidFire Lab armado.")
         refreshStatus()
     end
 end)
 
-button("0.10", 138, 136, 76, function()
+button("3 tiros", 128, 134, 72, function()
     if not state.Pending then
-        state.Delay = 0.10
+        state.Count = 3
         refreshStatus()
     end
 end)
 
-button("0.18", 224, 136, 76, function()
+button("5 tiros", 210, 134, 72, function()
     if not state.Pending then
-        state.Delay = 0.18
+        state.Count = 5
         refreshStatus()
     end
 end)
 
-button("0.30", 310, 136, 76, function()
+button("8 tiros", 292, 134, 72, function()
     if not state.Pending then
-        state.Delay = 0.30
+        state.Count = 8
         refreshStatus()
     end
 end)
 
-button("LIMPIAR", 16, 184, 110, function()
+button("10 tiros", 374, 134, 60, function()
+    if not state.Pending then
+        state.Count = 10
+        refreshStatus()
+    end
+end)
+
+button("0.20", 16, 182, 76, function()
+    if not state.Pending then
+        state.Interval = 0.20
+        refreshStatus()
+    end
+end)
+
+button("0.10", 102, 182, 76, function()
+    if not state.Pending then
+        state.Interval = 0.10
+        refreshStatus()
+    end
+end)
+
+button("0.05", 188, 182, 76, function()
+    if not state.Pending then
+        state.Interval = 0.05
+        refreshStatus()
+    end
+end)
+
+button("0.02", 274, 182, 76, function()
+    if not state.Pending then
+        state.Interval = 0.02
+        refreshStatus()
+    end
+end)
+
+button("LIMPIAR", 360, 182, 74, function()
     if not state.Pending then
         table.clear(state.Lines)
         refreshStatus()
     end
 end)
 
-button("COPIAR TODO", 138, 184, 248, function()
+button("COPIAR TODO", 16, 230, 418, function()
     local data = table.concat(state.Lines, "\n")
     local clip = setclipboard or toclipboard
 
@@ -523,8 +388,8 @@ button("COPIAR TODO", 138, 184, 248, function()
 end)
 
 local preview = Instance.new("TextLabel")
-preview.Position = UDim2.fromOffset(16, 232)
-preview.Size = UDim2.new(1, -32, 1, -248)
+preview.Position = UDim2.fromOffset(16, 278)
+preview.Size = UDim2.new(1, -32, 1, -294)
 preview.BackgroundColor3 = Color3.fromRGB(11, 11, 11)
 preview.TextColor3 = Color3.fromRGB(150, 150, 150)
 preview.Font = Enum.Font.Code
@@ -544,7 +409,7 @@ task.spawn(function()
         if n == 0 then
             preview.Text = "Esperando prueba..."
         else
-            local first = math.max(1, n - 18)
+            local first = math.max(1, n - 16)
             local lines = {}
 
             for i = first, n do
@@ -645,8 +510,8 @@ local function cleanup()
     end)
 end
 
-env.__XERO_MVSD_WALLTARGET_CLEANUP = cleanup
+env.__XERO_MVSD_RAPIDFIRE_CLEANUP = cleanup
 
 refreshStatus()
 
-print("[XeroHub] MVSD Wall -> Target Probe cargado | one replay only | by Kev")
+print("[XeroHub] MVSD RapidFire Lab cargado | bounded burst | by Kev")

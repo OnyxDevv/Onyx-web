@@ -326,7 +326,19 @@ runtime.Track(player:GetPropertyChangedSignal("Neutral"):Connect(refreshLobbySta
 -- ==========================================
 
 local function isEnemy(plr)
-    if not plr or plr == player then return false end
+    if not plr or plr == player or state.InLobby then
+        return false
+    end
+
+    -- MVSD aloja varias partidas dentro del mismo servidor.
+    -- Sólo jugadores del MISMO Match pueden ser target/ESP.
+    local myMatch = player:GetAttribute("Match")
+    local theirMatch = plr:GetAttribute("Match")
+
+    if myMatch == nil or theirMatch == nil or myMatch ~= theirMatch then
+        return false
+    end
+
     -- Team Check fijo: siempre activo internamente.
     if player.Team ~= nil and plr.Team ~= nil then
         return player.Team ~= plr.Team
@@ -510,19 +522,11 @@ local function getEquippedTool()
 
     local tool = state.EquippedTool
     if tool and tool.Parent == char and tool:IsA("Tool") then
-        if runtime.BindSilentToolActivation then
-            runtime.BindSilentToolActivation(tool)
-        end
         return tool
     end
 
     tool = char:FindFirstChildOfClass("Tool")
     state.EquippedTool = tool
-
-    if runtime.BindSilentToolActivation then
-        runtime.BindSilentToolActivation(tool)
-    end
-
     return tool
 end
 
@@ -712,113 +716,96 @@ local function chooseTarget(mode, useFOV)
 end
 
 -- ==========================================
--- SILENT AIM HOOK
+-- SILENT AIM HOOK | VERSIÓN ESTABLE QUE SÍ REDIRIGE
 -- ==========================================
 
--- El Silent sólo modifica la trayectoria durante un disparo REAL.
--- Esto evita que raycasts/Mouse.Hit de cámara, UI o scripts ajenos se redirijan
--- continuamente hacia el target y provoquen tirones de cámara.
+-- Primera persona: el disparo real puede originarse pegado a la cámara.
+-- No simulamos input ni tocamos la selección de targets. Sólo abrimos una
+-- ventana corta cuando el usuario hace Mouse1 con un Tool equipado.
 runtime.LastManualShotInputAt = 0
-runtime.LastToolActivatedAt = 0
-runtime.SilentObservedTool = nil
-runtime.SilentToolActivationConnection = nil
-
-runtime.BindSilentToolActivation = function(tool)
-    if runtime.SilentObservedTool == tool then
-        return
-    end
-
-    if runtime.SilentToolActivationConnection then
-        pcall(function()
-            runtime.SilentToolActivationConnection:Disconnect()
-        end)
-        runtime.SilentToolActivationConnection = nil
-    end
-
-    runtime.SilentObservedTool = tool
-
-    if tool and tool:IsA("Tool") then
-        runtime.SilentToolActivationConnection = runtime.Track(
-            tool.Activated:Connect(function()
-                runtime.LastToolActivatedAt = os.clock()
-            end)
-        )
-    end
-end
 
 runtime.Track(UserInputService.InputBegan:Connect(function(input)
     if not state.SilentAim then return end
+    if input.UserInputType ~= Enum.UserInputType.MouseButton1 then return end
 
-    if input.UserInputType == Enum.UserInputType.MouseButton1 then
-        local tool = getEquippedTool()
-        if tool then
-            runtime.LastManualShotInputAt = os.clock()
-        end
+    local char = player.Character
+    local tool = char and char:FindFirstChildOfClass("Tool")
+    if tool then
+        runtime.LastManualShotInputAt = os.clock()
     end
 end))
 
-local function isRecentRealShot()
-    local now = os.clock()
-    return (now - (runtime.LastToolActivatedAt or 0) <= 0.14)
-        or (now - (runtime.LastManualShotInputAt or 0) <= 0.14)
+local function allowNearCameraWeaponRay()
+    return os.clock() - (runtime.LastManualShotInputAt or 0) <= 0.25
 end
 
--- Nueva key: cualquier hook viejo de pruebas queda con Target=nil durante cleanup
--- y esta versión usa su propio estado restringido al disparo.
-local aimHookState = runtimeEnv.__XERO_MVSD_AIM_STATE_SHOT_ONLY
+local aimHookState = runtimeEnv.__XERO_MVSD_AIM_STATE
 
 if not aimHookState then
     aimHookState = {
         Target = nil,
         Mouse = mouse,
     }
-    runtimeEnv.__XERO_MVSD_AIM_STATE_SHOT_ONLY = aimHookState
+    runtimeEnv.__XERO_MVSD_AIM_STATE = aimHookState
 
     local oldNamecall
     oldNamecall = hookmetamethod(game, "__namecall", function(self, ...)
         local target = aimHookState.Target
+
         local method = getnamecallmethod()
 
-        if not checkcaller()
-            and isRecentRealShot()
-            and target
-            and target.Parent
-            and self == workspace
-        then
-            if method == "Raycast" then
-                local origin, direction, params = ...
+        if not checkcaller() and target and target.Parent then
 
-                if typeof(origin) == "Vector3"
-                    and typeof(direction) == "Vector3"
-                    and direction.Magnitude > 5
-                then
-                    local delta = target.Position - origin
+            if self == workspace then
+                if method == "Raycast" then
+                    local origin, direction, params = ...
 
-                    if delta.Magnitude > 0.01 then
-                        return oldNamecall(
-                            self,
-                            origin,
-                            delta.Unit * 5000,
-                            params
-                        )
+                    if typeof(origin) == "Vector3"
+                        and typeof(direction) == "Vector3"
+                        and direction.Magnitude > 5
+                    then
+                        local camera = workspace.CurrentCamera
+
+                        local nearCamera = camera
+                            and (origin - camera.CFrame.Position).Magnitude <= 1
+
+                        if not nearCamera or allowNearCameraWeaponRay() then
+                            local delta = target.Position - origin
+
+                            if delta.Magnitude > 0.01 then
+                                return oldNamecall(
+                                    self,
+                                    origin,
+                                    delta.Unit * 5000,
+                                    params
+                                )
+                            end
+                        end
                     end
-                end
 
-            elseif method == "FindPartOnRay"
-                or method == "FindPartOnRayWithIgnoreList"
-            then
-                local ray, p2, p3, p4 = ...
+                elseif method == "FindPartOnRay"
+                    or method == "FindPartOnRayWithIgnoreList"
+                then
+                    local ray, p2, p3, p4 = ...
 
-                if typeof(ray) == "Ray" and ray.Direction.Magnitude > 5 then
-                    local delta = target.Position - ray.Origin
+                    if typeof(ray) == "Ray" and ray.Direction.Magnitude > 5 then
+                        local camera = workspace.CurrentCamera
 
-                    if delta.Magnitude > 0.01 then
-                        local newRay = Ray.new(
-                            ray.Origin,
-                            delta.Unit * 5000
-                        )
+                        local nearCamera = camera
+                            and (ray.Origin - camera.CFrame.Position).Magnitude <= 1
 
-                        return oldNamecall(self, newRay, p2, p3, p4)
+                        if not nearCamera or allowNearCameraWeaponRay() then
+                            local delta = target.Position - ray.Origin
+
+                            if delta.Magnitude > 0.01 then
+                                local newRay = Ray.new(
+                                    ray.Origin,
+                                    delta.Unit * 5000
+                                )
+
+                                return oldNamecall(self, newRay, p2, p3, p4)
+                            end
+                        end
                     end
                 end
             end
@@ -834,7 +821,6 @@ if not aimHookState then
         local target = aimHookState.Target
 
         if not checkcaller()
-            and isRecentRealShot()
             and object == aimHookState.Mouse
             and target
             and target.Parent
@@ -938,9 +924,6 @@ local function clearESP()
     clearOrphanESPBillboards()
 end
 
-local ESP_TEXT_MAX_DISTANCE = 300
-local ESP_TEXT_MAX_DISTANCE_SQ = ESP_TEXT_MAX_DISTANCE * ESP_TEXT_MAX_DISTANCE
-
 local function hasESPText()
     return state.ESPName or state.ESPHealth or state.ESPDistance
 end
@@ -978,19 +961,7 @@ local function ensureESP(plr)
         end
     end
 
-    local myRoot = player.Character
-        and player.Character:FindFirstChild("HumanoidRootPart")
-    local espTextDistanceSq = math.huge
-
-    if myRoot then
-        local textDelta = myRoot.Position - hrp.Position
-        espTextDistanceSq = textDelta:Dot(textDelta)
-    end
-
-    local showESPText = hasESPText()
-        and espTextDistanceSq <= ESP_TEXT_MAX_DISTANCE_SQ
-
-    if showESPText then
+    if hasESPText() then
         local billboard = runtime.Billboards[plr]
 
         if not billboard or not billboard.Parent then
@@ -1000,9 +971,6 @@ local function ensureESP(plr)
             billboard.Size = UDim2.fromOffset(190, 38)
             billboard.StudsOffset = Vector3.new(0, 3.3, 0)
             billboard.AlwaysOnTop = true
-            pcall(function()
-                billboard.MaxDistance = ESP_TEXT_MAX_DISTANCE
-            end)
             billboard.Adornee = hrp
             billboard.Parent = playerGui
 
@@ -1033,7 +1001,8 @@ local function ensureESP(plr)
                 fields[#fields + 1] = tostring(math.max(0, math.floor(hum.Health + 0.5))) .. " HP"
             end
             if state.ESPDistance then
-                local distance = math.sqrt(espTextDistanceSq)
+                local myRoot = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
+                local distance = myRoot and (myRoot.Position - hrp.Position).Magnitude or 0
                 fields[#fields + 1] = tostring(math.floor(distance + 0.5)) .. "m"
             end
 
@@ -1070,6 +1039,7 @@ end
 
 runtime.Track(player:GetPropertyChangedSignal("Team"):Connect(refreshAllESPFilters))
 runtime.Track(player:GetPropertyChangedSignal("Neutral"):Connect(refreshAllESPFilters))
+runtime.Track(player:GetAttributeChangedSignal("Match"):Connect(refreshAllESPFilters))
 
 for i = 1, #runtime.PlayerList do
     local plr = runtime.PlayerList[i]
@@ -1077,12 +1047,20 @@ for i = 1, #runtime.PlayerList do
         runtime.Track(plr:GetPropertyChangedSignal("Team"):Connect(function()
             ensureESP(plr)
         end))
+        runtime.Track(plr:GetAttributeChangedSignal("Match"):Connect(function()
+            ensureESP(plr)
+        end))
     end
 end
 
 runtime.Track(Players.PlayerAdded:Connect(function(plr)
     if plr == player then return end
+
     runtime.Track(plr:GetPropertyChangedSignal("Team"):Connect(function()
+        ensureESP(plr)
+    end))
+
+    runtime.Track(plr:GetAttributeChangedSignal("Match"):Connect(function()
         ensureESP(plr)
     end))
 end))
@@ -2622,25 +2600,24 @@ local function startFly()
         local cf = camera.CFrame
         local rawMove = nil
 
-        -- PlayerModule:GetMoveVector funciona con joystick táctil, gamepad y teclado.
+        -- Funciona con joystick táctil, gamepad y teclado.
         if flyControls and flyControls.GetMoveVector then
             local ok, value = pcall(function()
                 return flyControls:GetMoveVector()
             end)
+
             if ok and typeof(value) == "Vector3" then
                 rawMove = value
             end
         end
 
         if rawMove and rawMove.Magnitude > 0.01 then
-            -- GetMoveVector usa X para strafe y -Z para avanzar.
-            -- Usamos LookVector completo para que en móvil puedas subir/bajar
-            -- mirando arriba/abajo mientras empujas el joystick hacia delante.
             move = (cf.RightVector * rawMove.X)
                 + (cf.LookVector * -rawMove.Z)
         else
-            -- Fallback universal. MoveDirection también recibe el joystick virtual.
+            -- Fallback móvil/universal.
             local humanoidMove = flyHumanoid.MoveDirection
+
             if humanoidMove.Magnitude > 0.01 then
                 local flatLook = Vector3.new(
                     cf.LookVector.X,
@@ -2668,7 +2645,7 @@ local function startFly()
             end
         end
 
-        -- Controles verticales extra para PC.
+        -- Extra para PC.
         if UserInputService:IsKeyDown(Enum.KeyCode.Space) then
             move = move + Vector3.new(0, 1, 0)
         end
@@ -3402,16 +3379,6 @@ runtimeEnv.__XERO_MVSD_HUB_CLEANUP = function()
     state.ESP = false
     aimHookState.Target = nil
 
-    if runtime.SilentToolActivationConnection then
-        pcall(function()
-            runtime.SilentToolActivationConnection:Disconnect()
-        end)
-        runtime.SilentToolActivationConnection = nil
-    end
-    runtime.SilentObservedTool = nil
-    runtime.LastManualShotInputAt = 0
-    runtime.LastToolActivatedAt = 0
-
     if runtime.GhostCleanup then
         pcall(runtime.GhostCleanup)
     end
@@ -3452,4 +3419,4 @@ end
 
 refreshLobbyState()
 
-print("[XeroHub] MVSD cargado | Silent Shot-Only | ESP Text Range | Ghost | Speed | Mobile Fly")
+print("[XeroHub] MVSD cargado | Silent estable | Match filter | ESP correcto | Ghost | Speed | Mobile Fly")

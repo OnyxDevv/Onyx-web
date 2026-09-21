@@ -1,8 +1,10 @@
--- XeroHub | MVSD Hitbox Lab | Kev
--- Passive inspector: no modifica Parts, no cambia Size, no dispara nada.
+-- XeroHub | MVSD Native Hitbox Test | Kev
+-- Expande las hitboxes NATIVAS del juego (BodyPart.Part).
+-- No crea hitboxes falsas y no toca ShootGun/FireServer.
 
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
 
 local player = Players.LocalPlayer
 while not player do
@@ -12,16 +14,19 @@ end
 
 local env = (getgenv and getgenv()) or _G
 
-if env.__XERO_MVSD_HITBOXLAB_CLEANUP then
-    pcall(env.__XERO_MVSD_HITBOXLAB_CLEANUP)
+if env.__XERO_MVSD_NATIVE_HITBOX_CLEANUP then
+    pcall(env.__XERO_MVSD_NATIVE_HITBOX_CLEANUP)
 end
 
 local state = {
     Alive = true,
+    Enabled = false,
+    Visible = true,
+    Mode = "TORSO",
+    Multiplier = 2.5,
     Connections = {},
-    Lines = {},
-    LastScan = {},
-    SelectedMode = "TODOS",
+    OriginalSize = setmetatable({}, {__mode = "k"}),
+    Adornments = setmetatable({}, {__mode = "k"}),
 }
 
 local function track(c)
@@ -31,257 +36,209 @@ local function track(c)
     return c
 end
 
-local function push(text)
-    state.Lines[#state.Lines + 1] = tostring(text)
-end
-
-local function sep()
-    push(string.rep("=", 64))
-end
-
-local function pathOf(inst)
-    if typeof(inst) ~= "Instance" then
-        return tostring(inst)
-    end
-
-    local names = {}
-    local node = inst
-    local guard = 0
-
-    while node and guard < 64 do
-        guard += 1
-        names[#names + 1] = tostring(node.Name)
-        node = node.Parent
-    end
-
-    local out = {}
-    for i = #names, 1, -1 do
-        out[#out + 1] = names[i]
-    end
-
-    return table.concat(out, ".")
-end
-
-local function vec3(v)
-    return string.format(
-        "Vector3.new(%.4f, %.4f, %.4f)",
-        v.X, v.Y, v.Z
-    )
-end
-
-local function cfShort(cf)
-    local p = cf.Position
-    local rx, ry, rz = cf:ToOrientation()
-    return string.format(
-        "Pos(%.4f, %.4f, %.4f) Rot(%.2f, %.2f, %.2f)",
-        p.X, p.Y, p.Z,
-        math.deg(rx), math.deg(ry), math.deg(rz)
-    )
-end
-
 local function sameMatch(plr)
-    local myMatch = player:GetAttribute("Match")
-    local theirMatch = plr:GetAttribute("Match")
+    local mine = player:GetAttribute("Match")
+    local theirs = plr:GetAttribute("Match")
 
-    if myMatch ~= nil and theirMatch ~= nil then
-        return myMatch == theirMatch
+    if mine ~= nil and theirs ~= nil then
+        return mine == theirs
     end
 
     return true
 end
 
-local function getBodyReference(char)
-    if not char then return nil end
-
-    return char:FindFirstChild("UpperTorso")
-        or char:FindFirstChild("Torso")
-        or char:FindFirstChild("HumanoidRootPart")
-end
-
-local function looksInteresting(part)
-    if not part or not part:IsA("BasePart") then
+local function isEnemy(plr)
+    if not plr or plr == player then
         return false
     end
 
-    local name = string.lower(part.Name)
-    local parentName = part.Parent and string.lower(part.Parent.Name) or ""
+    if not sameMatch(plr) then
+        return false
+    end
 
-    if name == "part"
-        or name:find("hit")
-        or name:find("box")
-        or name:find("torso")
-        or parentName == "uppertorso"
-        or parentName == "torso"
-        or parentName == "humanoidrootpart"
+    if player.Team ~= nil and plr.Team ~= nil then
+        return player.Team ~= plr.Team
+    end
+
+    if player.TeamColor ~= nil and plr.TeamColor ~= nil
+        and player.Neutral == false and plr.Neutral == false
     then
-        return true
+        return player.TeamColor ~= plr.TeamColor
     end
 
-    return false
+    return true
 end
 
-local function partSignature(part, reference)
-    local rel = "N/A"
+local TORSO_PARENT_NAMES = {
+    UpperTorso = true,
+    LowerTorso = true,
+    HumanoidRootPart = true,
+    Head = true,
+}
 
-    if reference and reference:IsA("BasePart") then
-        local ok, result = pcall(function()
-            return reference.CFrame:ToObjectSpace(part.CFrame)
+local FULL_PARENT_NAMES = {
+    Head = true,
+    HumanoidRootPart = true,
+    UpperTorso = true,
+    LowerTorso = true,
+    LeftUpperArm = true,
+    LeftLowerArm = true,
+    LeftHand = true,
+    RightUpperArm = true,
+    RightLowerArm = true,
+    RightHand = true,
+    LeftUpperLeg = true,
+    LeftLowerLeg = true,
+    LeftFoot = true,
+    RightUpperLeg = true,
+    RightLowerLeg = true,
+    RightFoot = true,
+}
+
+local function isNativeHitbox(part)
+    if not part
+        or not part:IsA("BasePart")
+        or part.Name ~= "Part"
+        or not part.Parent
+    then
+        return false
+    end
+
+    local parentName = part.Parent.Name
+
+    if state.Mode == "FULL" then
+        return FULL_PARENT_NAMES[parentName] == true
+    end
+
+    return TORSO_PARENT_NAMES[parentName] == true
+end
+
+local function ensureAdornment(part)
+    local box = state.Adornments[part]
+
+    if box and box.Parent == part then
+        return box
+    end
+
+    box = Instance.new("BoxHandleAdornment")
+    box.Name = "XeroNativeHitboxBox"
+    box.Adornee = part
+    box.AlwaysOnTop = true
+    box.ZIndex = 10
+    box.Color3 = Color3.fromRGB(255, 255, 255)
+    box.Transparency = 0.55
+    box.Size = part.Size
+    box.Visible = state.Visible
+    box.Parent = part
+
+    state.Adornments[part] = box
+    return box
+end
+
+local function restorePart(part)
+    local original = state.OriginalSize[part]
+
+    if part and part.Parent and original then
+        pcall(function()
+            part.Size = original
         end)
-
-        if ok and result then
-            rel = cfShort(result)
-        end
     end
 
-    return table.concat({
-        "Ruta: " .. pathOf(part),
-        "Clase: " .. tostring(part.ClassName),
-        "Name: " .. tostring(part.Name),
-        "Size: " .. vec3(part.Size),
-        "Transparency: " .. tostring(part.Transparency),
-        "CanQuery: " .. tostring(part.CanQuery),
-        "CanTouch: " .. tostring(part.CanTouch),
-        "CanCollide: " .. tostring(part.CanCollide),
-        "Massless: " .. tostring(part.Massless),
-        "Anchored: " .. tostring(part.Anchored),
-        "Material: " .. tostring(part.Material),
-        "CollisionGroup: " .. tostring(part.CollisionGroup),
-        "AssemblyMass: " .. string.format("%.4f", part.AssemblyMass),
-        "RelativeToBody: " .. rel,
-    }, "\n")
+    local box = state.Adornments[part]
+    if box then
+        pcall(function() box:Destroy() end)
+        state.Adornments[part] = nil
+    end
+
+    state.OriginalSize[part] = nil
 end
 
-local function scanPlayer(plr)
-    if not plr or plr == player then return end
-    if not sameMatch(plr) then return end
+local function restoreAll()
+    local parts = {}
 
-    local char = plr.Character
-    local hum = char and char:FindFirstChildOfClass("Humanoid")
-
-    if not char or not hum or hum.Health <= 0 then
-        return
+    for part in pairs(state.OriginalSize) do
+        parts[#parts + 1] = part
     end
 
-    local reference = getBodyReference(char)
-    local interesting = {}
-
-    for _, obj in ipairs(char:GetDescendants()) do
-        if obj:IsA("BasePart") and looksInteresting(obj) then
-            interesting[#interesting + 1] = obj
-        end
-    end
-
-    if #interesting == 0 then
-        return
-    end
-
-    sep()
-    push("[JUGADOR] " .. plr.Name)
-    push("DisplayName: " .. tostring(plr.DisplayName))
-    push("Match: " .. tostring(plr:GetAttribute("Match")))
-    push("Team: " .. tostring(plr.Team))
-    push("Neutral: " .. tostring(plr.Neutral))
-    push("Reference: " .. (reference and pathOf(reference) or "N/A"))
-    push("Parts interesantes: " .. tostring(#interesting))
-
-    table.sort(interesting, function(a, b)
-        return pathOf(a) < pathOf(b)
-    end)
-
-    for i = 1, #interesting do
-        local part = interesting[i]
-        push("")
-        push(("[PART %d]"):format(i))
-        push(partSignature(part, reference))
+    for i = 1, #parts do
+        restorePart(parts[i])
     end
 end
 
-local function scanAll()
-    table.clear(state.Lines)
+local function applyToPart(part)
+    if not state.OriginalSize[part] then
+        state.OriginalSize[part] = part.Size
+    end
 
-    push("[SYSTEM]")
-    push("XeroHub MVSD Hitbox Lab")
-    push("Escaneo pasivo de hitboxes/Parts internas.")
-    push("PlaceId: " .. tostring(game.PlaceId))
-    push("LocalPlayer: " .. tostring(player.Name))
-    push("Local Match: " .. tostring(player:GetAttribute("Match")))
+    local original = state.OriginalSize[part]
+    local wanted = original * state.Multiplier
 
-    local count = 0
+    if part.Size ~= wanted then
+        pcall(function()
+            part.Size = wanted
+        end)
+    end
+
+    local box = ensureAdornment(part)
+    if box then
+        box.Size = part.Size
+        box.Visible = state.Visible
+    end
+end
+
+local function scanAndApply()
+    if not state.Enabled then
+        return
+    end
+
+    local stillValid = {}
 
     for _, plr in ipairs(Players:GetPlayers()) do
-        if plr ~= player and sameMatch(plr) then
+        if isEnemy(plr) then
             local char = plr.Character
             local hum = char and char:FindFirstChildOfClass("Humanoid")
 
-            if char and hum and hum.Health > 0 then
-                count += 1
-                scanPlayer(plr)
-            end
-        end
-    end
-
-    sep()
-    push("[RESUMEN]")
-    push("Jugadores vivos inspeccionados: " .. tostring(count))
-end
-
-local function scanTarget()
-    table.clear(state.Lines)
-
-    push("[SYSTEM]")
-    push("XeroHub MVSD Hitbox Lab")
-    push("Modo: jugador más cercano")
-
-    local myChar = player.Character
-    local myRoot = myChar and (
-        myChar:FindFirstChild("HumanoidRootPart")
-        or myChar:FindFirstChild("UpperTorso")
-        or myChar:FindFirstChild("Torso")
-    )
-
-    if not myRoot then
-        push("No se encontró tu RootPart.")
-        return
-    end
-
-    local best
-    local bestDist = math.huge
-
-    for _, plr in ipairs(Players:GetPlayers()) do
-        if plr ~= player and sameMatch(plr) then
-            local char = plr.Character
-            local hum = char and char:FindFirstChildOfClass("Humanoid")
-            local root = char and (
-                char:FindFirstChild("HumanoidRootPart")
-                or char:FindFirstChild("UpperTorso")
-                or char:FindFirstChild("Torso")
-            )
-
-            if hum and hum.Health > 0 and root then
-                local d = (root.Position - myRoot.Position).Magnitude
-
-                if d < bestDist then
-                    bestDist = d
-                    best = plr
+            if char and hum and hum.Health > 0
+                and not char:FindFirstChildOfClass("ForceField")
+            then
+                for _, obj in ipairs(char:GetDescendants()) do
+                    if isNativeHitbox(obj) then
+                        stillValid[obj] = true
+                        applyToPart(obj)
+                    end
                 end
             end
         end
     end
 
-    if not best then
-        push("No se encontró otro jugador vivo en tu Match.")
+    local stale = {}
+    for part in pairs(state.OriginalSize) do
+        if not stillValid[part] then
+            stale[#stale + 1] = part
+        end
+    end
+
+    for i = 1, #stale do
+        restorePart(stale[i])
+    end
+end
+
+local accumulator = 0
+track(RunService.Heartbeat:Connect(function(dt)
+    accumulator += dt
+
+    if accumulator < 0.15 then
         return
     end
 
-    push("Objetivo: " .. best.Name)
-    push("Distancia: " .. string.format("%.2f", bestDist))
-    scanPlayer(best)
-end
+    accumulator = 0
 
--- =========================
+    if state.Enabled then
+        scanAndApply()
+    end
+end))
+
 -- UI
--- =========================
-
 local guiParent = player:WaitForChild("PlayerGui")
 pcall(function()
     if gethui then
@@ -289,11 +246,11 @@ pcall(function()
     end
 end)
 
-local oldGui = guiParent:FindFirstChild("XeroMVSDHitboxLab")
+local oldGui = guiParent:FindFirstChild("XeroMVSDNativeHitbox")
 if oldGui then oldGui:Destroy() end
 
 local gui = Instance.new("ScreenGui")
-gui.Name = "XeroMVSDHitboxLab"
+gui.Name = "XeroMVSDNativeHitbox"
 gui.ResetOnSpawn = false
 gui.IgnoreGuiInset = true
 gui.DisplayOrder = 2147483647
@@ -302,7 +259,7 @@ gui.Parent = guiParent
 local frame = Instance.new("Frame")
 frame.AnchorPoint = Vector2.new(0.5, 0.5)
 frame.Position = UDim2.fromScale(0.5, 0.5)
-frame.Size = UDim2.fromOffset(450, 430)
+frame.Size = UDim2.fromOffset(420, 330)
 frame.BackgroundColor3 = Color3.fromRGB(8, 8, 8)
 frame.BorderSizePixel = 0
 frame.Parent = gui
@@ -317,7 +274,7 @@ local title = Instance.new("TextLabel")
 title.Position = UDim2.fromOffset(16, 12)
 title.Size = UDim2.new(1, -32, 0, 26)
 title.BackgroundTransparency = 1
-title.Text = "XERO | MVSD HITBOX LAB"
+title.Text = "XERO | MVSD NATIVE HITBOX"
 title.TextColor3 = Color3.fromRGB(245, 245, 245)
 title.Font = Enum.Font.GothamBold
 title.TextSize = 17
@@ -328,7 +285,7 @@ local subtitle = Instance.new("TextLabel")
 subtitle.Position = UDim2.fromOffset(16, 38)
 subtitle.Size = UDim2.new(1, -32, 0, 18)
 subtitle.BackgroundTransparency = 1
-subtitle.Text = "Inspector pasivo · by Kev"
+subtitle.Text = "Prueba hitboxes reales · by Kev"
 subtitle.TextColor3 = Color3.fromRGB(125, 125, 125)
 subtitle.Font = Enum.Font.Gotham
 subtitle.TextSize = 11
@@ -343,9 +300,20 @@ status.TextColor3 = Color3.fromRGB(220, 220, 220)
 status.Font = Enum.Font.GothamMedium
 status.TextSize = 11
 status.TextWrapped = true
-status.Text = "Escanea cuando estés dentro de una ronda."
+status.Text = "Desactivado · TORSO · x2.5"
 status.Parent = frame
 Instance.new("UICorner", status).CornerRadius = UDim.new(0, 10)
+
+local function refreshStatus()
+    status.Text = (
+        (state.Enabled and "ACTIVO" or "DESACTIVADO")
+        .. " · "
+        .. state.Mode
+        .. " · x"
+        .. string.format("%.1f", state.Multiplier)
+        .. (state.Visible and " · visible" or " · oculto")
+    )
+end
 
 local function button(label, x, y, w, cb)
     local b = Instance.new("TextButton")
@@ -360,64 +328,92 @@ local function button(label, x, y, w, cb)
     b.Parent = frame
     Instance.new("UICorner", b).CornerRadius = UDim.new(0, 10)
     b.Activated:Connect(cb)
+    return b
 end
 
-button("ESCANEAR TODOS", 16, 126, 132, function()
-    scanAll()
-    status.Text = "Escaneo completo."
-end)
+local enableButton
+enableButton = button("ACTIVAR", 16, 126, 120, function()
+    state.Enabled = not state.Enabled
 
-button("MÁS CERCANO", 159, 126, 132, function()
-    scanTarget()
-    status.Text = "Jugador más cercano inspeccionado."
-end)
-
-button("COPIAR TODO", 302, 126, 132, function()
-    local data = table.concat(state.Lines, "\n")
-    local clip = setclipboard or toclipboard
-
-    if data == "" then
-        status.Text = "Primero escanea."
-    elseif clip then
-        pcall(clip, data)
-        status.Text = "Copiado. Pégamelo aquí."
+    if not state.Enabled then
+        restoreAll()
     else
-        status.Text = "Tu executor no tiene setclipboard."
+        scanAndApply()
     end
+
+    enableButton.Text = state.Enabled and "DESACTIVAR" or "ACTIVAR"
+    refreshStatus()
 end)
 
-local preview = Instance.new("TextLabel")
-preview.Position = UDim2.fromOffset(16, 176)
-preview.Size = UDim2.new(1, -32, 1, -192)
-preview.BackgroundColor3 = Color3.fromRGB(11, 11, 11)
-preview.TextColor3 = Color3.fromRGB(150, 150, 150)
-preview.Font = Enum.Font.Code
-preview.TextSize = 10
-preview.TextWrapped = true
-preview.TextXAlignment = Enum.TextXAlignment.Left
-preview.TextYAlignment = Enum.TextYAlignment.Top
-preview.Text = "Esperando escaneo..."
-preview.Parent = frame
-Instance.new("UICorner", preview).CornerRadius = UDim.new(0, 10)
+local modeButton
+modeButton = button("MODO: TORSO", 150, 126, 120, function()
+    restoreAll()
+    state.Mode = state.Mode == "TORSO" and "FULL" or "TORSO"
+    modeButton.Text = "MODO: " .. state.Mode
 
-track(RunService.Heartbeat:Connect(function()
-    local n = #state.Lines
-
-    if n == 0 then
-        preview.Text = "Esperando escaneo..."
-        return
+    if state.Enabled then
+        scanAndApply()
     end
 
-    local first = math.max(1, n - 14)
-    local lines = {}
+    refreshStatus()
+end)
 
-    for i = first, n do
-        lines[#lines + 1] = state.Lines[i]
+local visibleButton
+visibleButton = button("OCULTAR CAJAS", 284, 126, 120, function()
+    state.Visible = not state.Visible
+    visibleButton.Text = state.Visible and "OCULTAR CAJAS" or "MOSTRAR CAJAS"
+
+    for part, box in pairs(state.Adornments) do
+        if part and part.Parent and box and box.Parent then
+            box.Visible = state.Visible
+        end
     end
 
-    preview.Text = table.concat(lines, "\n")
-end))
+    refreshStatus()
+end)
 
+button("-0.5", 16, 178, 88, function()
+    state.Multiplier = math.max(1, state.Multiplier - 0.5)
+    if state.Enabled then scanAndApply() end
+    refreshStatus()
+end)
+
+button("+0.5", 116, 178, 88, function()
+    state.Multiplier = math.min(8, state.Multiplier + 0.5)
+    if state.Enabled then scanAndApply() end
+    refreshStatus()
+end)
+
+button("x2", 216, 178, 88, function()
+    state.Multiplier = 2
+    if state.Enabled then scanAndApply() end
+    refreshStatus()
+end)
+
+button("x4", 316, 178, 88, function()
+    state.Multiplier = 4
+    if state.Enabled then scanAndApply() end
+    refreshStatus()
+end)
+
+local info = Instance.new("TextLabel")
+info.Position = UDim2.fromOffset(16, 230)
+info.Size = UDim2.new(1, -32, 0, 78)
+info.BackgroundColor3 = Color3.fromRGB(11, 11, 11)
+info.TextColor3 = Color3.fromRGB(145, 145, 145)
+info.Font = Enum.Font.Gotham
+info.TextSize = 10
+info.TextWrapped = true
+info.TextXAlignment = Enum.TextXAlignment.Left
+info.TextYAlignment = Enum.TextYAlignment.Top
+info.Text =
+    "Este test modifica SOLO las Part invisibles nativas que ya usa MVSD.\n"
+    .. "TORSO: Head/UpperTorso/LowerTorso/HRP.Part.\n"
+    .. "FULL: también brazos y piernas. Al desactivar restaura el tamaño original."
+info.Parent = frame
+Instance.new("UICorner", info).CornerRadius = UDim.new(0, 10)
+
+-- Drag
 local dragging = false
 local dragInput
 local dragStart
@@ -442,7 +438,7 @@ title.InputChanged:Connect(function(input)
     end
 end)
 
-track(game:GetService("UserInputService").InputChanged:Connect(function(input)
+track(UserInputService.InputChanged:Connect(function(input)
     if dragging and input == dragInput then
         local delta = input.Position - dragStart
         frame.Position = UDim2.new(
@@ -454,7 +450,7 @@ track(game:GetService("UserInputService").InputChanged:Connect(function(input)
     end
 end))
 
-track(game:GetService("UserInputService").InputEnded:Connect(function(input)
+track(UserInputService.InputEnded:Connect(function(input)
     if input == dragInput then
         dragging = false
     end
@@ -463,6 +459,9 @@ end))
 local function cleanup()
     if not state.Alive then return end
     state.Alive = false
+    state.Enabled = false
+
+    restoreAll()
 
     for i = #state.Connections, 1, -1 do
         local c = state.Connections[i]
@@ -473,11 +472,6 @@ local function cleanup()
     pcall(function() gui:Destroy() end)
 end
 
-env.__XERO_MVSD_HITBOXLAB_CLEANUP = cleanup
+env.__XERO_MVSD_NATIVE_HITBOX_CLEANUP = cleanup
 
-push("[SYSTEM]")
-push("MVSD Hitbox Lab cargado.")
-push("Entra a ronda y pulsa ESCANEAR TODOS o MÁS CERCANO.")
-push("Después pulsa COPIAR TODO.")
-
-print("[XeroHub] MVSD Hitbox Lab cargado | Passive Inspector | by Kev")
+print("[XeroHub] MVSD Native Hitbox Test cargado | by Kev")

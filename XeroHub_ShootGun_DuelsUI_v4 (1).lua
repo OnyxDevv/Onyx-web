@@ -2073,10 +2073,165 @@ UIElements.ColESP = Tabs.Vis:Colorpicker({
 
 Tabs.Mov:Section({Title = "Modo Fantasma"})
 
+-- Botón flotante compacto, inspirado en el control rápido de DUELS.
+local ghostFloatParent = playerGui
+pcall(function()
+    if gethui then ghostFloatParent = gethui() end
+end)
+
+local previousGhostFloat = ghostFloatParent
+    and ghostFloatParent:FindFirstChild("XeroHub_MVSD_GhostButton")
+if previousGhostFloat then
+    previousGhostFloat:Destroy()
+end
+
+local ghostFloatGui = Instance.new("ScreenGui")
+ghostFloatGui.Name = "XeroHub_MVSD_GhostButton"
+ghostFloatGui.ResetOnSpawn = false
+ghostFloatGui.IgnoreGuiInset = true
+ghostFloatGui.DisplayOrder = 2147483600
+ghostFloatGui.Parent = ghostFloatParent
+runtime.GhostFloatGui = ghostFloatGui
+
+local ghostFloatButton = Instance.new("TextButton")
+ghostFloatButton.Name = "GhostQuickToggle"
+ghostFloatButton.Size = UDim2.fromOffset(156, 48)
+ghostFloatButton.Position = UDim2.new(0.8, -150, 0.5, 0)
+ghostFloatButton.BackgroundColor3 = Color3.fromRGB(14, 14, 14)
+ghostFloatButton.BackgroundTransparency = 0.06
+ghostFloatButton.BorderSizePixel = 0
+ghostFloatButton.Text = ""
+ghostFloatButton.AutoButtonColor = false
+ghostFloatButton.Visible = true
+ghostFloatButton.ZIndex = 50
+ghostFloatButton.Parent = ghostFloatGui
+Instance.new("UICorner", ghostFloatButton).CornerRadius = UDim.new(0, 12)
+
+local ghostFloatStroke = Instance.new("UIStroke")
+ghostFloatStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+ghostFloatStroke.Thickness = 1
+ghostFloatStroke.Color = Color3.fromRGB(60, 60, 60)
+ghostFloatStroke.Transparency = 0.2
+ghostFloatStroke.Parent = ghostFloatButton
+
+local ghostFloatTitle = Instance.new("TextLabel")
+ghostFloatTitle.Name = "ControlTitle"
+ghostFloatTitle.BackgroundTransparency = 1
+ghostFloatTitle.Position = UDim2.fromOffset(14, 6)
+ghostFloatTitle.Size = UDim2.new(1, -42, 0, 20)
+ghostFloatTitle.Font = Enum.Font.GothamMedium
+ghostFloatTitle.Text = "Fantasma"
+ghostFloatTitle.TextSize = 12
+ghostFloatTitle.TextColor3 = Color3.fromRGB(240, 240, 240)
+ghostFloatTitle.TextXAlignment = Enum.TextXAlignment.Left
+ghostFloatTitle.ZIndex = 51
+ghostFloatTitle.Parent = ghostFloatButton
+
+local ghostFloatState = Instance.new("TextLabel")
+ghostFloatState.Name = "ControlState"
+ghostFloatState.BackgroundTransparency = 1
+ghostFloatState.Position = UDim2.fromOffset(14, 26)
+ghostFloatState.Size = UDim2.new(1, -42, 0, 14)
+ghostFloatState.Font = Enum.Font.GothamMedium
+ghostFloatState.Text = "INACTIVO"
+ghostFloatState.TextSize = 8
+ghostFloatState.TextColor3 = Color3.fromRGB(135, 135, 135)
+ghostFloatState.TextXAlignment = Enum.TextXAlignment.Left
+ghostFloatState.ZIndex = 51
+ghostFloatState.Parent = ghostFloatButton
+
+local ghostFloatDot = Instance.new("Frame")
+ghostFloatDot.Name = "StateDot"
+ghostFloatDot.AnchorPoint = Vector2.new(1, 0.5)
+ghostFloatDot.Position = UDim2.new(1, -14, 0.5, 0)
+ghostFloatDot.Size = UDim2.fromOffset(6, 6)
+ghostFloatDot.BorderSizePixel = 0
+ghostFloatDot.BackgroundColor3 = Color3.fromRGB(80, 80, 80)
+ghostFloatDot.ZIndex = 51
+ghostFloatDot.Parent = ghostFloatButton
+Instance.new("UICorner", ghostFloatDot).CornerRadius = UDim.new(1, 0)
+
+local ghostFloatHovered = false
+local ghostFloatDragging = false
+local ghostFloatMoved = false
+local ghostFloatDragStart = nil
+local ghostFloatStartPosition = nil
+
+local function updateGhostFloatVisual(enabled)
+    enabled = enabled == true
+    ghostFloatState.Text = enabled and "ACTIVO" or "INACTIVO"
+    ghostFloatDot.BackgroundColor3 = enabled
+        and Color3.fromRGB(242, 242, 242)
+        or Color3.fromRGB(80, 80, 80)
+    ghostFloatStroke.Color = enabled
+        and Color3.fromRGB(175, 175, 175)
+        or Color3.fromRGB(60, 60, 60)
+    ghostFloatButton.BackgroundColor3 = ghostFloatHovered
+        and Color3.fromRGB(25, 25, 25)
+        or Color3.fromRGB(14, 14, 14)
+end
+
+runtime.Track(ghostFloatButton.MouseEnter:Connect(function()
+    ghostFloatHovered = true
+    updateGhostFloatVisual(runtime.GhostEnabled == true)
+end))
+
+runtime.Track(ghostFloatButton.MouseLeave:Connect(function()
+    ghostFloatHovered = false
+    updateGhostFloatVisual(runtime.GhostEnabled == true)
+end))
+
+runtime.Track(ghostFloatButton.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1
+        or input.UserInputType == Enum.UserInputType.Touch
+    then
+        ghostFloatDragging = true
+        ghostFloatMoved = false
+        ghostFloatDragStart = input.Position
+        ghostFloatStartPosition = ghostFloatButton.Position
+    end
+end))
+
+runtime.Track(UserInputService.InputChanged:Connect(function(input)
+    if not ghostFloatDragging
+        or not ghostFloatDragStart
+        or not ghostFloatStartPosition
+    then
+        return
+    end
+
+    if input.UserInputType ~= Enum.UserInputType.MouseMovement
+        and input.UserInputType ~= Enum.UserInputType.Touch
+    then
+        return
+    end
+
+    local delta = input.Position - ghostFloatDragStart
+    if delta.Magnitude > 5 then
+        ghostFloatMoved = true
+    end
+
+    ghostFloatButton.Position = UDim2.new(
+        ghostFloatStartPosition.X.Scale,
+        ghostFloatStartPosition.X.Offset + delta.X,
+        ghostFloatStartPosition.Y.Scale,
+        ghostFloatStartPosition.Y.Offset + delta.Y
+    )
+end))
+
+runtime.Track(UserInputService.InputEnded:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1
+        or input.UserInputType == Enum.UserInputType.Touch
+    then
+        ghostFloatDragging = false
+    end
+end))
+
 local ghostHeartbeat = nil
 local ghostHidden = false
 local ghostOffset = 5000
 local ghostEnabled = false
+runtime.GhostEnabled = false
 runtime.GhostOriginalTransparency = setmetatable({}, {__mode = "k"})
 
 function runtime.RestoreGhostTransparency(char)
@@ -2114,6 +2269,8 @@ runtime.GhostCleanup = function()
 
     runtime.RestoreGhostTransparency(char)
     ghostEnabled = false
+    runtime.GhostEnabled = false
+    updateGhostFloatVisual(false)
 end
 
 UIElements.TogGhostMode = Tabs.Mov:Toggle({
@@ -2122,6 +2279,8 @@ UIElements.TogGhostMode = Tabs.Mov:Toggle({
     Value = false,
     Callback = function(value)
         ghostEnabled = value == true
+        runtime.GhostEnabled = ghostEnabled
+        updateGhostFloatVisual(ghostEnabled)
 
         local char = player.Character
         local hrp = char and char:FindFirstChild("HumanoidRootPart")
@@ -2130,6 +2289,8 @@ UIElements.TogGhostMode = Tabs.Mov:Toggle({
         if ghostEnabled then
             if not char or not hrp or not hum or hum.Health <= 0 then
                 ghostEnabled = false
+                runtime.GhostEnabled = false
+                updateGhostFloatVisual(false)
                 task.defer(function()
                     if UIElements.TogGhostMode then
                         pcall(function() UIElements.TogGhostMode:Set(false) end)
@@ -2203,18 +2364,319 @@ UIElements.TogGhostMode = Tabs.Mov:Toggle({
     end,
 })
 
+
+runtime.Track(ghostFloatButton.MouseButton1Click:Connect(function()
+    if ghostFloatMoved then
+        ghostFloatMoved = false
+        return
+    end
+
+    if UIElements.TogGhostMode then
+        local oldSuppress = runtime.SuppressNotifications
+        runtime.SuppressNotifications = true
+        pcall(function()
+            UIElements.TogGhostMode:Set(not ghostEnabled)
+        end)
+        runtime.SuppressNotifications = oldSuppress
+    end
+end))
+
+UIElements.ToggleGhostButton = Tabs.Mov:Toggle({
+    Title = "Botón flotante",
+    Desc = "Muestra el acceso rápido al Fantasma.",
+    Value = true,
+    Callback = function(value)
+        ghostFloatButton.Visible = value == true
+    end,
+})
+
+Tabs.Mov:Section({Title = "Velocidad"})
+
+local moveSpeedEnabled = false
+local moveSpeedValue = 32
+local moveSpeedHeartbeat = nil
+local originalWalkSpeeds = setmetatable({}, {__mode = "k"})
+
+local function getLocalHumanoid()
+    local char = player.Character
+    return char and char:FindFirstChildOfClass("Humanoid") or nil
+end
+
+local function applyMoveSpeed()
+    local hum = getLocalHumanoid()
+    if not hum then return end
+
+    if originalWalkSpeeds[hum] == nil then
+        originalWalkSpeeds[hum] = hum.WalkSpeed
+    end
+
+    if hum.WalkSpeed ~= moveSpeedValue then
+        hum.WalkSpeed = moveSpeedValue
+    end
+end
+
+local function stopMoveSpeed()
+    if moveSpeedHeartbeat then
+        pcall(function() moveSpeedHeartbeat:Disconnect() end)
+        moveSpeedHeartbeat = nil
+    end
+
+    local hum = getLocalHumanoid()
+    if hum and originalWalkSpeeds[hum] ~= nil then
+        pcall(function()
+            hum.WalkSpeed = originalWalkSpeeds[hum]
+        end)
+        originalWalkSpeeds[hum] = nil
+    end
+end
+
+UIElements.TogMoveSpeed = Tabs.Mov:Toggle({
+    Title = "Velocidad",
+    Desc = "Aumenta tu velocidad al caminar.",
+    Value = false,
+    Callback = function(value)
+        moveSpeedEnabled = value == true
+
+        if moveSpeedEnabled then
+            applyMoveSpeed()
+
+            if moveSpeedHeartbeat then
+                pcall(function() moveSpeedHeartbeat:Disconnect() end)
+            end
+
+            moveSpeedHeartbeat = runtime.Track(RunService.Heartbeat:Connect(function()
+                if moveSpeedEnabled then
+                    applyMoveSpeed()
+                end
+            end))
+        else
+            stopMoveSpeed()
+        end
+    end,
+})
+
+UIElements.SliMoveSpeed = Tabs.Mov:Slider({
+    Title = "Velocidad de movimiento",
+    Desc = "Ajusta la velocidad.",
+    Step = 1,
+    Value = {Min = 16, Max = 100, Default = moveSpeedValue},
+    Callback = function(value)
+        moveSpeedValue = tonumber(value) or 32
+        if moveSpeedEnabled then
+            applyMoveSpeed()
+        end
+    end,
+})
+
+Tabs.Mov:Section({Title = "Fly"})
+
+local flyEnabled = false
+local flySpeedValue = 50
+local flyConnection = nil
+local flyVelocity = nil
+local flyGyro = nil
+local flyHumanoid = nil
+local flyRoot = nil
+local flyOriginalAutoRotate = true
+
+local function destroyFlyPhysics()
+    if flyConnection then
+        pcall(function() flyConnection:Disconnect() end)
+        flyConnection = nil
+    end
+
+    if flyVelocity then
+        safeDestroy(flyVelocity)
+        flyVelocity = nil
+    end
+
+    if flyGyro then
+        safeDestroy(flyGyro)
+        flyGyro = nil
+    end
+
+    if flyRoot and flyRoot.Parent then
+        pcall(function()
+            flyRoot.AssemblyLinearVelocity = Vector3.zero
+            flyRoot.AssemblyAngularVelocity = Vector3.zero
+        end)
+    end
+
+    if flyHumanoid and flyHumanoid.Parent then
+        pcall(function()
+            flyHumanoid.PlatformStand = false
+            flyHumanoid.AutoRotate = flyOriginalAutoRotate
+            flyHumanoid:ChangeState(Enum.HumanoidStateType.GettingUp)
+        end)
+    end
+
+    flyHumanoid = nil
+    flyRoot = nil
+end
+
+local function startFly()
+    destroyFlyPhysics()
+
+    local char = player.Character
+    local hum = char and char:FindFirstChildOfClass("Humanoid")
+    local hrp = char and char:FindFirstChild("HumanoidRootPart")
+    if not char or not hum or hum.Health <= 0 or not hrp then
+        return false
+    end
+
+    flyHumanoid = hum
+    flyRoot = hrp
+    flyOriginalAutoRotate = hum.AutoRotate
+
+    hum.AutoRotate = false
+    hum.PlatformStand = true
+
+    flyVelocity = Instance.new("BodyVelocity")
+    flyVelocity.Name = "XeroMVSD_FlyVelocity"
+    flyVelocity.MaxForce = Vector3.new(1e9, 1e9, 1e9)
+    flyVelocity.P = 12500
+    flyVelocity.Velocity = Vector3.zero
+    flyVelocity.Parent = hrp
+
+    flyGyro = Instance.new("BodyGyro")
+    flyGyro.Name = "XeroMVSD_FlyGyro"
+    flyGyro.MaxTorque = Vector3.new(1e9, 1e9, 1e9)
+    flyGyro.P = 9000
+    flyGyro.D = 250
+    flyGyro.CFrame = hrp.CFrame
+    flyGyro.Parent = hrp
+
+    flyConnection = runtime.Track(RunService.RenderStepped:Connect(function()
+        if not flyEnabled
+            or not flyRoot
+            or not flyRoot.Parent
+            or not flyHumanoid
+            or flyHumanoid.Health <= 0
+        then
+            return
+        end
+
+        local camera = workspace.CurrentCamera
+        if not camera then return end
+
+        local move = Vector3.zero
+        local cf = camera.CFrame
+
+        if UserInputService:IsKeyDown(Enum.KeyCode.W) then
+            move = move + cf.LookVector
+        end
+        if UserInputService:IsKeyDown(Enum.KeyCode.S) then
+            move = move - cf.LookVector
+        end
+        if UserInputService:IsKeyDown(Enum.KeyCode.D) then
+            move = move + cf.RightVector
+        end
+        if UserInputService:IsKeyDown(Enum.KeyCode.A) then
+            move = move - cf.RightVector
+        end
+        if UserInputService:IsKeyDown(Enum.KeyCode.Space) then
+            move = move + Vector3.new(0, 1, 0)
+        end
+        if UserInputService:IsKeyDown(Enum.KeyCode.LeftControl) then
+            move = move - Vector3.new(0, 1, 0)
+        end
+
+        if move.Magnitude > 0.001 then
+            move = move.Unit * flySpeedValue
+        else
+            move = Vector3.zero
+        end
+
+        flyVelocity.Velocity = move
+
+        local look = cf.LookVector
+        if look.Magnitude > 0.001 then
+            flyGyro.CFrame = CFrame.lookAt(
+                flyRoot.Position,
+                flyRoot.Position + look
+            )
+        end
+    end))
+
+    return true
+end
+
+UIElements.TogFly = Tabs.Mov:Toggle({
+    Title = "Fly",
+    Desc = "Vuela con WASD, Espacio y Ctrl.",
+    Value = false,
+    Callback = function(value)
+        flyEnabled = value == true
+
+        if flyEnabled then
+            if not startFly() then
+                flyEnabled = false
+                task.defer(function()
+                    if UIElements.TogFly then
+                        pcall(function() UIElements.TogFly:Set(false) end)
+                    end
+                end)
+            end
+        else
+            destroyFlyPhysics()
+        end
+    end,
+})
+
+UIElements.SliFlySpeed = Tabs.Mov:Slider({
+    Title = "Velocidad de Fly",
+    Desc = "Ajusta la velocidad de vuelo.",
+    Step = 5,
+    Value = {Min = 20, Max = 200, Default = flySpeedValue},
+    Callback = function(value)
+        flySpeedValue = tonumber(value) or 50
+    end,
+})
+
+runtime.MovementCleanup = function()
+    moveSpeedEnabled = false
+    stopMoveSpeed()
+
+    flyEnabled = false
+    destroyFlyPhysics()
+
+    if runtime.GhostFloatGui then
+        safeDestroy(runtime.GhostFloatGui)
+        runtime.GhostFloatGui = nil
+    end
+end
+
 -- Evita quedar desplazado/invisible después de respawn.
 runtime.Track(player.CharacterAdded:Connect(function()
-    if not ghostEnabled then return end
+    if ghostEnabled then
+        ghostHidden = false
+        task.defer(function()
+            if UIElements.TogGhostMode then
+                pcall(function() UIElements.TogGhostMode:Set(false) end)
+            else
+                runtime.GhostCleanup()
+            end
+        end)
+    end
 
-    ghostHidden = false
-    task.defer(function()
-        if UIElements.TogGhostMode then
-            pcall(function() UIElements.TogGhostMode:Set(false) end)
-        else
-            runtime.GhostCleanup()
-        end
-    end)
+    if moveSpeedEnabled then
+        task.defer(function()
+            task.wait(0.15)
+            if moveSpeedEnabled then
+                applyMoveSpeed()
+            end
+        end)
+    end
+
+    if flyEnabled then
+        flyEnabled = false
+        destroyFlyPhysics()
+        task.defer(function()
+            if UIElements.TogFly then
+                pcall(function() UIElements.TogFly:Set(false) end)
+            end
+        end)
+    end
 end))
 
 -- ==========================================
@@ -2849,6 +3311,10 @@ runtimeEnv.__XERO_MVSD_HUB_CLEANUP = function()
         pcall(runtime.GhostCleanup)
     end
 
+    if runtime.MovementCleanup then
+        pcall(runtime.MovementCleanup)
+    end
+
     clearESP()
 
     if runtime.BodySelectorGui then
@@ -2881,4 +3347,4 @@ end
 
 refreshLobbyState()
 
-print("[XeroHub] MVSD cargado | Silent Aim | ESP | Ghost Mode | UI limpia")
+print("[XeroHub] MVSD cargado | Silent Aim | ESP | Ghost | Speed | Fly")

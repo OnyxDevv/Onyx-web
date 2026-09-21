@@ -1,5 +1,5 @@
 -- XeroHub | MVSD | Kev
--- UI portada desde DUELS + selector corporal 2D + configs + ESP de ronda + Silent Aim + Auto Shoot independiente + FOV exclusivo de Silent Aim.
+-- UI portada desde DUELS + selector corporal 2D + configs + ESP de ronda + Silent Aim + FOV exclusivo de Silent Aim.
 -- Método de Silent Aim: igual que Duels (Raycast/Mouse spoof), NO toca ShootGun:FireServer.
 
 local Players = game:GetService("Players")
@@ -68,7 +68,6 @@ end
 
 local state = {
     SilentAim = false,
-    AutoShoot = false,
     ESP = false,
     TeamCheck = true,
 
@@ -91,13 +90,9 @@ local state = {
 
     SilentTarget = nil,
     SilentTargetPlayer = nil,
-    AutoTarget = nil,
-    AutoTargetPlayer = nil,
 
     SilentAccumulator = 0,
-    AutoAccumulator = 0,
     ESPAccumulator = 0,
-    AutoShootInterval = 0.15,
 
     EquippedTool = nil,
     CombatMaxDistance = 800,
@@ -120,22 +115,18 @@ runtime.TargetBodyGroups = {
 }
 
 runtime.TargetSelections = {
-    AutoShoot = {["Cabeza"] = true},
     SilentAim = {["Cabeza"] = true},
 }
 
 runtime.TargetPartNameCache = {
-    AutoShoot = {"Head"},
     SilentAim = {"Head"},
 }
 
 runtime.TargetSelectionVersion = {
-    AutoShoot = 1,
     SilentAim = 1,
 }
 
 runtime.TargetPartCache = {
-    AutoShoot = setmetatable({}, {__mode = "k"}),
     SilentAim = setmetatable({}, {__mode = "k"}),
 }
 
@@ -351,8 +342,6 @@ local function refreshLobbyState()
     if inLobby then
         state.SilentTarget = nil
         state.SilentTargetPlayer = nil
-        state.AutoTarget = nil
-        state.AutoTargetPlayer = nil
     end
 end
 
@@ -568,7 +557,7 @@ rayParams.FilterType = Enum.RaycastFilterType.Exclude
 rayParams.IgnoreWater = true
 local rayIgnore = {}
 
--- WallCheck único para Silent Aim, color del FOV y Auto Shoot.
+-- WallCheck único para Silent Aim y color del FOV.
 -- 1) Sólo ignora nuestro Character: si el primer impacto es mundo/estructura, bloquea.
 -- 2) Repite desde la cámara para cubrir esquinas donde cabeza/cámara no comparten línea.
 -- 3) GetPartsObscuringTarget añade una segunda comprobación para piezas que algunos
@@ -766,17 +755,6 @@ if not aimHookState then
         local target = aimHookState.Target
 
         local method = getnamecallmethod()
-
-        -- El Shoot Lab mostró que la rutina local del arma termina aquí.
-        -- Guardamos la marca para saber si Tool.Activated produjo un disparo real.
-        if not checkcaller()
-            and method == "FireServer"
-            and typeof(self) == "Instance"
-            and self:IsA("RemoteEvent")
-            and self.Name == "ShootGun"
-        then
-            runtime.LastNativeShootAt = os.clock()
-        end
 
         if not checkcaller() and target and target.Parent then
 
@@ -1034,65 +1012,6 @@ local function updateFOVCircle()
     end
 end
 
--- Disparo sin secuestrar Mouse1.
--- El Shoot Lab v2 mostró: Tool.Activated -> ShootGun:FireServer (~1 ms después).
-local function invokeToolActivatedNoInput(tool)
-    if not tool or not tool.Parent then
-        return false
-    end
-
-    local before = runtime.LastNativeShootAt or 0
-    local invoked = false
-
-    if type(firesignal) == "function" then
-        local ok = pcall(function()
-            firesignal(tool.Activated)
-        end)
-        invoked = ok
-    end
-
-    if not invoked and type(getconnections) == "function" then
-        local ok, connections = pcall(getconnections, tool.Activated)
-        if ok and type(connections) == "table" then
-            for i = 1, #connections do
-                local connection = connections[i]
-                if connection then
-                    local ran = false
-                    pcall(function()
-                        if connection.Fire then
-                            connection:Fire()
-                            ran = true
-                        elseif type(connection.Function) == "function" then
-                            connection.Function()
-                            ran = true
-                        end
-                    end)
-                    invoked = invoked or ran
-                end
-            end
-        end
-    end
-
-    -- En la ruta nativa el Remote ocurre de forma síncrona/prácticamente inmediata.
-    if (runtime.LastNativeShootAt or 0) > before then
-        return true
-    end
-
-    -- Respaldo DUELS. No toca el mouse físico.
-    local ok = pcall(function()
-        tool:Activate()
-        task.delay(0.02, function()
-            if runtime.Alive and tool and tool.Parent == player.Character then
-                pcall(function()
-                    tool:Deactivate()
-                end)
-            end
-        end)
-    end)
-
-    return ok
-end
-
 -- ==========================================
 -- MASTER LOOP
 -- ==========================================
@@ -1130,18 +1049,12 @@ runtime.Track(RunService.Heartbeat:Connect(function(dt)
                 state.SilentTargetPlayer = plr
                 state.SilentTarget = part
                 state.FOVHasCandidate = fovCandidate
-
-                if not state.AutoShoot then
-                    aimHookState.Target = part
-                end
+                aimHookState.Target = part
             else
                 state.SilentTargetPlayer = nil
                 state.SilentTarget = nil
                 state.FOVHasCandidate = false
-
-                if not state.AutoShoot then
-                    aimHookState.Target = nil
-                end
+                aimHookState.Target = nil
             end
         end
     else
@@ -1149,55 +1062,7 @@ runtime.Track(RunService.Heartbeat:Connect(function(dt)
         state.SilentTargetPlayer = nil
         state.SilentTarget = nil
         state.FOVHasCandidate = false
-
-        if not state.AutoShoot then
-            aimHookState.Target = nil
-        end
-    end
-
-    -- Auto Shoot usa SU selección corporal y nunca usa el FOV.
-    -- Auto Shoot usa Tool.Activated sin input físico. El Shoot Lab confirmó que
-    -- ShootGun sale inmediatamente después de esa señal; Tool:Activate() queda de respaldo.
-    if state.AutoShoot then
-        state.AutoAccumulator = state.AutoAccumulator + dt
-
-        if state.AutoAccumulator >= state.AutoShootInterval then
-            state.AutoAccumulator = 0
-
-            if not state.InLobby then
-                local tool = getEquippedTool()
-
-                if tool then
-                    local plr, part = chooseTarget("AutoShoot", false)
-
-                    state.AutoTargetPlayer = plr
-                    state.AutoTarget = part
-
-                    if part then
-                        aimHookState.Target = part
-
-                        -- No simulamos Mouse1. Ejecutamos la misma señal local
-                        -- que precede al ShootGun real en el disparo manual.
-                        invokeToolActivatedNoInput(tool)
-                    else
-                        aimHookState.Target = state.SilentAim and state.SilentTarget or nil
-                    end
-                else
-                    state.AutoTargetPlayer = nil
-                    state.AutoTarget = nil
-                    aimHookState.Target = state.SilentAim and state.SilentTarget or nil
-                end
-            else
-                state.AutoTargetPlayer = nil
-                state.AutoTarget = nil
-                aimHookState.Target = nil
-            end
-        end
-    else
-        state.AutoAccumulator = 0
-        state.AutoTargetPlayer = nil
-        state.AutoTarget = nil
-        aimHookState.Target = state.SilentAim and state.SilentTarget or nil
+        aimHookState.Target = nil
     end
 
     -- ESP a 10 Hz: Highlight no requiere reescribirse por frame y el texto no necesita 20/60 Hz.
@@ -1664,7 +1529,7 @@ function runtime.EnsureBodySelector()
     Instance.new("UICorner", figure).CornerRadius = UDim.new(0, 14)
 
     runtime.BodySelector = {
-        Mode = "AutoShoot",
+        Mode = "SilentAim",
         Segments = {},
         Rows = {},
         Overlay = overlay,
@@ -1781,7 +1646,7 @@ function runtime.EnsureBodySelector()
         if not next(selected) then selected["Cabeza"] = true end
         runtime.SetTargetSelection(mode, runtime.GetTargetSelectionArray(mode))
         overlay.Visible = false
-        runtime.Notify((mode == "AutoShoot" and "Auto Shoot" or "Silent Aim") .. ": selección corporal aplicada.")
+        runtime.Notify("Silent Aim: selección corporal aplicada.")
     end)
     done.BackgroundColor3 = Color3.fromHex("#E6E9EC")
     done.TextColor3 = Color3.fromHex("#111214")
@@ -1928,12 +1793,13 @@ function runtime.EnsureBodySelector()
 end
 
 function runtime.OpenBodySelector(mode)
+    mode = "SilentAim"
     runtime.EnsureBodySelector()
     if runtime.BodySelectorGui then
         runtime.BodySelectorGui.DisplayOrder = 2147483647
     end
     runtime.BodySelector.Mode = mode
-    runtime.BodySelector.Title.Text = "Selector corporal · " .. (mode == "AutoShoot" and "Auto Shoot" or "Silent Aim")
+    runtime.BodySelector.Title.Text = "Selector corporal · Silent Aim"
     runtime.BodySelector.Refresh()
     runtime.BodySelector.Overlay.Visible = true
 
@@ -1992,7 +1858,7 @@ Tabs.Inicio:Section({Title = "Novedades de MVSD"})
 
 Tabs.Inicio:Paragraph({
     Title = "Selector corporal 2D",
-    Desc = "Silent Aim y Auto Shoot ahora aceptan varias partes simultáneas con caché por personaje.",
+    Desc = "Silent Aim acepta varias partes simultáneas con caché por personaje.",
     Image = "solar:target-bold",
     ImageSize = 34,
     Color = Color3.fromHex("#20252C"),
@@ -2000,7 +1866,7 @@ Tabs.Inicio:Paragraph({
 
 Tabs.Inicio:Paragraph({
     Title = "Rendimiento",
-    Desc = "FOV sin doble escaneo, Auto Shoot independiente y ESP actualizado a baja frecuencia.",
+    Desc = "FOV y wallcheck comparten el mismo target; ESP actualizado a baja frecuencia.",
     Image = "solar:bolt-bold",
     ImageSize = 34,
     Color = Color3.fromHex("#20252C"),
@@ -2029,31 +1895,6 @@ local lobbyParagraph = Tabs.Inicio:Paragraph({
 -- AIMBOT
 -- ==========================================
 
-Tabs.Aim:Section({Title = "Auto Shoot"})
-
-UIElements.TogAutoShoot = Tabs.Aim:Toggle({
-    Title = "Auto Shoot",
-    Desc = "Dispara automáticamente usando solo su propia selección corporal; no depende del FOV.",
-    Value = false,
-    Callback = function(value)
-        state.AutoShoot = value
-
-        if not value then
-            state.AutoTarget = nil
-            state.AutoTargetPlayer = nil
-            aimHookState.Target = state.SilentAim and state.SilentTarget or nil
-        end
-    end,
-})
-
-Tabs.Aim:Button({
-    Title = "Selector corporal · Auto Shoot",
-    Desc = "Abre la plantilla 2D y permite seleccionar varias partes a la vez.",
-    Callback = function()
-        runtime.OpenBodySelector("AutoShoot")
-    end,
-})
-
 Tabs.Aim:Section({Title = "Silent Aim"})
 
 UIElements.TogSilentAim = Tabs.Aim:Toggle({
@@ -2068,9 +1909,7 @@ UIElements.TogSilentAim = Tabs.Aim:Toggle({
             state.SilentTargetPlayer = nil
             state.FOVHasCandidate = false
 
-            if not state.AutoShoot then
-                aimHookState.Target = nil
-            end
+            aimHookState.Target = nil
         end
     end,
 })
@@ -2120,7 +1959,7 @@ UIElements.SliFOV = Tabs.Aim:Slider({
 -- VISUALES
 -- ==========================================
 
-Tabs.Vis:Section({Title = "ESP de jugadores Test"})
+Tabs.Vis:Section({Title = "ESP de jugadores"})
 
 UIElements.TogESP = Tabs.Vis:Toggle({
     Title = "ESP Jugadores",
@@ -2257,7 +2096,7 @@ Tabs.Config:Section({Title = "Validación de partida"})
 
 Tabs.Config:Paragraph({
     Title = "Lobby Guard",
-    Desc = "Usa ForceField, atributos de ronda y Team para pausar Silent Aim, Auto Shoot y ESP fuera de partida.",
+    Desc = "Usa ForceField, atributos de ronda y Team para pausar Silent Aim y ESP fuera de partida.",
 })
 
 -- Gestor de configs adaptado de DUELS.
@@ -2446,7 +2285,6 @@ local function serializeConfig(name)
         ConfigName = name,
         Toggles = {
             SilentAim = state.SilentAim,
-            AutoShoot = state.AutoShoot,
             ESP = state.ESP,
             TeamCheck = state.TeamCheck,
             FOVFilter = state.FOVFilter,
@@ -2470,7 +2308,6 @@ local function serializeConfig(name)
         },
         TargetParts = {
             SilentAim = runtime.GetTargetSelectionArray("SilentAim"),
-            AutoShoot = runtime.GetTargetSelectionArray("AutoShoot"),
         },
         Interface = {
             Theme = runtime.InterfaceTheme or "Xero",
@@ -2507,10 +2344,6 @@ local function applyConfig(decoded)
     if toggles.SilentAim ~= nil then
         state.SilentAim = toggles.SilentAim == true
         setElement(UIElements.TogSilentAim, state.SilentAim)
-    end
-    if toggles.AutoShoot ~= nil then
-        state.AutoShoot = toggles.AutoShoot == true
-        setElement(UIElements.TogAutoShoot, state.AutoShoot)
     end
     if toggles.ESP ~= nil then
         state.ESP = toggles.ESP == true
@@ -2575,9 +2408,6 @@ local function applyConfig(decoded)
 
     if targetParts.SilentAim then
         runtime.SetTargetSelection("SilentAim", targetParts.SilentAim)
-    end
-    if targetParts.AutoShoot then
-        runtime.SetTargetSelection("AutoShoot", targetParts.AutoShoot)
     end
 
     if interface.Theme then
@@ -2780,7 +2610,7 @@ runtime.Track(RunService.Heartbeat:Connect(function(dt)
             if state.InLobby then
                 lobbyParagraph:SetDesc("Lobby · " .. tostring(state.LobbyReason))
             else
-                local target = state.AutoTargetPlayer or state.SilentTargetPlayer
+                local target = state.SilentTargetPlayer
                 lobbyParagraph:SetDesc(
                     target
                     and ("Partida · Target: " .. target.Name)
@@ -2865,7 +2695,6 @@ runtimeEnv.__XERO_MVSD_HUB_CLEANUP = function()
     runtime.Alive = false
 
     state.SilentAim = false
-    state.AutoShoot = false
     state.ESP = false
     aimHookState.Target = nil
 
@@ -2901,4 +2730,4 @@ end
 
 refreshLobbyState()
 
-print("[XeroHub] MVSD cargado | Tool.Activated AutoShoot | FOV=LOS real | WallCheck reforzado | ESP 10 Hz")
+print("[XeroHub] MVSD cargado | Silent Aim only | FOV=LOS real | WallCheck reforzado | ESP 10 Hz")

@@ -2,6 +2,7 @@
 -- Controlled server cooldown probe:
 -- Captures ONE natural ShootGun call, repeats it ONCE after a short delay,
 -- then auto-disarms. No continuous spam.
+-- test
 
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")

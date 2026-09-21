@@ -6,6 +6,7 @@
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local UserInputService = game:GetService("UserInputService")
 
 local player = Players.LocalPlayer
 while not player do
@@ -394,6 +395,61 @@ task.spawn(function()
     end
 end)
 
+-- =========================
+-- Drag / mover ventana
+-- =========================
+
+local dragging = false
+local dragInput = nil
+local dragStart = nil
+local frameStart = nil
+
+title.Active = true
+
+title.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1
+        or input.UserInputType == Enum.UserInputType.Touch
+    then
+        dragging = true
+        dragInput = input
+        dragStart = input.Position
+        frameStart = frame.Position
+    end
+end)
+
+title.InputChanged:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseMovement
+        or input.UserInputType == Enum.UserInputType.Touch
+    then
+        dragInput = input
+    end
+end)
+
+UserInputService.InputChanged:Connect(function(input)
+    if dragging and input == dragInput and dragStart and frameStart then
+        local delta = input.Position - dragStart
+
+        frame.Position = UDim2.new(
+            frameStart.X.Scale,
+            frameStart.X.Offset + delta.X,
+            frameStart.Y.Scale,
+            frameStart.Y.Offset + delta.Y
+        )
+    end
+end)
+
+UserInputService.InputEnded:Connect(function(input)
+    if input == dragInput
+        or input.UserInputType == Enum.UserInputType.MouseButton1
+        or input.UserInputType == Enum.UserInputType.Touch
+    then
+        dragging = false
+        dragInput = nil
+        dragStart = nil
+        frameStart = nil
+    end
+end)
+
 local function cleanup()
     if not state.Alive then
         return
@@ -415,5 +471,3 @@ end
 env.__XERO_MVSD_DOUBLESHOT_CLEANUP = cleanup
 
 print("[XeroHub] MVSD Double-Shot Lab cargado | One replay only | by Kev")
-
-

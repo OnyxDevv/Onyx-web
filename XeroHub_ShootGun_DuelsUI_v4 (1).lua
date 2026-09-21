@@ -7,6 +7,8 @@ local UserInputService = game:GetService("UserInputService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local TweenService = game:GetService("TweenService")
 local HttpService = game:GetService("HttpService")
+local Lighting = game:GetService("Lighting")
+local ContentProvider = game:GetService("ContentProvider")
 
 local player = Players.LocalPlayer
 if not player then return end
@@ -1455,6 +1457,7 @@ local Tabs = {
     Aim = MainSection:Tab({Title = "Aimbot", Icon = "solar:target-bold"}),
     Vis = MainSection:Tab({Title = "Visuales", Icon = "solar:eye-bold"}),
     Mov = MainSection:Tab({Title = "Movimiento", Icon = "solar:running-bold"}),
+    Graficos = MainSection:Tab({Title = "Gráficos", Icon = "solar:palette-bold"}),
     Config = PersonalSection:Tab({Title = "Configuración", Icon = "solar:settings-bold"}),
     Creditos = PersonalSection:Tab({Title = "Créditos", Icon = "solar:user-bold"}),
 }
@@ -2952,6 +2955,517 @@ runtime.Track(player.CharacterAdded:Connect(function()
 end))
 
 -- ==========================================
+-- GRÁFICOS · SKYBOX
+-- Sólo sustituye objetos Sky. No toca Lighting,
+-- Atmosphere, Clouds ni postprocesado del juego.
+-- ==========================================
+
+Tabs.Graficos:Section({Title = "Skyboxes"})
+
+local skyState = {
+    Active = nil,
+    OwnedSky = nil,
+    Parked = {},
+    ParkedSet = setmetatable({}, {__mode = "k"}),
+    ChildAddedConnection = nil,
+    RemoteNames = {},
+    Presets = {},
+    RemoteCache = {},
+    CustomId = "92427017914292",
+    Dropdown = nil,
+    Syncing = false,
+}
+runtime.SkyState = skyState
+
+local SKY_FACE_KEYS = {"bk", "dn", "ft", "lf", "rt", "up"}
+local SKY_PROPERTIES = {
+    "SkyboxBk",
+    "SkyboxDn",
+    "SkyboxFt",
+    "SkyboxLf",
+    "SkyboxRt",
+    "SkyboxUp",
+}
+
+local skyEnv = (getgenv and getgenv()) or _G
+local SKYBOX_REPO_BASE = tostring(
+    skyEnv.XERO_SKYBOX_BASE_URL
+    or "https://raw.githubusercontent.com/OnyxDevv/Onyx-web/refs/heads/main/skyboxes"
+):gsub("/+$", "")
+
+local skyCustomAsset = getcustomasset
+    or getsynasset
+    or (syn and (syn.getcustomasset or syn.getsynasset))
+
+local function skyHttpGet(url)
+    local req = (syn and syn.request)
+        or (http and http.request)
+        or http_request
+        or request
+
+    if req then
+        local ok, response = pcall(function()
+            return req({
+                Url = url,
+                Method = "GET",
+                Headers = {
+                    ["User-Agent"] = "XeroHub-MVSD-Skybox/1.0",
+                },
+            })
+        end)
+
+        if ok and type(response) == "table" then
+            local status = tonumber(response.StatusCode or response.Status or 200) or 200
+            local body = response.Body or response.body
+
+            if status >= 200 and status < 300 and type(body) == "string" then
+                return body
+            end
+        end
+    end
+
+    local ok, body = pcall(function()
+        return game:HttpGet(url)
+    end)
+
+    if ok and type(body) == "string" then
+        return body
+    end
+
+    return nil
+end
+
+local function ensureSkyFolder(path)
+    if type(makefolder) ~= "function" then
+        return
+    end
+
+    local current = ""
+
+    for part in string.gmatch(path, "[^/]+") do
+        current = current == "" and part or (current .. "/" .. part)
+
+        local exists = false
+        if type(isfolder) == "function" then
+            pcall(function()
+                exists = isfolder(current) == true
+            end)
+        end
+
+        if not exists then
+            pcall(makefolder, current)
+        end
+    end
+end
+
+local function safeSkyRepoToken(value)
+    value = tostring(value or "")
+
+    if value:match("^[%w%._%-]+$") then
+        return value
+    end
+
+    return nil
+end
+
+local function parkSky(object)
+    if not object
+        or not object:IsA("Sky")
+        or object == skyState.OwnedSky
+        or skyState.ParkedSet[object]
+    then
+        return
+    end
+
+    skyState.ParkedSet[object] = true
+    skyState.Parked[#skyState.Parked + 1] = {
+        Object = object,
+        Parent = object.Parent,
+    }
+
+    object.Parent = nil
+end
+
+local function restoreParkedSkies()
+    for i = 1, #skyState.Parked do
+        local entry = skyState.Parked[i]
+        local object = entry and entry.Object
+
+        if object then
+            pcall(function()
+                if object.Parent == nil then
+                    object.Parent = entry.Parent or Lighting
+                end
+            end)
+        end
+
+        if object then
+            skyState.ParkedSet[object] = nil
+        end
+    end
+
+    table.clear(skyState.Parked)
+end
+
+local function disconnectSkyWatcher()
+    if skyState.ChildAddedConnection then
+        pcall(function()
+            skyState.ChildAddedConnection:Disconnect()
+        end)
+        skyState.ChildAddedConnection = nil
+    end
+end
+
+local function removeOwnedSky()
+    local sky = skyState.OwnedSky
+    skyState.OwnedSky = nil
+
+    if sky then
+        safeDestroy(sky)
+    end
+end
+
+local function restoreOriginalSky()
+    disconnectSkyWatcher()
+    removeOwnedSky()
+    restoreParkedSkies()
+    skyState.Active = nil
+end
+
+local function watchGameSkies()
+    disconnectSkyWatcher()
+
+    skyState.ChildAddedConnection = runtime.Track(
+        Lighting.ChildAdded:Connect(function(object)
+            if not skyState.Active or object == skyState.OwnedSky then
+                return
+            end
+
+            if object:IsA("Sky") then
+                task.defer(function()
+                    if skyState.Active
+                        and object.Parent == Lighting
+                        and object ~= skyState.OwnedSky
+                    then
+                        parkSky(object)
+                    end
+                end)
+            end
+        end)
+    )
+end
+
+local function loadSkyManifest()
+    skyState.RemoteNames = {}
+    skyState.Presets = {}
+
+    if not skyCustomAsset or type(writefile) ~= "function" then
+        return false
+    end
+
+    local raw = skyHttpGet(SKYBOX_REPO_BASE .. "/manifest.json")
+    if not raw then
+        return false
+    end
+
+    local ok, decoded = pcall(function()
+        return HttpService:JSONDecode(raw)
+    end)
+
+    if not ok or type(decoded) ~= "table" then
+        return false
+    end
+
+    local list = decoded.skyboxes or decoded
+    if type(list) ~= "table" then
+        return false
+    end
+
+    local names = {}
+
+    for _, pack in ipairs(list) do
+        if type(pack) == "table" then
+            local name = tostring(pack.name or "")
+            local folder = safeSkyRepoToken(pack.folder)
+
+            if name ~= "" and folder then
+                local files = {}
+                local valid = true
+
+                for _, face in ipairs(SKY_FACE_KEYS) do
+                    local fileName = pack.files
+                        and safeSkyRepoToken(pack.files[face])
+                        or (face .. ".png")
+
+                    if not fileName then
+                        valid = false
+                        break
+                    end
+
+                    files[face] = fileName
+                end
+
+                if valid then
+                    local displayName = "Skybox · " .. name
+
+                    skyState.Presets[displayName] = {
+                        Folder = folder,
+                        RepoName = name,
+                        Files = files,
+                    }
+
+                    names[#names + 1] = displayName
+                end
+            end
+        end
+    end
+
+    table.sort(names)
+    skyState.RemoteNames = names
+
+    return #names > 0
+end
+
+local function loadRemoteSkyFaces(preset)
+    if not skyCustomAsset or type(writefile) ~= "function" then
+        error("Tu ejecutor necesita getcustomasset/getsynasset + writefile.")
+    end
+
+    local cacheKey = tostring(preset.Folder)
+
+    if skyState.RemoteCache[cacheKey] then
+        return skyState.RemoteCache[cacheKey]
+    end
+
+    local root = "XeroHub/skybox_cache_mvsd"
+    ensureSkyFolder(root)
+
+    local result = {}
+
+    for index, face in ipairs(SKY_FACE_KEYS) do
+        local remoteName = preset.Files[face]
+        local extension = remoteName:match("(%.[%w]+)$") or ".png"
+        local safeFolder = tostring(preset.Folder):gsub("[^%w%._%-]", "_")
+        local uniqueName = "xero_mvds_" .. safeFolder .. "_" .. face .. extension
+        local localPath = root .. "/" .. uniqueName
+
+        local exists = false
+
+        if type(isfile) == "function" then
+            pcall(function()
+                exists = isfile(localPath) == true
+            end)
+        end
+
+        if not exists then
+            local body = skyHttpGet(
+                SKYBOX_REPO_BASE
+                .. "/"
+                .. preset.Folder
+                .. "/"
+                .. remoteName
+            )
+
+            if not body or #body < 64 then
+                error(
+                    "No se pudo descargar la cara "
+                    .. face
+                    .. " de "
+                    .. tostring(preset.RepoName)
+                )
+            end
+
+            local wrote, err = pcall(writefile, localPath, body)
+
+            if not wrote then
+                error("No se pudo guardar " .. localPath .. ": " .. tostring(err))
+            end
+        end
+
+        local ok, asset = pcall(skyCustomAsset, localPath)
+
+        if not ok or type(asset) ~= "string" or asset == "" then
+            error("getcustomasset falló con " .. localPath)
+        end
+
+        result[index] = asset
+    end
+
+    skyState.RemoteCache[cacheKey] = result
+    return result
+end
+
+local function applySkyFaces(name, faces, localAssets)
+    restoreOriginalSky()
+
+    local sky = Instance.new("Sky")
+    sky.Name = "XeroHub_MVSD_Sky"
+    sky.CelestialBodiesShown = false
+    sky.StarCount = 0
+
+    for index, property in ipairs(SKY_PROPERTIES) do
+        local value = faces[index]
+
+        if localAssets then
+            sky[property] = value
+        else
+            sky[property] = "rbxassetid://" .. tostring(value)
+        end
+    end
+
+    -- Guarda/aparta exclusivamente los Sky que ya tenía el juego.
+    for _, object in ipairs(Lighting:GetChildren()) do
+        if object:IsA("Sky") then
+            parkSky(object)
+        end
+    end
+
+    skyState.OwnedSky = sky
+    skyState.Active = name
+    sky.Parent = Lighting
+
+    watchGameSkies()
+
+    local selectedSky = sky
+    task.spawn(function()
+        pcall(function()
+            ContentProvider:PreloadAsync({selectedSky})
+        end)
+    end)
+end
+
+local function applySkySelection(value)
+    local selected = type(value) == "table" and value[1] or value
+    selected = tostring(selected or "Ninguno")
+
+    if selected == "Ninguno" then
+        restoreOriginalSky()
+        return
+    end
+
+    if selected == "Cielo personalizado" then
+        local faces = {}
+
+        for i = 1, 6 do
+            faces[i] = skyState.CustomId
+        end
+
+        applySkyFaces(selected, faces, false)
+        return
+    end
+
+    local preset = skyState.Presets[selected]
+    if not preset then
+        return
+    end
+
+    local ok, result = pcall(function()
+        return loadRemoteSkyFaces(preset)
+    end)
+
+    if not ok then
+        restoreOriginalSky()
+        runtime.Notify(
+            "No se pudo cargar " .. selected .. ".",
+            {Title = "XeroHub · Skybox"}
+        )
+        warn("[XeroHub] Skybox: " .. tostring(result))
+        return
+    end
+
+    applySkyFaces(selected, result, true)
+end
+
+pcall(loadSkyManifest)
+
+local skyDropdownValues = {"Ninguno"}
+
+for _, name in ipairs(skyState.RemoteNames) do
+    skyDropdownValues[#skyDropdownValues + 1] = name
+end
+
+skyDropdownValues[#skyDropdownValues + 1] = "Cielo personalizado"
+
+skyState.Dropdown = Tabs.Graficos:Dropdown({
+    Title = "Skybox",
+    Desc = "Elige un cielo.",
+    Values = skyDropdownValues,
+    Value = "Ninguno",
+    Callback = function(value)
+        if skyState.Syncing then
+            return
+        end
+
+        applySkySelection(value)
+    end,
+})
+
+Tabs.Graficos:Input({
+    Title = "ID de cielo",
+    Desc = "Usa la misma imagen en las 6 caras.",
+    Placeholder = "92427017914292",
+    Value = "92427017914292",
+    Callback = function(value)
+        skyState.CustomId = tostring(value or "")
+    end,
+})
+
+Tabs.Graficos:Button({
+    Title = "Aplicar cielo personalizado",
+    Desc = "Aplica el ID escrito arriba.",
+    Callback = function()
+        local raw = tostring(skyState.CustomId or ""):match("^%s*(.-)%s*$") or ""
+        local id = raw:match("^(%d+)$")
+            or raw:match("^rbxassetid://(%d+)$")
+
+        if not id or not id:find("[1-9]") then
+            runtime.Notify(
+                "Escribe un ID válido.",
+                {Title = "XeroHub · Skybox"}
+            )
+            return
+        end
+
+        skyState.CustomId = id
+
+        local faces = {}
+        for i = 1, 6 do
+            faces[i] = id
+        end
+
+        applySkyFaces("Cielo personalizado", faces, false)
+
+        if skyState.Dropdown then
+            skyState.Syncing = true
+            pcall(function()
+                skyState.Dropdown:Select("Cielo personalizado")
+            end)
+            skyState.Syncing = false
+        end
+    end,
+})
+
+Tabs.Graficos:Button({
+    Title = "Restaurar cielo",
+    Desc = "Vuelve al cielo original del juego.",
+    Callback = function()
+        restoreOriginalSky()
+
+        if skyState.Dropdown then
+            skyState.Syncing = true
+            pcall(function()
+                skyState.Dropdown:Select("Ninguno")
+            end)
+            skyState.Syncing = false
+        end
+    end,
+})
+
+runtime.SkyCleanup = function()
+    restoreOriginalSky()
+end
+
+-- ==========================================
 -- CONFIGURACIÓN
 -- ==========================================
 
@@ -3587,6 +4101,10 @@ runtimeEnv.__XERO_MVSD_HUB_CLEANUP = function()
         pcall(runtime.MovementCleanup)
     end
 
+    if runtime.SkyCleanup then
+        pcall(runtime.SkyCleanup)
+    end
+
     clearESP()
 
     if runtime.BodySelectorGui then
@@ -3619,4 +4137,4 @@ end
 
 refreshLobbyState()
 
-print("[XeroHub] MVSD cargado | Optimizado | Silent/ESP cacheados | Noclip cacheado | Mobile Fly persistente")
+print("[XeroHub] MVSD cargado | Optimizado | Skyboxes | Silent/ESP | Noclip | Mobile Fly")

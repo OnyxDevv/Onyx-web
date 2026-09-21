@@ -3505,6 +3505,8 @@ do
 
         ShotAsset = nil,
         DeathAsset = nil,
+        ShotReadySound = nil,
+        DeathReadySound = nil,
         ShotActiveKey = nil,
         DeathActiveKey = nil,
         ShotLoadToken = 0,
@@ -3733,6 +3735,87 @@ do
         return CACHE_FOLDER .. "/" .. token .. "." .. extension
     end
 
+    local function isValidAudioPayload(statusCode, body, extension)
+        local status = tonumber(statusCode)
+
+        if not status
+            or status < 200
+            or status >= 300
+            or type(body) ~= "string"
+            or #body < 64
+        then
+            return false
+        end
+
+        extension = string.lower(tostring(extension or "")):gsub("^%.", "")
+
+        local isOgg = body:sub(1, 4) == "OggS"
+        local first, second = string.byte(body, 1, 2)
+        local isMp3 = body:sub(1, 3) == "ID3"
+            or (first == 0xFF and second ~= nil and second >= 0xE0)
+
+        if extension == "ogg" then
+            return isOgg
+        end
+
+        if extension == "mp3" then
+            return isMp3
+        end
+
+        return isMp3 or isOgg
+    end
+
+    local function waitForSoundLoaded(sound, timeout)
+        if not sound or not sound.Parent then
+            return false
+        end
+
+        task.spawn(function()
+            pcall(function()
+                ContentProvider:PreloadAsync({sound})
+            end)
+        end)
+
+        local deadline = os.clock() + (tonumber(timeout) or 8)
+
+        while runtime.Alive
+            and sound
+            and sound.Parent
+            and os.clock() < deadline
+        do
+            if sound.IsLoaded then
+                return true
+            end
+
+            task.wait(0.05)
+        end
+
+        return sound
+            and sound.Parent
+            and sound.IsLoaded == true
+    end
+
+    local function createLoadedSound(asset, objectName, volume)
+        if type(asset) ~= "string" or asset == "" then
+            return nil, "Asset de sonido inválido."
+        end
+
+        local sound = Instance.new("Sound")
+        sound.Name = objectName or "XeroHub_MVSD_Sound"
+        sound.SoundId = asset
+        sound.Volume = math.clamp(tonumber(volume) or 1, 0, 2)
+        sound.PlaybackSpeed = 1
+        sound.Looped = false
+        sound.Parent = SoundService
+
+        if not waitForSoundLoaded(sound, 8) then
+            safeDestroy(sound)
+            return nil, "El archivo se registró, pero Roblox no terminó de cargarlo."
+        end
+
+        return sound
+    end
+
     local function loadEntryAsset(entry)
         if not assetLoader
             or type(writefile) ~= "function"
@@ -3743,22 +3826,43 @@ do
         ensureFolder()
 
         local path = cachePath(entry)
-        local exists = false
+        local validCache = false
 
-        if type(isfile) == "function" then
+        if type(isfile) == "function"
+            and type(readfile) == "function"
+        then
+            local exists = false
+
             pcall(function()
                 exists = isfile(path) == true
             end)
+
+            if exists then
+                local ok, cached = pcall(readfile, path)
+
+                validCache = ok
+                    and isValidAudioPayload(
+                        200,
+                        cached,
+                        entry.extension
+                    )
+            end
         end
 
-        if not exists then
-            local body = soundHttpGet(entry.url)
+        if not validCache then
+            local body, status = soundHttpGet(entry.url)
 
-            if type(body) ~= "string" or #body < 64 then
-                return nil, "No se pudo descargar " .. tostring(entry.label) .. "."
+            if not isValidAudioPayload(status, body, entry.extension) then
+                return nil,
+                    "GitHub no devolvió un "
+                    .. string.upper(tostring(entry.extension or "audio"))
+                    .. " válido (HTTP "
+                    .. tostring(status)
+                    .. ")."
             end
 
             local ok, err = pcall(writefile, path, body)
+
             if not ok then
                 return nil, "No se pudo guardar el sonido: " .. tostring(err)
             end
@@ -3767,23 +3871,10 @@ do
         local ok, asset = pcall(assetLoader, path)
 
         if not ok or type(asset) ~= "string" or asset == "" then
-            return nil, "getcustomasset falló con " .. tostring(entry.label) .. "."
+            return nil, "El ejecutor no pudo registrar el audio local."
         end
 
-        -- Warmup: deja el asset listo antes del primer disparo/muerte.
-        local preload = Instance.new("Sound")
-        preload.Name = "XeroHub_MVSD_SoundPreload"
-        preload.SoundId = asset
-        preload.Volume = 0
-        preload.Parent = SoundService
-
-        pcall(function()
-            ContentProvider:PreloadAsync({preload})
-        end)
-
-        safeDestroy(preload)
-
-        return asset
+        return asset, path
     end
 
     local function playOneShot(asset, volume, name)
@@ -3791,16 +3882,19 @@ do
             or type(asset) ~= "string"
             or asset == ""
         then
-            return
+            return false
         end
 
-        local sound = Instance.new("Sound")
-        sound.Name = name or "XeroHub_MVSD_OneShot"
-        sound.SoundId = asset
-        sound.Volume = math.clamp(tonumber(volume) or 1, 0, 2)
-        sound.PlaybackSpeed = 1
-        sound.Looped = false
-        sound.Parent = SoundService
+        local sound, err = createLoadedSound(
+            asset,
+            name or "XeroHub_MVSD_OneShot",
+            volume
+        )
+
+        if not sound then
+            warn("[XeroHub] Sound preview/load failed: " .. tostring(err))
+            return false, err
+        end
 
         soundState.ActiveOneShots[sound] = true
 
@@ -3809,11 +3903,19 @@ do
             safeDestroy(sound)
         end))
 
-        pcall(function()
+        local ok = pcall(function()
+            sound.TimePosition = 0
             sound:Play()
         end)
 
+        if not ok then
+            soundState.ActiveOneShots[sound] = nil
+            safeDestroy(sound)
+            return false, "Sound:Play() falló."
+        end
+
         Debris:AddItem(sound, 15)
+        return true
     end
 
     local function setControlSilently(control, value, select)
@@ -3890,12 +3992,27 @@ do
         applyShotMute(sound)
 
         runtime.Track(sound.Played:Connect(function()
-            if soundState.ShotEnabled and soundState.ShotAsset then
-                playOneShot(
-                    soundState.ShotAsset,
-                    soundState.ShotVolume,
-                    "XeroHub_CustomGunshot"
-                )
+            if soundState.ShotEnabled
+                and soundState.ShotReadySound
+                and soundState.ShotReadySound.Parent
+            then
+                local shot = soundState.ShotReadySound:Clone()
+                shot.Name = "XeroHub_CustomGunshot"
+                shot.Volume = soundState.ShotVolume
+                shot.Parent = SoundService
+                soundState.ActiveOneShots[shot] = true
+
+                runtime.Track(shot.Ended:Connect(function()
+                    soundState.ActiveOneShots[shot] = nil
+                    safeDestroy(shot)
+                end))
+
+                pcall(function()
+                    shot.TimePosition = 0
+                    shot:Play()
+                end)
+
+                Debris:AddItem(shot, 15)
             end
         end))
 
@@ -4070,11 +4187,27 @@ do
                 return
             end
 
-            playOneShot(
-                soundState.DeathAsset,
-                soundState.DeathVolume,
-                "XeroHub_CustomDeathSound"
-            )
+            if soundState.DeathReadySound
+                and soundState.DeathReadySound.Parent
+            then
+                local deathSound = soundState.DeathReadySound:Clone()
+                deathSound.Name = "XeroHub_CustomDeathSound"
+                deathSound.Volume = soundState.DeathVolume
+                deathSound.Parent = SoundService
+                soundState.ActiveOneShots[deathSound] = true
+
+                runtime.Track(deathSound.Ended:Connect(function()
+                    soundState.ActiveOneShots[deathSound] = nil
+                    safeDestroy(deathSound)
+                end))
+
+                pcall(function()
+                    deathSound.TimePosition = 0
+                    deathSound:Play()
+                end)
+
+                Debris:AddItem(deathSound, 15)
+            end
         end))
     end
 
@@ -4210,7 +4343,41 @@ do
                 return
             end
 
+            local readySound, readyErr = createLoadedSound(
+                asset,
+                isShot and "XeroHub_CustomGunshotReady"
+                    or "XeroHub_CustomDeathReady",
+                isShot and soundState.ShotVolume
+                    or soundState.DeathVolume
+            )
+
+            if not readySound then
+                runtime.Notify(
+                    tostring(readyErr or "No se pudo precargar el sonido."),
+                    {Title = "XeroHub · Sonidos"}
+                )
+
+                if isShot then
+                    soundState.ShotEnabled = false
+                    soundState.ShotDesired = false
+                    setControlSilently(soundState.ShotToggle, false)
+                    restoreGunshots()
+                else
+                    soundState.DeathEnabled = false
+                    soundState.DeathDesired = false
+                    setControlSilently(soundState.DeathToggle, false)
+                    restoreNativeDeathUiSounds()
+                end
+
+                return
+            end
+
             if isShot then
+                if soundState.ShotReadySound then
+                    safeDestroy(soundState.ShotReadySound)
+                end
+
+                soundState.ShotReadySound = readySound
                 soundState.ShotAsset = asset
                 soundState.ShotActiveKey = key
                 soundState.ShotEnabled = true
@@ -4222,6 +4389,11 @@ do
                     applyShotMute(sound)
                 end
             else
+                if soundState.DeathReadySound then
+                    safeDestroy(soundState.DeathReadySound)
+                end
+
+                soundState.DeathReadySound = readySound
                 soundState.DeathAsset = asset
                 soundState.DeathActiveKey = key
                 soundState.DeathEnabled = true
@@ -4248,6 +4420,12 @@ do
         soundState.ShotLoadToken += 1
         soundState.ShotAsset = nil
         soundState.ShotActiveKey = nil
+
+        if soundState.ShotReadySound then
+            safeDestroy(soundState.ShotReadySound)
+            soundState.ShotReadySound = nil
+        end
+
         restoreGunshots()
 
         if soundState.MuteShot then
@@ -4278,6 +4456,12 @@ do
         soundState.DeathLoadToken += 1
         soundState.DeathAsset = nil
         soundState.DeathActiveKey = nil
+
+        if soundState.DeathReadySound then
+            safeDestroy(soundState.DeathReadySound)
+            soundState.DeathReadySound = nil
+        end
+
         restoreNativeDeathUiSounds()
     end
 
@@ -4554,11 +4738,18 @@ do
                 local asset, err = loadEntryAsset(entry)
 
                 if asset then
-                    playOneShot(
+                    local played, playErr = playOneShot(
                         asset,
                         soundState.ShotVolume,
                         "XeroHub_GunshotPreview"
                     )
+
+                    if not played then
+                        runtime.Notify(
+                            tostring(playErr or "No se pudo reproducir el sonido."),
+                            {Title = "XeroHub · Sonidos"}
+                        )
+                    end
                 else
                     runtime.Notify(
                         tostring(err),
@@ -4580,6 +4771,10 @@ do
                 0,
                 1
             )
+
+            if soundState.ShotReadySound and soundState.ShotReadySound.Parent then
+                soundState.ShotReadySound.Volume = soundState.ShotVolume
+            end
         end,
     })
     UIElements.SliWeaponSoundVolume = soundState.ShotSlider
@@ -4653,11 +4848,18 @@ do
                 local asset, err = loadEntryAsset(entry)
 
                 if asset then
-                    playOneShot(
+                    local played, playErr = playOneShot(
                         asset,
                         soundState.DeathVolume,
                         "XeroHub_DeathPreview"
                     )
+
+                    if not played then
+                        runtime.Notify(
+                            tostring(playErr or "No se pudo reproducir el sonido."),
+                            {Title = "XeroHub · Sonidos"}
+                        )
+                    end
                 else
                     runtime.Notify(
                         tostring(err),
@@ -4679,6 +4881,10 @@ do
                 0,
                 1
             )
+
+            if soundState.DeathReadySound and soundState.DeathReadySound.Parent then
+                soundState.DeathReadySound.Volume = soundState.DeathVolume
+            end
         end,
     })
     UIElements.SliKillSoundVolume = soundState.DeathSlider
@@ -4797,6 +5003,16 @@ do
 
         soundState.ShotAsset = nil
         soundState.DeathAsset = nil
+
+        if soundState.ShotReadySound then
+            safeDestroy(soundState.ShotReadySound)
+            soundState.ShotReadySound = nil
+        end
+
+        if soundState.DeathReadySound then
+            safeDestroy(soundState.DeathReadySound)
+            soundState.DeathReadySound = nil
+        end
     end
 
     loadCatalog(false)

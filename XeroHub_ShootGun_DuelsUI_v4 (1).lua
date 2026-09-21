@@ -97,7 +97,7 @@ local state = {
     SilentAccumulator = 0,
     AutoAccumulator = 0,
     ESPAccumulator = 0,
-    AutoShootInterval = 0.12,
+    AutoShootInterval = 0.15,
 
     EquippedTool = nil,
     CombatMaxDistance = 800,
@@ -568,15 +568,30 @@ rayParams.FilterType = Enum.RaycastFilterType.Exclude
 rayParams.IgnoreWater = true
 local rayIgnore = {}
 
+-- Validación LOS estricta: ignoramos únicamente nuestro Character.
+-- Si el primer impacto es mapa/estructura, el objetivo queda descartado.
+-- Si pega primero en cualquier parte del Character enemigo, hay línea limpia.
 local function visibleTarget(localChar, enemyChar, targetPart, origin)
+    if not localChar or not enemyChar or not targetPart or not targetPart.Parent then
+        return false
+    end
+
     rayIgnore[1] = localChar
-    rayIgnore[2] = enemyChar
+    rayIgnore[2] = nil
     rayParams.FilterDescendantsInstances = rayIgnore
 
     local delta = targetPart.Position - origin
     if delta:Dot(delta) <= 0.0001 then return true end
 
-    return workspace:Raycast(origin, delta, rayParams) == nil
+    local result = workspace:Raycast(origin, delta, rayParams)
+    if not result then
+        -- Algunas hitboxes internas tienen CanQuery desactivado. Si no hubo ningún
+        -- impacto antes de llegar a la posición objetivo, no hay estructura bloqueando.
+        return true
+    end
+
+    local hit = result.Instance
+    return hit ~= nil and hit:IsDescendantOf(enemyChar)
 end
 
 local function getCenter()
@@ -957,6 +972,73 @@ local function updateFOVCircle()
     end
 end
 
+-- Disparo nativo sin secuestrar el input físico del usuario.
+-- MVSD escucha el PlayerMouse para registrar munición/contador; firesignal o
+-- getconnections ejecutan esos handlers sin mantener MouseButton1 presionado.
+local function invokeSignalNoInput(signal)
+    if not signal then return false end
+
+    if type(firesignal) == "function" then
+        local ok = pcall(firesignal, signal)
+        if ok then return true end
+    end
+
+    if type(getconnections) == "function" then
+        local ok, connections = pcall(getconnections, signal)
+        if ok and type(connections) == "table" then
+            local fired = false
+
+            for i = 1, #connections do
+                local connection = connections[i]
+                if connection then
+                    local ran = false
+                    pcall(function()
+                        if connection.Fire then
+                            connection:Fire()
+                            ran = true
+                        elseif type(connection.Function) == "function" then
+                            connection.Function()
+                            ran = true
+                        end
+                    end)
+                    fired = fired or ran
+                end
+            end
+
+            if fired then return true end
+        end
+    end
+
+    return false
+end
+
+local function fireAutoShootNative(tool)
+    if not tool or not tool.Parent then return false end
+
+    -- Preferimos el handler nativo del PlayerMouse porque es el camino que MVSD
+    -- usa para descontar/contabilizar el disparo, pero sin simular un disparo nativo.
+    if invokeSignalNoInput(mouse.Button1Down) then
+        task.delay(0.02, function()
+            if runtime.Alive then
+                invokeSignalNoInput(mouse.Button1Up)
+            end
+        end)
+        return true
+    end
+
+    -- Fallback puro DUELS para ejecutores sin firesignal/getconnections.
+    local ok = pcall(function()
+        tool:Activate()
+        task.delay(0.02, function()
+            if runtime.Alive and tool and tool.Parent == player.Character then
+                pcall(function() tool:Deactivate() end)
+            end
+        end)
+    end)
+
+    return ok
+end
+
 -- ==========================================
 -- MASTER LOOP
 -- ==========================================
@@ -1020,9 +1102,7 @@ runtime.Track(RunService.Heartbeat:Connect(function(dt)
     end
 
     -- Auto Shoot usa SU selección corporal y nunca usa el FOV.
-    -- ÚNICO cambio respecto a la versión estable: el disparo entra por el mismo
-    -- input primario que usa el arma al disparar manualmente. Así el LocalScript
-    -- original conserva munición/contador/cooldown; Tool:Activate() sólo es fallback.
+    -- No simula clic físico: ejecuta el handler nativo del arma sin tocar WASD/mouse.
     if state.AutoShoot then
         state.AutoAccumulator = state.AutoAccumulator + dt
 
@@ -1032,7 +1112,7 @@ runtime.Track(RunService.Heartbeat:Connect(function(dt)
             if not state.InLobby then
                 local tool = getEquippedTool()
 
-                if tool then
+                if tool and tool:FindFirstChild("Handle") then
                     local plr, part = chooseTarget("AutoShoot", false)
 
                     state.AutoTargetPlayer = plr
@@ -1040,44 +1120,7 @@ runtime.Track(RunService.Heartbeat:Connect(function(dt)
 
                     if part then
                         aimHookState.Target = part
-
-                        local firedByInput = false
-
-                        -- Preferimos el clic real del ejecutor: activa el mismo camino
-                        -- del arma que un disparo manual y deja que el juego cuente el tiro.
-                        if type(mouse1click) == "function" then
-                            firedByInput = pcall(mouse1click)
-                        elseif type(mouse1press) == "function"
-                            and type(mouse1release) == "function"
-                        then
-                            firedByInput = pcall(mouse1press)
-
-                            if firedByInput then
-                                task.delay(0.02, function()
-                                    if runtime.Alive then
-                                        pcall(mouse1release)
-                                    end
-                                end)
-                            end
-                        end
-
-                        -- Ejecutores sin input de mouse: conserva el método DUELS.
-                        if not firedByInput then
-                            pcall(function()
-                                tool:Activate()
-
-                                task.delay(0.02, function()
-                                    if runtime.Alive
-                                        and tool
-                                        and tool.Parent == player.Character
-                                    then
-                                        pcall(function()
-                                            tool:Deactivate()
-                                        end)
-                                    end
-                                end)
-                            end)
-                        end
+                        fireAutoShootNative(tool)
                     else
                         aimHookState.Target = state.SilentAim and state.SilentTarget or nil
                     end

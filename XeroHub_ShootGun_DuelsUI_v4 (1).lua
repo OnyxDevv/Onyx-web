@@ -1,6 +1,5 @@
 -- XeroHub | MVSD | Kev
--- UI portada desde DUELS + selector corporal 2D + configs + ESP de ronda + Silent Aim + FOV exclusivo de Silent Aim.
--- Método de Silent Aim: igual que Duels (Raycast/Mouse spoof), NO toca ShootGun:FireServer.
+-- UI DUELS + Silent Aim + ESP + Modo Fantasma.
 
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
@@ -8,7 +7,6 @@ local UserInputService = game:GetService("UserInputService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local TweenService = game:GetService("TweenService")
 local HttpService = game:GetService("HttpService")
-local MarketplaceService = game:GetService("MarketplaceService")
 
 local player = Players.LocalPlayer
 if not player then return end
@@ -833,6 +831,27 @@ end
 -- ESP OPTIMIZADO
 -- ==========================================
 
+local function isValidESPTarget(plr)
+    if not state.ESP or state.InLobby or not plr or plr == player then
+        return false
+    end
+
+    if not isEnemy(plr) then
+        return false
+    end
+
+    local char, hum, hrp = getCharacterData(plr)
+    if not char or not hum or not hrp then
+        return false
+    end
+
+    if not playerIsInActiveRound(plr, char, hrp) then
+        return false
+    end
+
+    return true, char, hum, hrp
+end
+
 local function removeESP(plr)
     local highlight = runtime.Highlights[plr]
     if highlight then
@@ -842,8 +861,36 @@ local function removeESP(plr)
 
     local billboard = runtime.Billboards[plr]
     if billboard then
+        pcall(function()
+            billboard.Enabled = false
+            billboard.Adornee = nil
+        end)
         safeDestroy(billboard)
         runtime.Billboards[plr] = nil
+    end
+end
+
+local function clearOrphanESPBillboards()
+    for _, child in ipairs(playerGui:GetChildren()) do
+        if child:IsA("BillboardGui")
+            and child.Name == "XeroEnemyInfo"
+        then
+            local tracked = false
+            for _, billboard in pairs(runtime.Billboards) do
+                if billboard == child then
+                    tracked = true
+                    break
+                end
+            end
+
+            if not tracked then
+                pcall(function()
+                    child.Enabled = false
+                    child.Adornee = nil
+                end)
+                safeDestroy(child)
+            end
+        end
     end
 end
 
@@ -861,6 +908,8 @@ local function clearESP()
     for i = 1, #pending do
         removeESP(pending[i])
     end
+
+    clearOrphanESPBillboards()
 end
 
 local function hasESPText()
@@ -868,15 +917,8 @@ local function hasESPText()
 end
 
 local function ensureESP(plr)
-    if not state.ESP or state.InLobby or not isEnemy(plr) then
-        removeESP(plr)
-        return
-    end
-
-    local char, hum, hrp = getCharacterData(plr)
-    if not char or not hum or not hrp
-        or not playerIsInActiveRound(plr, char, hrp)
-    then
+    local valid, char, hum, hrp = isValidESPTarget(plr)
+    if not valid then
         removeESP(plr)
         return
     end
@@ -913,6 +955,7 @@ local function ensureESP(plr)
         if not billboard or not billboard.Parent then
             billboard = Instance.new("BillboardGui")
             billboard.Name = "XeroEnemyInfo"
+            billboard:SetAttribute("XeroMVSDESP", true)
             billboard.Size = UDim2.fromOffset(190, 38)
             billboard.StudsOffset = Vector3.new(0, 3.3, 0)
             billboard.AlwaysOnTop = true
@@ -933,6 +976,8 @@ local function ensureESP(plr)
         else
             billboard.Adornee = hrp
         end
+
+        billboard.Enabled = true
 
         local label = billboard:FindFirstChild("Info")
         if label then
@@ -965,6 +1010,42 @@ runtime.Track(Players.PlayerRemoving:Connect(function(plr)
     runtime.CharacterCache[plr] = nil
     removeESP(plr)
 end))
+
+local function refreshAllESPFilters()
+    if not state.ESP then
+        clearESP()
+        return
+    end
+
+    for i = 1, #runtime.PlayerList do
+        local plr = runtime.PlayerList[i]
+        if plr ~= player then
+            ensureESP(plr)
+        end
+    end
+end
+
+runtime.Track(player:GetPropertyChangedSignal("Team"):Connect(refreshAllESPFilters))
+runtime.Track(player:GetPropertyChangedSignal("Neutral"):Connect(refreshAllESPFilters))
+
+for i = 1, #runtime.PlayerList do
+    local plr = runtime.PlayerList[i]
+    if plr ~= player then
+        runtime.Track(plr:GetPropertyChangedSignal("Team"):Connect(function()
+            ensureESP(plr)
+        end))
+    end
+end
+
+runtime.Track(Players.PlayerAdded:Connect(function(plr)
+    if plr == player then return end
+    runtime.Track(plr:GetPropertyChangedSignal("Team"):Connect(function()
+        ensureESP(plr)
+    end))
+end))
+
+-- Limpia nombres huérfanos que hayan quedado de una ejecución anterior.
+clearOrphanESPBillboards()
 
 -- ==========================================
 -- FOV CENTRADO · EXCLUSIVO DE SILENT AIM
@@ -1065,6 +1146,13 @@ runtime.Track(RunService.Heartbeat:Connect(function(dt)
                 local plr = runtime.PlayerList[i]
                 if plr ~= player then
                     ensureESP(plr)
+                end
+            end
+
+            -- Evita que un Billboard sobreviva a cambios de Team/Character entre ticks.
+            for plr in pairs(runtime.Billboards) do
+                if not isValidESPTarget(plr) then
+                    removeESP(plr)
                 end
             end
         end
@@ -1373,6 +1461,7 @@ local Tabs = {
     Inicio = MainSection:Tab({Title = "Inicio", Icon = "solar:home-bold"}),
     Aim = MainSection:Tab({Title = "Aimbot", Icon = "solar:target-bold"}),
     Vis = MainSection:Tab({Title = "Visuales", Icon = "solar:eye-bold"}),
+    Mov = MainSection:Tab({Title = "Movimiento", Icon = "solar:running-bold"}),
     Config = PersonalSection:Tab({Title = "Configuración", Icon = "solar:settings-bold"}),
     Creditos = PersonalSection:Tab({Title = "Créditos", Icon = "solar:user-bold"}),
 }
@@ -1812,25 +1901,11 @@ end
 -- INICIO
 -- ==========================================
 
-Tabs.Inicio:Paragraph({
-    Title = "Bienvenido a XeroHub",
-    Desc = "MVSD usa la misma base visual de DUELS, con controles organizados y selector corporal 2D.",
-})
-
 local executorName = identifyexecutor and identifyexecutor() or "Desconocido"
-local accountPlan = "Free"
-pcall(function()
-    if player.MembershipType == Enum.MembershipType.Premium then
-        accountPlan = "Premium"
-    end
-end)
-
 Tabs.Inicio:Paragraph({
     Title = tostring(player.DisplayName),
     Desc = "@" .. tostring(player.Name)
-        .. "\nEjecutor: " .. tostring(executorName)
-        .. "\nCuenta: " .. tostring(player.AccountAge or 0) .. " días"
-        .. "\nPlan: " .. tostring(accountPlan),
+        .. "\nEjecutor: " .. tostring(executorName),
     Image = "rbxthumb://type=AvatarHeadShot&id=" .. tostring(player.UserId) .. "&w=150&h=150",
     ImageSize = 58,
     CircleImage = true,
@@ -1841,38 +1916,6 @@ Tabs.Inicio:Paragraph({
     DecorText = "PROFILE",
     Color = Color3.fromRGB(11, 11, 14),
     StrokeColor = Color3.fromRGB(44, 44, 50),
-})
-
-Tabs.Inicio:Section({Title = "Novedades de MVSD"})
-
-Tabs.Inicio:Paragraph({
-    Title = "Selector corporal 2D",
-    Desc = "Silent Aim acepta varias partes simultáneas con caché por personaje.",
-    Image = "solar:target-bold",
-    ImageSize = 34,
-    Color = Color3.fromHex("#20252C"),
-})
-
-Tabs.Inicio:Paragraph({
-    Title = "Rendimiento",
-    Desc = "FOV y wallcheck comparten el mismo target; ESP actualizado a baja frecuencia.",
-    Image = "solar:bolt-bold",
-    ImageSize = 34,
-    Color = Color3.fromHex("#20252C"),
-})
-
-Tabs.Inicio:Section({Title = "Información del Servidor"})
-
-local gameName = "Desconocido"
-pcall(function()
-    gameName = MarketplaceService:GetProductInfo(game.PlaceId).Name
-end)
-
-Tabs.Inicio:Paragraph({
-    Title = "Juego Actual",
-    Desc = tostring(gameName) .. "\nPlace ID: " .. tostring(game.PlaceId),
-    Image = "rbxthumb://type=GameIcon&id=" .. tostring(game.GameId) .. "&w=150&h=150",
-    ImageSize = 48,
 })
 
 local lobbyParagraph = Tabs.Inicio:Paragraph({
@@ -1888,7 +1931,7 @@ Tabs.Aim:Section({Title = "Silent Aim"})
 
 UIElements.TogSilentAim = Tabs.Aim:Toggle({
     Title = "Silent Aim",
-    Desc = "Redirige el disparo a las partes seleccionadas mediante Raycast/Mouse spoof.",
+    Desc = "Redirige tus disparos al enemigo.",
     Value = false,
     Callback = function(value)
         state.SilentAim = value
@@ -1905,7 +1948,7 @@ UIElements.TogSilentAim = Tabs.Aim:Toggle({
 
 Tabs.Aim:Button({
     Title = "Selector corporal · Silent Aim",
-    Desc = "Selecciona cabeza, torso, brazos y piernas con multiselección visual.",
+    Desc = "Elige las partes a priorizar.",
     Callback = function()
         runtime.OpenBodySelector("SilentAim")
     end,
@@ -1915,7 +1958,7 @@ Tabs.Aim:Section({Title = "Campo de visión"})
 
 UIElements.TogFOVFilter = Tabs.Aim:Toggle({
     Title = "Filtro de círculo FOV",
-    Desc = "Solo Silent Aim limita sus objetivos al círculo.",
+    Desc = "Limita Silent Aim al círculo.",
     Value = state.FOVFilter,
     Callback = function(value)
         state.FOVFilter = value
@@ -1924,7 +1967,7 @@ UIElements.TogFOVFilter = Tabs.Aim:Toggle({
 
 UIElements.TogShowFOV = Tabs.Aim:Toggle({
     Title = "Mostrar Círculo FOV",
-    Desc = "Blanco sin candidato y verde cuando una parte seleccionada entra al círculo.",
+    Desc = "Muestra el círculo del FOV.",
     Value = state.ShowFOV,
     Callback = function(value)
         state.ShowFOV = value
@@ -1952,7 +1995,7 @@ Tabs.Vis:Section({Title = "ESP de jugadores"})
 
 UIElements.TogESP = Tabs.Vis:Toggle({
     Title = "ESP Jugadores",
-    Desc = "Solo enemigos activos de la ronda; limpia lobby, spawn protegido y personajes lejanos.",
+    Desc = "Muestra enemigos durante la partida.",
     Value = false,
     Callback = function(value)
         state.ESP = value
@@ -1964,7 +2007,7 @@ UIElements.TogESP = Tabs.Vis:Toggle({
 
 UIElements.TogESPGlow = Tabs.Vis:Toggle({
     Title = "Mostrar Resplandor (Glow)",
-    Desc = "Relleno sin contorno para los enemigos válidos.",
+    Desc = "Resalta a los enemigos.",
     Value = state.ESPGlow,
     Callback = function(value)
         state.ESPGlow = value
@@ -1979,6 +2022,11 @@ UIElements.TogESPName = Tabs.Vis:Toggle({
     Value = state.ESPName,
     Callback = function(value)
         state.ESPName = value
+        if state.ESP then
+            for i = 1, #runtime.PlayerList do
+                ensureESP(runtime.PlayerList[i])
+            end
+        end
     end,
 })
 
@@ -1987,6 +2035,11 @@ UIElements.TogESPHealth = Tabs.Vis:Toggle({
     Value = state.ESPHealth,
     Callback = function(value)
         state.ESPHealth = value
+        if state.ESP then
+            for i = 1, #runtime.PlayerList do
+                ensureESP(runtime.PlayerList[i])
+            end
+        end
     end,
 })
 
@@ -1995,6 +2048,11 @@ UIElements.TogESPDistance = Tabs.Vis:Toggle({
     Value = state.ESPDistance,
     Callback = function(value)
         state.ESPDistance = value
+        if state.ESP then
+            for i = 1, #runtime.PlayerList do
+                ensureESP(runtime.PlayerList[i])
+            end
+        end
     end,
 })
 
@@ -2008,10 +2066,156 @@ UIElements.ColESP = Tabs.Vis:Colorpicker({
 })
 
 
-Tabs.Vis:Paragraph({
-    Title = "Rendimiento",
-    Desc = "El ESP actualiza a 10 Hz y reutiliza Highlight/Billboard; no crea objetos cada frame.",
+
+-- ==========================================
+-- MOVIMIENTO
+-- ==========================================
+
+Tabs.Mov:Section({Title = "Modo Fantasma"})
+
+local ghostHeartbeat = nil
+local ghostHidden = false
+local ghostOffset = 5000
+local ghostEnabled = false
+runtime.GhostOriginalTransparency = setmetatable({}, {__mode = "k"})
+
+function runtime.RestoreGhostTransparency(char)
+    if not char then return end
+
+    for part, original in pairs(runtime.GhostOriginalTransparency) do
+        if part and part.Parent and part:IsDescendantOf(char) then
+            pcall(function()
+                part.Transparency = original
+            end)
+        end
+        runtime.GhostOriginalTransparency[part] = nil
+    end
+end
+
+runtime.GhostCleanup = function()
+    if ghostHeartbeat then
+        pcall(function() ghostHeartbeat:Disconnect() end)
+        ghostHeartbeat = nil
+    end
+
+    pcall(function()
+        RunService:UnbindFromRenderStep("XeroMVSDGhost")
+    end)
+
+    local char = player.Character
+    local hrp = char and char:FindFirstChild("HumanoidRootPart")
+
+    if ghostHidden and hrp then
+        pcall(function()
+            hrp.CFrame = hrp.CFrame - Vector3.new(0, ghostOffset, 0)
+        end)
+        ghostHidden = false
+    end
+
+    runtime.RestoreGhostTransparency(char)
+    ghostEnabled = false
+end
+
+UIElements.TogGhostMode = Tabs.Mov:Toggle({
+    Title = "Modo Fantasma",
+    Desc = "Te hace invisible para los demás.",
+    Value = false,
+    Callback = function(value)
+        ghostEnabled = value == true
+
+        local char = player.Character
+        local hrp = char and char:FindFirstChild("HumanoidRootPart")
+        local hum = char and char:FindFirstChildOfClass("Humanoid")
+
+        if ghostEnabled then
+            if not char or not hrp or not hum or hum.Health <= 0 then
+                ghostEnabled = false
+                task.defer(function()
+                    if UIElements.TogGhostMode then
+                        pcall(function() UIElements.TogGhostMode:Set(false) end)
+                    end
+                end)
+                return
+            end
+
+            if ghostHeartbeat then
+                pcall(function() ghostHeartbeat:Disconnect() end)
+                ghostHeartbeat = nil
+            end
+
+            ghostHeartbeat = runtime.Track(RunService.Heartbeat:Connect(function()
+                if not ghostEnabled then return end
+
+                if not char.Parent or hum.Health <= 0 or not hrp.Parent then
+                    return
+                end
+
+                if not ghostHidden then
+                    hrp.AssemblyAngularVelocity = Vector3.zero
+                    hrp.CFrame = hrp.CFrame + Vector3.new(0, ghostOffset, 0)
+                    ghostHidden = true
+                end
+            end))
+
+            pcall(function()
+                RunService:UnbindFromRenderStep("XeroMVSDGhost")
+            end)
+
+            RunService:BindToRenderStep("XeroMVSDGhost", 150, function()
+                if not ghostEnabled then return end
+
+                if ghostHidden and hrp and hrp.Parent and hum and hum.Health > 0 then
+                    hrp.CFrame = hrp.CFrame - Vector3.new(0, ghostOffset, 0)
+                    ghostHidden = false
+                end
+            end)
+
+            for _, part in ipairs(char:GetDescendants()) do
+                if part:IsA("BasePart")
+                    and part.Name ~= "HumanoidRootPart"
+                    and not part:FindFirstAncestorWhichIsA("Tool")
+                then
+                    if runtime.GhostOriginalTransparency[part] == nil then
+                        runtime.GhostOriginalTransparency[part] = part.Transparency
+                    end
+                    part.Transparency = math.max(part.Transparency, 0.5)
+                end
+            end
+        else
+            if ghostHeartbeat then
+                pcall(function() ghostHeartbeat:Disconnect() end)
+                ghostHeartbeat = nil
+            end
+
+            pcall(function()
+                RunService:UnbindFromRenderStep("XeroMVSDGhost")
+            end)
+
+            if ghostHidden and hrp and hrp.Parent then
+                pcall(function()
+                    hrp.CFrame = hrp.CFrame - Vector3.new(0, ghostOffset, 0)
+                end)
+                ghostHidden = false
+            end
+
+            runtime.RestoreGhostTransparency(char)
+        end
+    end,
 })
+
+-- Evita quedar desplazado/invisible después de respawn.
+runtime.Track(player.CharacterAdded:Connect(function()
+    if not ghostEnabled then return end
+
+    ghostHidden = false
+    task.defer(function()
+        if UIElements.TogGhostMode then
+            pcall(function() UIElements.TogGhostMode:Set(false) end)
+        else
+            runtime.GhostCleanup()
+        end
+    end)
+end))
 
 -- ==========================================
 -- CONFIGURACIÓN
@@ -2019,17 +2223,12 @@ Tabs.Vis:Paragraph({
 
 Tabs.Config:Section({Title = "Personalización de Interfaz"})
 
-Tabs.Config:Paragraph({
-    Title = "Xero",
-    Desc = "Negro, blanco y la misma base visual usada por DUELS.",
-})
-
 local currentInterfaceTheme = (Window.GetTheme and Window:GetTheme()) or "Xero"
 runtime.InterfaceTheme = currentInterfaceTheme
 
 UIElements.ThemeDropdown = Tabs.Config:Dropdown({
     Title = "Tema de Interfaz",
-    Desc = "Cambia entre el tema oscuro de Xero y el tema blanco.",
+    Desc = "Cambia entre oscuro y blanco.",
     Values = {"Oscuro", "Blanco"},
     Value = currentInterfaceTheme == "Blanco" and "Blanco" or "Oscuro",
     Callback = function(value)
@@ -2047,7 +2246,7 @@ UIElements.ThemeDropdown = Tabs.Config:Dropdown({
 
 UIElements.ToggleOpenButtonGhost = Tabs.Config:Toggle({
     Title = "Ocultar Botón Flotante",
-    Desc = "Lo deja invisible pero conserva su zona para volver a abrir XeroHub.",
+    Desc = "Oculta el botón para abrir XeroHub.",
     Value = false,
     Callback = function(value)
         state.OpenButtonGhost = value == true
@@ -2055,13 +2254,6 @@ UIElements.ToggleOpenButtonGhost = Tabs.Config:Toggle({
             Window:SetOpenButtonGhosted(state.OpenButtonGhost)
         end
     end,
-})
-
-Tabs.Config:Section({Title = "Validación de partida"})
-
-Tabs.Config:Paragraph({
-    Title = "Lobby Guard",
-    Desc = "Silent Aim y ESP sólo corren cuando MVSD expone Match + MatchStartTime y Neutral=false.",
 })
 
 -- Gestor de configs adaptado de DUELS.
@@ -2193,7 +2385,7 @@ end
 
 autoLoadToggle = Tabs.Config:Toggle({
     Title = "Auto Load Config",
-    Desc = "Carga automáticamente la configuración seleccionada al ejecutar XeroHub.",
+    Desc = "Carga esta config al iniciar.",
     Value = autoLoadEnabled,
     Callback = function(value)
         if autoLoadSyncing then return end
@@ -2476,7 +2668,7 @@ Tabs.Config:Button({
 
 Tabs.Config:Button({
     Title = "Eliminar Configuración",
-    Desc = "Borra la configuración seleccionada del gestor MVSD.",
+    Desc = "Borra la config seleccionada.",
     Callback = function()
         if selectedConfig == "" or selectedConfig == "Ninguna" then
             runtime.Notify("Selecciona una configuración primero.", {Title = "XeroHub · Config"})
@@ -2653,6 +2845,10 @@ runtimeEnv.__XERO_MVSD_HUB_CLEANUP = function()
     state.ESP = false
     aimHookState.Target = nil
 
+    if runtime.GhostCleanup then
+        pcall(runtime.GhostCleanup)
+    end
+
     clearESP()
 
     if runtime.BodySelectorGui then
@@ -2685,4 +2881,4 @@ end
 
 refreshLobbyState()
 
-print("[XeroHub] MVSD cargado | Silent estable | Match State real | Team Check fijo | ESP sin límite de distancia")
+print("[XeroHub] MVSD cargado | Silent Aim | ESP | Ghost Mode | UI limpia")

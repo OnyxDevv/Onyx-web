@@ -1,7 +1,6 @@
 -- XeroHub | MVSD | Kev
 -- UI portada desde DUELS + selector corporal 2D + configs + ESP de ronda + Silent Aim + Auto Shoot independiente + FOV exclusivo de Silent Aim.
--- Silent Aim: Raycast/Mouse spoof estilo DUELS. Auto Shoot: Activate/Deactivate de DUELS
--- + fallback de clic real sólo si el LocalScript del arma no manda ShootGun.
+-- Método de Silent Aim: igual que Duels (Raycast/Mouse spoof), NO toca ShootGun:FireServer.
 
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
@@ -10,13 +9,6 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local TweenService = game:GetService("TweenService")
 local HttpService = game:GetService("HttpService")
 local MarketplaceService = game:GetService("MarketplaceService")
-
--- Fallback de entrada real: algunos guns reproducen la animación con Tool:Activate()
--- pero su LocalScript sólo manda ShootGun cuando recibe un clic real.
-local VirtualInputManager = nil
-pcall(function() VirtualInputManager = game:GetService("VirtualInputManager") end)
-local VirtualUser = nil
-pcall(function() VirtualUser = game:GetService("VirtualUser") end)
 
 local player = Players.LocalPlayer
 if not player then return end
@@ -46,10 +38,6 @@ local runtime = {
     Drawings = {},
     Highlights = {},
     Billboards = {},
-
-    -- Confirmación pasiva del disparo real del juego. No invocamos el Remote nosotros.
-    LastShootGunFireAt = 0,
-    AutoShotSerial = 0,
 }
 
 function runtime.Track(connection)
@@ -109,7 +97,7 @@ local state = {
     SilentAccumulator = 0,
     AutoAccumulator = 0,
     ESPAccumulator = 0,
-    AutoShootInterval = 0.15,
+    AutoShootInterval = 0.12,
 
     EquippedTool = nil,
     CombatMaxDistance = 800,
@@ -558,50 +546,6 @@ function runtime.CollectTargetParts(char, mode)
     return parts
 end
 
-local toolCache = {
-    Character = nil,
-    Tool = nil,
-    Added = nil,
-    Removed = nil,
-}
-
-local function bindEquippedToolCache(char)
-    if toolCache.Added then
-        pcall(function() toolCache.Added:Disconnect() end)
-        toolCache.Added = nil
-    end
-    if toolCache.Removed then
-        pcall(function() toolCache.Removed:Disconnect() end)
-        toolCache.Removed = nil
-    end
-
-    toolCache.Character = char
-    toolCache.Tool = char and char:FindFirstChildOfClass("Tool") or nil
-    state.EquippedTool = toolCache.Tool
-
-    if char then
-        toolCache.Added = runtime.Track(char.ChildAdded:Connect(function(child)
-            if child:IsA("Tool") then
-                toolCache.Tool = child
-                state.EquippedTool = child
-            end
-        end))
-
-        toolCache.Removed = runtime.Track(char.ChildRemoved:Connect(function(child)
-            if child == toolCache.Tool then
-                local replacement = char:FindFirstChildOfClass("Tool")
-                toolCache.Tool = replacement
-                state.EquippedTool = replacement
-            end
-        end))
-    end
-end
-
-runtime.Track(player.CharacterAdded:Connect(function(char)
-    bindEquippedToolCache(char)
-end))
-bindEquippedToolCache(player.Character)
-
 local function getEquippedTool()
     local char = player.Character
     if not char then
@@ -609,18 +553,12 @@ local function getEquippedTool()
         return nil
     end
 
-    if toolCache.Character ~= char then
-        bindEquippedToolCache(char)
-    end
-
-    local tool = toolCache.Tool
+    local tool = state.EquippedTool
     if tool and tool.Parent == char and tool:IsA("Tool") then
-        state.EquippedTool = tool
         return tool
     end
 
     tool = char:FindFirstChildOfClass("Tool")
-    toolCache.Tool = tool
     state.EquippedTool = tool
     return tool
 end
@@ -761,21 +699,10 @@ if not aimHookState then
     local oldNamecall
     oldNamecall = hookmetamethod(game, "__namecall", function(self, ...)
         local target = aimHookState.Target
-        local callerIsGame = not checkcaller()
-        local method = callerIsGame and getnamecallmethod() or nil
 
-        -- Sólo observamos el Remote para saber si Tool:Activate() produjo un tiro real.
-        -- No alteramos argumentos ni llamamos FireServer manualmente.
-        if callerIsGame and method == "FireServer" then
-            local okRemote, isShootGun = pcall(function()
-                return self:IsA("RemoteEvent") and self.Name == "ShootGun"
-            end)
-            if okRemote and isShootGun then
-                runtime.LastShootGunFireAt = os.clock()
-            end
-        end
+        if not checkcaller() and target and target.Parent then
+            local method = getnamecallmethod()
 
-        if callerIsGame and target and target.Parent then
             if self == workspace then
                 if method == "Raycast" then
                     local origin, direction, params = ...
@@ -1031,93 +958,6 @@ local function updateFOVCircle()
 end
 
 -- ==========================================
--- DISPARO AUTO | DUELS PRIMARIO + FALLBACK MVSD
--- ==========================================
-
-local function sendRealPrimaryClick()
-    local camera = workspace.CurrentCamera
-    local viewport = camera and camera.ViewportSize or Vector2.new(1280, 720)
-    local x = math.floor(viewport.X * 0.5)
-    local y = math.floor(viewport.Y * 0.5)
-
-    if VirtualInputManager then
-        local ok = pcall(function()
-            VirtualInputManager:SendMouseButtonEvent(x, y, 0, true, game, 0)
-            task.delay(0.012, function()
-                if runtime.Alive then
-                    pcall(function()
-                        VirtualInputManager:SendMouseButtonEvent(x, y, 0, false, game, 0)
-                    end)
-                end
-            end)
-        end)
-        if ok then return true end
-    end
-
-    if VirtualUser then
-        local ok = pcall(function()
-            VirtualUser:CaptureController()
-            VirtualUser:ClickButton1(Vector2.new(x, y))
-        end)
-        if ok then return true end
-    end
-
-    if type(mouse1click) == "function" then
-        return pcall(mouse1click)
-    end
-
-    return false
-end
-
-local function fireToolLikeDuels(tool, char)
-    if not runtime.Alive or not tool or not char or tool.Parent ~= char then
-        return false
-    end
-
-    -- DUELS exige Handle antes de intentar disparar.
-    if not tool:FindFirstChild("Handle") then
-        return false
-    end
-
-    runtime.AutoShotSerial = (runtime.AutoShotSerial or 0) + 1
-    local serial = runtime.AutoShotSerial
-    local remoteStampBefore = runtime.LastShootGunFireAt or 0
-
-    -- Método de DUELS: Activate() y Deactivate() 0.02 s después.
-    local activated = pcall(function()
-        tool:Activate()
-    end)
-
-    task.delay(0.02, function()
-        if runtime.Alive and serial == runtime.AutoShotSerial
-            and tool and tool.Parent == char
-        then
-            pcall(function() tool:Deactivate() end)
-        end
-    end)
-
-    if not activated then
-        return false
-    end
-
-    -- MVSD/ShootGun puede animar Activate() sin mandar el disparo real.
-    -- Damos margen para que el LocalScript mande ShootGun por sí solo.
-    task.delay(0.04, function()
-        if not runtime.Alive or serial ~= runtime.AutoShotSerial
-            or not tool or tool.Parent ~= char
-        then
-            return
-        end
-
-        if (runtime.LastShootGunFireAt or 0) <= remoteStampBefore then
-            sendRealPrimaryClick()
-        end
-    end)
-
-    return true
-end
-
--- ==========================================
 -- MASTER LOOP
 -- ==========================================
 
@@ -1179,8 +1019,10 @@ runtime.Track(RunService.Heartbeat:Connect(function(dt)
         end
     end
 
-    -- Auto Shoot: mismo esquema de DUELS. Su selección corporal es independiente
-    -- y NUNCA usa FOV; el fallback sólo entra si Activate() no produjo ShootGun.
+    -- Auto Shoot usa SU selección corporal y nunca usa el FOV.
+    -- ÚNICO cambio respecto a la versión estable: el disparo entra por el mismo
+    -- input primario que usa el arma al disparar manualmente. Así el LocalScript
+    -- original conserva munición/contador/cooldown; Tool:Activate() sólo es fallback.
     if state.AutoShoot then
         state.AutoAccumulator = state.AutoAccumulator + dt
 
@@ -1188,10 +1030,9 @@ runtime.Track(RunService.Heartbeat:Connect(function(dt)
             state.AutoAccumulator = 0
 
             if not state.InLobby then
-                local char = player.Character
                 local tool = getEquippedTool()
 
-                if char and tool and tool.Parent == char and tool:FindFirstChild("Handle") then
+                if tool then
                     local plr, part = chooseTarget("AutoShoot", false)
 
                     state.AutoTargetPlayer = plr
@@ -1199,7 +1040,44 @@ runtime.Track(RunService.Heartbeat:Connect(function(dt)
 
                     if part then
                         aimHookState.Target = part
-                        fireToolLikeDuels(tool, char)
+
+                        local firedByInput = false
+
+                        -- Preferimos el clic real del ejecutor: activa el mismo camino
+                        -- del arma que un disparo manual y deja que el juego cuente el tiro.
+                        if type(mouse1click) == "function" then
+                            firedByInput = pcall(mouse1click)
+                        elseif type(mouse1press) == "function"
+                            and type(mouse1release) == "function"
+                        then
+                            firedByInput = pcall(mouse1press)
+
+                            if firedByInput then
+                                task.delay(0.02, function()
+                                    if runtime.Alive then
+                                        pcall(mouse1release)
+                                    end
+                                end)
+                            end
+                        end
+
+                        -- Ejecutores sin input de mouse: conserva el método DUELS.
+                        if not firedByInput then
+                            pcall(function()
+                                tool:Activate()
+
+                                task.delay(0.02, function()
+                                    if runtime.Alive
+                                        and tool
+                                        and tool.Parent == player.Character
+                                    then
+                                        pcall(function()
+                                            tool:Deactivate()
+                                        end)
+                                    end
+                                end)
+                            end)
+                        end
                     else
                         aimHookState.Target = state.SilentAim and state.SilentTarget or nil
                     end

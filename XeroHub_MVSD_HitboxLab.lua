@@ -1,8 +1,11 @@
--- XeroHub | MVSD Shoot Cadence Lab | Kev
--- Passive only: records natural ShootGun calls and timing.
--- Does NOT call FireServer and does NOT modify shots.
+-- XeroHub | MVSD Double-Shot Lab | Kev
+-- Controlled server cooldown probe:
+-- Captures ONE natural ShootGun call, repeats it ONCE after a short delay,
+-- then auto-disarms. No continuous spam.
 
 local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local player = Players.LocalPlayer
 while not player do
@@ -12,15 +15,20 @@ end
 
 local env = (getgenv and getgenv()) or _G
 
-if env.__XERO_MVSD_CADENCE_CLEANUP then
-    pcall(env.__XERO_MVSD_CADENCE_CLEANUP)
+if env.__XERO_MVSD_DOUBLESHOT_CLEANUP then
+    pcall(env.__XERO_MVSD_DOUBLESHOT_CLEANUP)
 end
 
 local state = {
     Alive = true,
-    Capturing = false,
-    Shots = {},
+    Armed = false,
+    Delay = 0.18,
+    Connections = {},
     Lines = {},
+    Pending = false,
+    LastNaturalAt = 0,
+    LastReplayAt = 0,
+    ReplayCount = 0,
 }
 
 local function push(s)
@@ -51,77 +59,138 @@ local function pathOf(inst)
 end
 
 local function vec3(v)
-    return string.format(
-        "(%.3f, %.3f, %.3f)",
-        v.X, v.Y, v.Z
-    )
+    return string.format("(%.3f, %.3f, %.3f)", v.X, v.Y, v.Z)
 end
 
-local hookState = env.__XERO_MVSD_CADENCE_HOOK
+local function getHumanoidFromHit(hit)
+    if typeof(hit) ~= "Instance" then
+        return nil, nil
+    end
+
+    local node = hit
+    for _ = 1, 6 do
+        if not node then break end
+
+        local hum = node:FindFirstChildOfClass("Humanoid")
+        if hum then
+            return hum, node
+        end
+
+        node = node.Parent
+    end
+
+    return nil, nil
+end
+
+local hookState = env.__XERO_MVSD_DOUBLESHOT_HOOK
 
 if type(hookState) ~= "table" then
     hookState = {Current = state}
-    env.__XERO_MVSD_CADENCE_HOOK = hookState
+    env.__XERO_MVSD_DOUBLESHOT_HOOK = hookState
 
     local oldNamecall
     oldNamecall = hookmetamethod(game, "__namecall", function(self, ...)
-        local shared = env.__XERO_MVSD_CADENCE_HOOK
+        local shared = env.__XERO_MVSD_DOUBLESHOT_HOOK
         local s = shared and shared.Current
 
-        if s and s.Alive and s.Capturing and not checkcaller() then
+        if s
+            and s.Alive
+            and s.Armed
+            and not s.Pending
+            and not checkcaller()
+        then
             local method = getnamecallmethod()
 
             if self.ClassName == "RemoteEvent"
-                and method == "FireServer"
                 and self.Name == "ShootGun"
+                and method == "FireServer"
             then
                 local args = table.pack(...)
-                local stamp = os.clock()
+                local naturalAt = os.clock()
+
+                s.Pending = true
+                s.Armed = false
+                s.LastNaturalAt = naturalAt
 
                 task.defer(function()
-                    local active = env.__XERO_MVSD_CADENCE_HOOK
+                    local active = env.__XERO_MVSD_DOUBLESHOT_HOOK
                     if not active or active.Current ~= s or not s.Alive then
                         return
                     end
 
-                    local previous = s.Shots[#s.Shots]
-                    local delta = previous and (stamp - previous.Time) or nil
+                    local hitPart = args[3]
+                    local hum, char = getHumanoidFromHit(hitPart)
+                    local beforeHealth = hum and hum.Health or nil
 
-                    local shot = {
-                        Time = stamp,
-                        Delta = delta,
-                        Origin = args[1],
-                        Aim = args[2],
-                        HitPart = args[3],
-                        HitPosition = args[4],
-                    }
-
-                    s.Shots[#s.Shots + 1] = shot
-
-                    push(
-                        ("SHOT %d%s"):format(
-                            #s.Shots,
-                            delta and (" · Δ " .. string.format("%.4f s", delta)) or ""
-                        )
-                    )
+                    push(string.rep("=", 56))
+                    push("[NATURAL SHOT]")
+                    push("t = " .. string.format("%.6f", naturalAt))
 
                     if typeof(args[1]) == "Vector3" then
-                        push("  Origin: " .. vec3(args[1]))
+                        push("Origin: " .. vec3(args[1]))
                     end
 
                     if typeof(args[2]) == "Vector3" then
-                        push("  Aim: " .. vec3(args[2]))
+                        push("Aim: " .. vec3(args[2]))
                     end
 
-                    if typeof(args[3]) == "Instance" then
-                        push("  Hit: " .. pathOf(args[3]))
-                    else
-                        push("  Hit: " .. tostring(args[3]))
-                    end
+                    push("Hit: " .. pathOf(hitPart))
 
                     if typeof(args[4]) == "Vector3" then
-                        push("  HitPos: " .. vec3(args[4]))
+                        push("HitPos: " .. vec3(args[4]))
                     end
+
+                    if hum then
+                        push("Target: " .. tostring(char and char.Name or "?"))
+                        push("Health antes: " .. tostring(beforeHealth))
+                    else
+                        push("Target humanoid: no detectado")
+                    end
+
+                    push("Replay programado en: " .. string.format("%.3f s", s.Delay))
+
+                    task.delay(s.Delay, function()
+                        local current = env.__XERO_MVSD_DOUBLESHOT_HOOK
+                        if not current or current.Current ~= s or not s.Alive then
+                            s.Pending = false
+                            return
+                        end
+
+                        local replayAt = os.clock()
+                        s.LastReplayAt = replayAt
+                        s.ReplayCount += 1
+
+                        local ok, err = pcall(function()
+                            self:FireServer(table.unpack(args, 1, args.n))
+                        end)
+
+                        push("")
+                        push("[REPLAY SHOT]")
+                        push("t = " .. string.format("%.6f", replayAt))
+                        push(
+                            "Δ real = "
+                            .. string.format("%.4f s", replayAt - naturalAt)
+                        )
+                        push("FireServer: " .. (ok and "OK" or ("ERROR: " .. tostring(err))))
+
+                        task.delay(0.45, function()
+                            if not s.Alive then return end
+
+                            if hum and hum.Parent then
+                                push("Health después: " .. tostring(hum.Health))
+
+                                if beforeHealth ~= nil then
+                                    push(
+                                        "Cambio de vida observado: "
+                                        .. tostring(beforeHealth - hum.Health)
+                                    )
+                                end
+                            end
+
+                            push("Prueba terminada. Se desarmó automáticamente.")
+                            s.Pending = false
+                        end)
+                    end)
                 end)
             end
         end
@@ -132,61 +201,24 @@ else
     hookState.Current = state
 end
 
-local function summarize()
-    local n = #state.Shots
-
-    push(string.rep("=", 52))
-    push("[RESUMEN]")
-    push("Disparos capturados: " .. tostring(n))
-
-    if n < 2 then
-        push("No hay suficientes tiros para calcular cadencia.")
-        return
-    end
-
-    local sum = 0
-    local minDelta = math.huge
-    local maxDelta = 0
-    local count = 0
-
-    for i = 2, n do
-        local d = state.Shots[i].Delta
-        if d then
-            sum += d
-            count += 1
-
-            if d < minDelta then
-                minDelta = d
-            end
-
-            if d > maxDelta then
-                maxDelta = d
-            end
-        end
-    end
-
-    local avg = count > 0 and (sum / count) or 0
-
-    push("Δ mínimo: " .. string.format("%.4f s", minDelta))
-    push("Δ promedio: " .. string.format("%.4f s", avg))
-    push("Δ máximo: " .. string.format("%.4f s", maxDelta))
-
-    if minDelta > 0 then
-        push("Máx. observado aprox: " .. string.format("%.2f disparos/s", 1 / minDelta))
-    end
-end
-
+-- =========================
 -- UI
+-- =========================
+
 local guiParent = player:WaitForChild("PlayerGui")
 pcall(function()
-    if gethui then guiParent = gethui() end
+    if gethui then
+        guiParent = gethui()
+    end
 end)
 
-local oldGui = guiParent:FindFirstChild("XeroMVSDShootCadenceLab")
-if oldGui then oldGui:Destroy() end
+local oldGui = guiParent:FindFirstChild("XeroMVSDDoubleShotLab")
+if oldGui then
+    oldGui:Destroy()
+end
 
 local gui = Instance.new("ScreenGui")
-gui.Name = "XeroMVSDShootCadenceLab"
+gui.Name = "XeroMVSDDoubleShotLab"
 gui.ResetOnSpawn = false
 gui.IgnoreGuiInset = true
 gui.DisplayOrder = 2147483647
@@ -195,7 +227,7 @@ gui.Parent = guiParent
 local frame = Instance.new("Frame")
 frame.AnchorPoint = Vector2.new(0.5, 0.5)
 frame.Position = UDim2.fromScale(0.5, 0.5)
-frame.Size = UDim2.fromOffset(430, 360)
+frame.Size = UDim2.fromOffset(440, 390)
 frame.BackgroundColor3 = Color3.fromRGB(8, 8, 8)
 frame.BorderSizePixel = 0
 frame.Parent = gui
@@ -210,7 +242,7 @@ local title = Instance.new("TextLabel")
 title.Position = UDim2.fromOffset(16, 12)
 title.Size = UDim2.new(1, -32, 0, 26)
 title.BackgroundTransparency = 1
-title.Text = "XERO | MVSD SHOOT CADENCE"
+title.Text = "XERO | MVSD DOUBLE-SHOT LAB"
 title.TextColor3 = Color3.fromRGB(245, 245, 245)
 title.Font = Enum.Font.GothamBold
 title.TextSize = 17
@@ -221,7 +253,7 @@ local subtitle = Instance.new("TextLabel")
 subtitle.Position = UDim2.fromOffset(16, 38)
 subtitle.Size = UDim2.new(1, -32, 0, 18)
 subtitle.BackgroundTransparency = 1
-subtitle.Text = "Medición pasiva de ShootGun · by Kev"
+subtitle.Text = "Prueba controlada de cooldown · by Kev"
 subtitle.TextColor3 = Color3.fromRGB(125, 125, 125)
 subtitle.Font = Enum.Font.Gotham
 subtitle.TextSize = 11
@@ -230,15 +262,31 @@ subtitle.Parent = frame
 
 local status = Instance.new("TextLabel")
 status.Position = UDim2.fromOffset(16, 68)
-status.Size = UDim2.new(1, -32, 0, 44)
+status.Size = UDim2.new(1, -32, 0, 48)
 status.BackgroundColor3 = Color3.fromRGB(14, 14, 14)
 status.TextColor3 = Color3.fromRGB(220, 220, 220)
 status.Font = Enum.Font.GothamMedium
 status.TextSize = 11
 status.TextWrapped = true
-status.Text = "Pulsa INICIAR y dispara 5–10 veces tan rápido como permita el juego."
+status.Text = "Desarmado · delay 0.18 s"
 status.Parent = frame
 Instance.new("UICorner", status).CornerRadius = UDim.new(0, 10)
+
+local function refreshStatus()
+    if state.Pending then
+        status.Text = "PRUEBA EN CURSO · esperando replay/resultado"
+    elseif state.Armed then
+        status.Text = (
+            "ARMADO · haz UN disparo normal · replay único en "
+            .. string.format("%.2f s", state.Delay)
+        )
+    else
+        status.Text = (
+            "Desarmado · delay "
+            .. string.format("%.2f s", state.Delay)
+        )
+    end
+end
 
 local function button(label, x, y, w, cb)
     local b = Instance.new("TextButton")
@@ -253,27 +301,49 @@ local function button(label, x, y, w, cb)
     b.Parent = frame
     Instance.new("UICorner", b).CornerRadius = UDim.new(0, 10)
     b.Activated:Connect(cb)
+    return b
 end
 
-button("INICIAR", 16, 126, 124, function()
-    table.clear(state.Shots)
-    table.clear(state.Lines)
-    state.Capturing = true
+button("ARMAR DOBLE", 16, 132, 126, function()
+    if state.Pending then
+        refreshStatus()
+        return
+    end
 
-    push("[SYSTEM]")
-    push("Captura iniciada.")
-    push("Dispara 5–10 veces tan rápido como permita el arma.")
-
-    status.Text = "CAPTURANDO · dispara normalmente."
+    state.Armed = true
+    push("[SYSTEM] Prueba armada.")
+    refreshStatus()
 end)
 
-button("DETENER", 153, 126, 124, function()
-    state.Capturing = false
-    summarize()
-    status.Text = "Captura detenida."
+button("0.10 s", 156, 132, 80, function()
+    if not state.Pending then
+        state.Delay = 0.10
+        refreshStatus()
+    end
 end)
 
-button("COPIAR TODO", 290, 126, 124, function()
+button("0.18 s", 246, 132, 80, function()
+    if not state.Pending then
+        state.Delay = 0.18
+        refreshStatus()
+    end
+end)
+
+button("0.30 s", 336, 132, 88, function()
+    if not state.Pending then
+        state.Delay = 0.30
+        refreshStatus()
+    end
+end)
+
+button("LIMPIAR", 16, 180, 126, function()
+    if not state.Pending then
+        table.clear(state.Lines)
+        refreshStatus()
+    end
+end)
+
+button("COPIAR TODO", 156, 180, 268, function()
     local data = table.concat(state.Lines, "\n")
     local clip = setclipboard or toclipboard
 
@@ -288,8 +358,8 @@ button("COPIAR TODO", 290, 126, 124, function()
 end)
 
 local preview = Instance.new("TextLabel")
-preview.Position = UDim2.fromOffset(16, 178)
-preview.Size = UDim2.new(1, -32, 1, -194)
+preview.Position = UDim2.fromOffset(16, 232)
+preview.Size = UDim2.new(1, -32, 1, -248)
 preview.BackgroundColor3 = Color3.fromRGB(11, 11, 11)
 preview.TextColor3 = Color3.fromRGB(150, 150, 150)
 preview.Font = Enum.Font.Code
@@ -297,18 +367,20 @@ preview.TextSize = 10
 preview.TextWrapped = true
 preview.TextXAlignment = Enum.TextXAlignment.Left
 preview.TextYAlignment = Enum.TextYAlignment.Top
-preview.Text = "Esperando captura..."
+preview.Text = "Esperando prueba..."
 preview.Parent = frame
 Instance.new("UICorner", preview).CornerRadius = UDim.new(0, 10)
 
 task.spawn(function()
     while state.Alive do
+        refreshStatus()
+
         local n = #state.Lines
 
         if n == 0 then
-            preview.Text = "Esperando captura..."
+            preview.Text = "Esperando prueba..."
         else
-            local first = math.max(1, n - 14)
+            local first = math.max(1, n - 16)
             local lines = {}
 
             for i = first, n do
@@ -318,15 +390,18 @@ task.spawn(function()
             preview.Text = table.concat(lines, "\n")
         end
 
-        task.wait(0.12)
+        task.wait(0.10)
     end
 end)
 
 local function cleanup()
-    if not state.Alive then return end
+    if not state.Alive then
+        return
+    end
 
     state.Alive = false
-    state.Capturing = false
+    state.Armed = false
+    state.Pending = false
 
     if hookState and hookState.Current == state then
         hookState.Current = nil
@@ -337,8 +412,6 @@ local function cleanup()
     end)
 end
 
-env.__XERO_MVSD_CADENCE_CLEANUP = cleanup
+env.__XERO_MVSD_DOUBLESHOT_CLEANUP = cleanup
 
-print("[XeroHub] MVSD Shoot Cadence Lab cargado | Passive | by Kev")
-
-
+print("[XeroHub] MVSD Double-Shot Lab cargado | One replay only | by Kev")

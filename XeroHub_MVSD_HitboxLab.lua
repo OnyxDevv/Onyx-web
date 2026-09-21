@@ -1,9 +1,13 @@
--- XeroHub | MVSD RapidFire Lab | Kev
--- Bounded burst tester. No infinite loop.
--- Captures ONE natural ShootGun call, then repeats it a fixed number of times.
+-- XeroHub | MVSD Local Shot Lab | Kev
+-- Passive inspector for local shot effects.
+-- Logs Tool.Activated, Sound.Played, Animator.AnimationPlayed,
+-- ParticleEmitter:Emit, new Beam/Trail/Part/Sound instances, and ShootGun timing.
+-- Does NOT alter shots.
 
 local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
+local Workspace = game:GetService("Workspace")
 
 local player = Players.LocalPlayer
 while not player do
@@ -13,20 +17,26 @@ end
 
 local env = (getgenv and getgenv()) or _G
 
-if env.__XERO_MVSD_RAPIDFIRE_CLEANUP then
-    pcall(env.__XERO_MVSD_RAPIDFIRE_CLEANUP)
+if env.__XERO_MVSD_LOCALSHOT_CLEANUP then
+    pcall(env.__XERO_MVSD_LOCALSHOT_CLEANUP)
 end
 
 local state = {
     Alive = true,
     Armed = false,
-    Pending = false,
-
-    Interval = 0.05,
-    Count = 8,
-
+    ShotAt = 0,
+    CaptureUntil = 0,
+    Connections = {},
+    Bound = setmetatable({}, {__mode = "k"}),
     Lines = {},
 }
+
+local function track(c)
+    if c then
+        state.Connections[#state.Connections + 1] = c
+    end
+    return c
+end
 
 local function push(s)
     state.Lines[#state.Lines + 1] = tostring(s)
@@ -37,148 +47,250 @@ local function pathOf(inst)
         return tostring(inst)
     end
 
-    local parts = {}
+    local names = {}
     local node = inst
     local guard = 0
 
     while node and guard < 64 do
         guard += 1
-        parts[#parts + 1] = tostring(node.Name)
+        names[#names + 1] = tostring(node.Name)
         node = node.Parent
     end
 
     local out = {}
-    for i = #parts, 1, -1 do
-        out[#out + 1] = parts[i]
+    for i = #names, 1, -1 do
+        out[#out + 1] = names[i]
     end
 
     return table.concat(out, ".")
 end
 
-local function vec3(v)
-    return string.format("(%.3f, %.3f, %.3f)", v.X, v.Y, v.Z)
+local function delta()
+    return os.clock() - state.ShotAt
 end
 
-local hookState = env.__XERO_MVSD_RAPIDFIRE_HOOK
+local function active()
+    return state.Armed and state.CaptureUntil > 0 and os.clock() <= state.CaptureUntil
+end
+
+local function beginShot(source)
+    if not state.Armed then return end
+
+    state.ShotAt = os.clock()
+    state.CaptureUntil = state.ShotAt + 0.80
+
+    push(string.rep("=", 58))
+    push("[SHOT]")
+    push("Fuente: " .. tostring(source))
+    push("t = " .. string.format("%.6f", state.ShotAt))
+end
+
+local function bindSound(sound)
+    if not sound:IsA("Sound") or state.Bound[sound] then return end
+
+    state.Bound[sound] = true
+
+    track(sound.Played:Connect(function()
+        if not active() then return end
+
+        push("")
+        push("[SOUND · Δ " .. string.format("%+.4f s", delta()) .. "]")
+        push("Ruta: " .. pathOf(sound))
+        push("SoundId: " .. tostring(sound.SoundId))
+        push("Volume: " .. tostring(sound.Volume))
+        push("PlaybackSpeed: " .. tostring(sound.PlaybackSpeed))
+    end))
+end
+
+local function bindAnimator(animator)
+    if not animator:IsA("Animator") or state.Bound[animator] then return end
+
+    state.Bound[animator] = true
+
+    track(animator.AnimationPlayed:Connect(function(trackObj)
+        if not active() then return end
+
+        local anim = trackObj.Animation
+
+        push("")
+        push("[ANIMATION · Δ " .. string.format("%+.4f s", delta()) .. "]")
+        push("Animator: " .. pathOf(animator))
+        push("Track: " .. tostring(trackObj.Name))
+        push("AnimationId: " .. tostring(anim and anim.AnimationId))
+        push("Priority: " .. tostring(trackObj.Priority))
+    end))
+end
+
+local function bindObject(obj)
+    if obj:IsA("Sound") then
+        bindSound(obj)
+    elseif obj:IsA("Animator") then
+        bindAnimator(obj)
+    end
+end
+
+local function scan(container)
+    if not container then return end
+
+    for _, obj in ipairs(container:GetDescendants()) do
+        bindObject(obj)
+    end
+end
+
+local function getEquippedTool()
+    local char = player.Character
+    return char and char:FindFirstChildOfClass("Tool")
+end
+
+local function bindTool(tool)
+    if not tool or not tool:IsA("Tool") then return end
+    if state.Bound[tool] then return end
+
+    state.Bound[tool] = true
+
+    track(tool.Activated:Connect(function()
+        beginShot("Tool.Activated · " .. tostring(tool.Name))
+    end))
+end
+
+local function scanTools(container)
+    if not container then return end
+
+    for _, child in ipairs(container:GetChildren()) do
+        if child:IsA("Tool") then
+            bindTool(child)
+        end
+    end
+end
+
+local function bindCharacter(char)
+    if not char then return end
+
+    scan(char)
+    scanTools(char)
+
+    track(char.DescendantAdded:Connect(function(obj)
+        bindObject(obj)
+
+        if active() then
+            if obj:IsA("Beam")
+                or obj:IsA("Trail")
+                or obj:IsA("ParticleEmitter")
+                or obj:IsA("Attachment")
+                or obj:IsA("Part")
+                or obj:IsA("MeshPart")
+                or obj:IsA("Sound")
+            then
+                push("")
+                push("[CHAR ADD · Δ " .. string.format("%+.4f s", delta()) .. "]")
+                push("Clase: " .. obj.ClassName)
+                push("Ruta: " .. pathOf(obj))
+            end
+        end
+    end))
+end
+
+if player.Character then
+    bindCharacter(player.Character)
+end
+
+track(player.CharacterAdded:Connect(bindCharacter))
+
+local backpack = player:FindFirstChildOfClass("Backpack")
+if backpack then
+    scan(backpack)
+    scanTools(backpack)
+
+    track(backpack.DescendantAdded:Connect(function(obj)
+        bindObject(obj)
+        if obj:IsA("Tool") then bindTool(obj) end
+    end))
+end
+
+local playerGui = player:WaitForChild("PlayerGui")
+scan(playerGui)
+
+track(playerGui.DescendantAdded:Connect(function(obj)
+    bindObject(obj)
+
+    if active() and (
+        obj:IsA("Sound")
+        or obj:IsA("Frame")
+        or obj:IsA("ImageLabel")
+        or obj:IsA("ParticleEmitter")
+    ) then
+        push("")
+        push("[GUI ADD · Δ " .. string.format("%+.4f s", delta()) .. "]")
+        push("Clase: " .. obj.ClassName)
+        push("Ruta: " .. pathOf(obj))
+    end
+end))
+
+scan(Workspace)
+
+track(Workspace.DescendantAdded:Connect(function(obj)
+    bindObject(obj)
+
+    if active() and (
+        obj:IsA("Beam")
+        or obj:IsA("Trail")
+        or obj:IsA("ParticleEmitter")
+        or obj:IsA("Attachment")
+        or obj:IsA("Part")
+        or obj:IsA("MeshPart")
+        or obj:IsA("Sound")
+    ) then
+        push("")
+        push("[WORKSPACE ADD · Δ " .. string.format("%+.4f s", delta()) .. "]")
+        push("Clase: " .. obj.ClassName)
+        push("Ruta: " .. pathOf(obj))
+    end
+end))
+
+-- Passive namecall hook for Emit/Play/ShootGun.
+local hookState = env.__XERO_MVSD_LOCALSHOT_HOOK
 
 if type(hookState) ~= "table" then
     hookState = {Current = state}
-    env.__XERO_MVSD_RAPIDFIRE_HOOK = hookState
+    env.__XERO_MVSD_LOCALSHOT_HOOK = hookState
 
     local oldNamecall
     oldNamecall = hookmetamethod(game, "__namecall", function(self, ...)
-        local shared = env.__XERO_MVSD_RAPIDFIRE_HOOK
+        local shared = env.__XERO_MVSD_LOCALSHOT_HOOK
         local s = shared and shared.Current
 
-        if s
-            and s.Alive
-            and s.Armed
-            and not s.Pending
-            and not checkcaller()
-        then
+        if s and s.Alive and not checkcaller() then
             local method = getnamecallmethod()
 
-            if self.ClassName == "RemoteEvent"
+            if s.Armed and method == "FireServer"
+                and self.ClassName == "RemoteEvent"
                 and self.Name == "ShootGun"
-                and method == "FireServer"
             then
-                local args = table.pack(...)
-                local naturalAt = os.clock()
+                if s.ShotAt == 0 or os.clock() > s.CaptureUntil then
+                    beginShot("ShootGun:FireServer")
+                end
 
-                s.Armed = false
-                s.Pending = true
+                push("")
+                push("[SHOOTGUN · Δ " .. string.format("%+.4f s", delta()) .. "]")
+                push("Ruta: " .. pathOf(self))
 
-                task.defer(function()
-                    if not s.Alive then return end
+            elseif active() and method == "Emit"
+                and self.ClassName == "ParticleEmitter"
+            then
+                local amount = ...
 
-                    push(string.rep("=", 58))
-                    push("[NATURAL SHOT CAPTURED]")
-                    push("t = " .. string.format("%.6f", naturalAt))
-                    push("Remote: " .. pathOf(self))
+                push("")
+                push("[PARTICLE EMIT · Δ " .. string.format("%+.4f s", delta()) .. "]")
+                push("Ruta: " .. pathOf(self))
+                push("Cantidad: " .. tostring(amount))
 
-                    if typeof(args[1]) == "Vector3" then
-                        push("Origin: " .. vec3(args[1]))
-                    end
-
-                    push("Hit: " .. pathOf(args[3]))
-
-                    if typeof(args[4]) == "Vector3" then
-                        push("HitPos: " .. vec3(args[4]))
-                    end
-
-                    push(
-                        "Burst: "
-                        .. tostring(s.Count)
-                        .. " replay(s) cada "
-                        .. string.format("%.3f s", s.Interval)
-                    )
-
-                    local startedAt = os.clock()
-                    local sent = 0
-                    local errors = 0
-
-                    for i = 1, s.Count do
-                        if not s.Alive then break end
-
-                        task.wait(s.Interval)
-
-                        local stamp = os.clock()
-
-                        local ok, err = pcall(function()
-                            self:FireServer(
-                                table.unpack(args, 1, args.n)
-                            )
-                        end)
-
-                        if ok then
-                            sent += 1
-                            push(
-                                ("Replay %d/%d · Δ %.4f s · OK"):format(
-                                    i,
-                                    s.Count,
-                                    stamp - naturalAt
-                                )
-                            )
-                        else
-                            errors += 1
-                            push(
-                                ("Replay %d/%d · ERROR: %s"):format(
-                                    i,
-                                    s.Count,
-                                    tostring(err)
-                                )
-                            )
-                        end
-                    end
-
-                    local endedAt = os.clock()
-
-                    push("")
-                    push("[RESUMEN]")
-                    push("Enviados OK: " .. tostring(sent))
-                    push("Errores cliente: " .. tostring(errors))
-                    push(
-                        "Duración burst: "
-                        .. string.format("%.4f s", endedAt - startedAt)
-                    )
-
-                    if endedAt > startedAt and sent > 0 then
-                        push(
-                            "Cadencia enviada aprox: "
-                            .. string.format(
-                                "%.2f llamadas/s",
-                                sent / (endedAt - startedAt)
-                            )
-                        )
-                    end
-
-                    push(
-                        "Ojo: FireServer=OK solo confirma envío desde cliente; "
-                        .. "mira si el juego muestra múltiples tracers/sonidos."
-                    )
-
-                    s.Pending = false
-                end)
+            elseif active() and method == "Play"
+                and self.ClassName == "Sound"
+            then
+                push("")
+                push("[SOUND:PLAY · Δ " .. string.format("%+.4f s", delta()) .. "]")
+                push("Ruta: " .. pathOf(self))
+                push("SoundId: " .. tostring(self.SoundId))
             end
         end
 
@@ -188,24 +300,28 @@ else
     hookState.Current = state
 end
 
--- =========================
--- UI
--- =========================
+-- Mouse1 fallback
+track(UserInputService.InputBegan:Connect(function(input, processed)
+    if processed or not state.Armed then return end
 
-local guiParent = player:WaitForChild("PlayerGui")
-pcall(function()
-    if gethui then
-        guiParent = gethui()
+    if input.UserInputType == Enum.UserInputType.MouseButton1
+        and getEquippedTool()
+    then
+        beginShot("MouseButton1")
     end
+end))
+
+-- UI
+local guiParent = playerGui
+pcall(function()
+    if gethui then guiParent = gethui() end
 end)
 
-local oldGui = guiParent:FindFirstChild("XeroMVSDRapidFireLab")
-if oldGui then
-    oldGui:Destroy()
-end
+local oldGui = guiParent:FindFirstChild("XeroMVSDLocalShotLab")
+if oldGui then oldGui:Destroy() end
 
 local gui = Instance.new("ScreenGui")
-gui.Name = "XeroMVSDRapidFireLab"
+gui.Name = "XeroMVSDLocalShotLab"
 gui.ResetOnSpawn = false
 gui.IgnoreGuiInset = true
 gui.DisplayOrder = 2147483647
@@ -214,14 +330,14 @@ gui.Parent = guiParent
 local frame = Instance.new("Frame")
 frame.AnchorPoint = Vector2.new(0.5, 0.5)
 frame.Position = UDim2.fromScale(0.5, 0.5)
-frame.Size = UDim2.fromOffset(450, 430)
+frame.Size = UDim2.fromOffset(450, 410)
 frame.BackgroundColor3 = Color3.fromRGB(8, 8, 8)
 frame.BorderSizePixel = 0
 frame.Parent = gui
 Instance.new("UICorner", frame).CornerRadius = UDim.new(0, 16)
 
 local stroke = Instance.new("UIStroke")
-stroke.Color = Color3.fromRGB(55, 55, 55)
+stroke.Color = Color3.fromRGB(55,55,55)
 stroke.Transparency = 0.2
 stroke.Parent = frame
 
@@ -229,8 +345,8 @@ local title = Instance.new("TextLabel")
 title.Position = UDim2.fromOffset(16, 12)
 title.Size = UDim2.new(1, -32, 0, 26)
 title.BackgroundTransparency = 1
-title.Text = "XERO | MVSD RAPIDFIRE LAB"
-title.TextColor3 = Color3.fromRGB(245, 245, 245)
+title.Text = "XERO | MVSD LOCAL SHOT LAB"
+title.TextColor3 = Color3.fromRGB(245,245,245)
 title.Font = Enum.Font.GothamBold
 title.TextSize = 17
 title.TextXAlignment = Enum.TextXAlignment.Left
@@ -241,8 +357,8 @@ local subtitle = Instance.new("TextLabel")
 subtitle.Position = UDim2.fromOffset(16, 38)
 subtitle.Size = UDim2.new(1, -32, 0, 18)
 subtitle.BackgroundTransparency = 1
-subtitle.Text = "Burst limitado de ShootGun · by Kev"
-subtitle.TextColor3 = Color3.fromRGB(125, 125, 125)
+subtitle.Text = "Detecta tracer/sonido/animación local · by Kev"
+subtitle.TextColor3 = Color3.fromRGB(125,125,125)
 subtitle.Font = Enum.Font.Gotham
 subtitle.TextSize = 11
 subtitle.TextXAlignment = Enum.TextXAlignment.Left
@@ -259,40 +375,21 @@ dragBar.Parent = frame
 local status = Instance.new("TextLabel")
 status.Position = UDim2.fromOffset(16, 68)
 status.Size = UDim2.new(1, -32, 0, 50)
-status.BackgroundColor3 = Color3.fromRGB(14, 14, 14)
-status.TextColor3 = Color3.fromRGB(220, 220, 220)
+status.BackgroundColor3 = Color3.fromRGB(14,14,14)
+status.TextColor3 = Color3.fromRGB(220,220,220)
 status.Font = Enum.Font.GothamMedium
 status.TextSize = 11
 status.TextWrapped = true
+status.Text = "Pulsa INICIAR y haz UN disparo normal."
 status.Parent = frame
 Instance.new("UICorner", status).CornerRadius = UDim.new(0, 10)
-
-local function refreshStatus()
-    if state.Pending then
-        status.Text = "BURST EN CURSO · espera a que termine"
-    elseif state.Armed then
-        status.Text = (
-            "ARMADO · haz UN tiro normal · "
-            .. tostring(state.Count)
-            .. " replay(s) @ "
-            .. string.format("%.3f s", state.Interval)
-        )
-    else
-        status.Text = (
-            "Desarmado · "
-            .. tostring(state.Count)
-            .. " replay(s) @ "
-            .. string.format("%.3f s", state.Interval)
-        )
-    end
-end
 
 local function button(label, x, y, w, cb)
     local b = Instance.new("TextButton")
     b.Position = UDim2.fromOffset(x, y)
     b.Size = UDim2.fromOffset(w, 36)
-    b.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
-    b.TextColor3 = Color3.fromRGB(235, 235, 235)
+    b.BackgroundColor3 = Color3.fromRGB(20,20,20)
+    b.TextColor3 = Color3.fromRGB(235,235,235)
     b.Text = label
     b.Font = Enum.Font.GothamMedium
     b.TextSize = 11
@@ -302,78 +399,22 @@ local function button(label, x, y, w, cb)
     b.Activated:Connect(cb)
 end
 
-button("ARMAR", 16, 134, 100, function()
-    if not state.Pending then
-        state.Armed = true
-        push("[SYSTEM] RapidFire Lab armado.")
-        refreshStatus()
-    end
+button("INICIAR", 16, 134, 126, function()
+    table.clear(state.Lines)
+    state.Armed = true
+    state.ShotAt = 0
+    state.CaptureUntil = 0
+    push("[SYSTEM] Local Shot Lab armado.")
+    status.Text = "ARMADO · haz UN disparo normal."
 end)
 
-button("3 tiros", 128, 134, 72, function()
-    if not state.Pending then
-        state.Count = 3
-        refreshStatus()
-    end
+button("DETENER", 154, 134, 126, function()
+    state.Armed = false
+    state.CaptureUntil = 0
+    status.Text = "Captura detenida."
 end)
 
-button("5 tiros", 210, 134, 72, function()
-    if not state.Pending then
-        state.Count = 5
-        refreshStatus()
-    end
-end)
-
-button("8 tiros", 292, 134, 72, function()
-    if not state.Pending then
-        state.Count = 8
-        refreshStatus()
-    end
-end)
-
-button("10 tiros", 374, 134, 60, function()
-    if not state.Pending then
-        state.Count = 10
-        refreshStatus()
-    end
-end)
-
-button("0.20", 16, 182, 76, function()
-    if not state.Pending then
-        state.Interval = 0.20
-        refreshStatus()
-    end
-end)
-
-button("0.10", 102, 182, 76, function()
-    if not state.Pending then
-        state.Interval = 0.10
-        refreshStatus()
-    end
-end)
-
-button("0.05", 188, 182, 76, function()
-    if not state.Pending then
-        state.Interval = 0.05
-        refreshStatus()
-    end
-end)
-
-button("0.02", 274, 182, 76, function()
-    if not state.Pending then
-        state.Interval = 0.02
-        refreshStatus()
-    end
-end)
-
-button("LIMPIAR", 360, 182, 74, function()
-    if not state.Pending then
-        table.clear(state.Lines)
-        refreshStatus()
-    end
-end)
-
-button("COPIAR TODO", 16, 230, 418, function()
+button("COPIAR TODO", 292, 134, 142, function()
     local data = table.concat(state.Lines, "\n")
     local clip = setclipboard or toclipboard
 
@@ -388,34 +429,31 @@ button("COPIAR TODO", 16, 230, 418, function()
 end)
 
 local preview = Instance.new("TextLabel")
-preview.Position = UDim2.fromOffset(16, 278)
-preview.Size = UDim2.new(1, -32, 1, -294)
-preview.BackgroundColor3 = Color3.fromRGB(11, 11, 11)
-preview.TextColor3 = Color3.fromRGB(150, 150, 150)
+preview.Position = UDim2.fromOffset(16, 184)
+preview.Size = UDim2.new(1, -32, 1, -200)
+preview.BackgroundColor3 = Color3.fromRGB(11,11,11)
+preview.TextColor3 = Color3.fromRGB(150,150,150)
 preview.Font = Enum.Font.Code
 preview.TextSize = 10
 preview.TextWrapped = true
 preview.TextXAlignment = Enum.TextXAlignment.Left
 preview.TextYAlignment = Enum.TextYAlignment.Top
-preview.Text = "Esperando prueba..."
+preview.Text = "Esperando captura..."
 preview.Parent = frame
 Instance.new("UICorner", preview).CornerRadius = UDim.new(0, 10)
 
 task.spawn(function()
     while state.Alive do
-        refreshStatus()
-
         local n = #state.Lines
-        if n == 0 then
-            preview.Text = "Esperando prueba..."
-        else
-            local first = math.max(1, n - 16)
-            local lines = {}
 
+        if n == 0 then
+            preview.Text = "Esperando captura..."
+        else
+            local first = math.max(1, n - 18)
+            local lines = {}
             for i = first, n do
                 lines[#lines + 1] = state.Lines[i]
             end
-
             preview.Text = table.concat(lines, "\n")
         end
 
@@ -441,9 +479,7 @@ dragBar.InputBegan:Connect(function(input)
 end)
 
 local function updateDrag(input)
-    if not dragging or not dragStart or not frameStart then
-        return
-    end
+    if not dragging or not dragStart or not frameStart then return end
 
     if input.UserInputType == Enum.UserInputType.Touch
         and activeInput
@@ -462,17 +498,17 @@ local function updateDrag(input)
     )
 end
 
-UserInputService.InputChanged:Connect(function(input)
+track(UserInputService.InputChanged:Connect(function(input)
     if input.UserInputType == Enum.UserInputType.MouseMovement then
         updateDrag(input)
     end
-end)
+end))
 
-UserInputService.TouchMoved:Connect(function(input)
+track(UserInputService.TouchMoved:Connect(function(input)
     updateDrag(input)
-end)
+end))
 
-UserInputService.InputEnded:Connect(function(input)
+track(UserInputService.InputEnded:Connect(function(input)
     if input == activeInput
         or input.UserInputType == Enum.UserInputType.MouseButton1
     then
@@ -481,37 +517,37 @@ UserInputService.InputEnded:Connect(function(input)
         dragStart = nil
         frameStart = nil
     end
-end)
+end))
 
-UserInputService.TouchEnded:Connect(function(input)
+track(UserInputService.TouchEnded:Connect(function(input)
     if input == activeInput then
         dragging = false
         activeInput = nil
         dragStart = nil
         frameStart = nil
     end
-end)
+end))
 
 local function cleanup()
-    if not state.Alive then
-        return
-    end
+    if not state.Alive then return end
 
     state.Alive = false
     state.Armed = false
-    state.Pending = false
+    state.CaptureUntil = 0
 
     if hookState and hookState.Current == state then
         hookState.Current = nil
     end
 
-    pcall(function()
-        gui:Destroy()
-    end)
+    for i = #state.Connections, 1, -1 do
+        local c = state.Connections[i]
+        pcall(function() c:Disconnect() end)
+        state.Connections[i] = nil
+    end
+
+    pcall(function() gui:Destroy() end)
 end
 
-env.__XERO_MVSD_RAPIDFIRE_CLEANUP = cleanup
+env.__XERO_MVSD_LOCALSHOT_CLEANUP = cleanup
 
-refreshStatus()
-
-print("[XeroHub] MVSD RapidFire Lab cargado | bounded burst | by Kev")
+print("[XeroHub] MVSD Local Shot Lab cargado | Passive | by Kev")

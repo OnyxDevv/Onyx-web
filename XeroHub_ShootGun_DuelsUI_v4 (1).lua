@@ -69,7 +69,6 @@ end
 local state = {
     SilentAim = false,
     ESP = false,
-    -- Siempre activo internamente. No existe toggle en la UI.
     TeamCheck = true,
 
     FOVFilter = true,
@@ -82,7 +81,6 @@ local state = {
     ESPHealth = true,
     ESPDistance = true,
     ESPColor = Color3.fromRGB(255, 255, 255),
-    ESPMaxDistance = 650,
     OpenButtonGhost = false,
 
     InLobby = true,
@@ -247,85 +245,83 @@ runtime.CharacterCache = setmetatable({}, {__mode = "k"})
 -- LOBBY / ROUND VALIDATION
 -- ==========================================
 
--- ==========================================
--- MVSD MATCH STATE
--- Detectado con XeroHub State Scanner:
---   LOBBY   -> Match=nil, MatchStartTime=nil, Neutral=true
---   PARTIDA -> Match=<id>, MatchStartTime=<timestamp>, Neutral=false
--- No dependemos de GUI ni nombres de Team para decidir si ESP/Silent pueden correr.
--- ==========================================
+local LOBBY_TEAM_WORDS = {
+    "lobby", "spectator", "spectators", "spectating",
+    "waiting", "intermission", "menu", "dead"
+}
 
-local function getMVSDMatchState()
+local function textContainsLobbyWord(text)
+    text = string.lower(tostring(text or ""))
+    for i = 1, #LOBBY_TEAM_WORDS do
+        if string.find(text, LOBBY_TEAM_WORDS[i], 1, true) then
+            return true
+        end
+    end
+    return false
+end
+
+local function boolAttribute(object, name)
+    if not object then return nil end
+    local ok, value = pcall(function() return object:GetAttribute(name) end)
+    if ok and type(value) == "boolean" then return value end
+    return nil
+end
+
+local ROUND_TRUE_ATTRS = {
+    "InRound", "InGame", "Playing", "IsPlaying", "RoundActive", "GameActive"
+}
+local LOBBY_TRUE_ATTRS = {
+    "InLobby", "Lobby", "IsLobby", "Spectating", "IsSpectating"
+}
+
+local function estaEnLobby()
     local char = player.Character
     if not char then
-        return false, "Sin personaje"
+        return true, "Sin personaje"
     end
 
     local hum = char:FindFirstChildOfClass("Humanoid")
     local hrp = char:FindFirstChild("HumanoidRootPart")
     if not hum or hum.Health <= 0 or not hrp then
-        return false, "Sin personaje activo"
+        return true, "Sin personaje activo"
     end
 
+    -- Estado nativo detectado con el State Scanner:
+    -- Lobby: Match=nil, MatchStartTime=nil, Neutral=true
+    -- Partida: Match=<id>, MatchStartTime=<timestamp>, Neutral=false
     local matchId = player:GetAttribute("Match")
     local matchStartTime = player:GetAttribute("MatchStartTime")
 
     if matchId == nil then
-        return false, "Sin Match"
+        return true, "Sin Match"
     end
 
     if matchStartTime == nil then
-        return false, "Sin MatchStartTime"
+        return true, "Sin MatchStartTime"
     end
 
     if player.Neutral == true then
-        return false, "Neutral"
+        return true, "Neutral"
     end
 
-    return true, "Partida #" .. tostring(matchId)
-end
-
-local function estaEnLobby()
-    local inMatch, reason = getMVSDMatchState()
-    return not inMatch, reason
+    return false, "Partida #" .. tostring(matchId)
 end
 
 local function refreshLobbyState()
     local inLobby, reason = estaEnLobby()
-    local changed = state.InLobby ~= inLobby
-
     state.InLobby = inLobby
     state.LobbyReason = reason
 
     if inLobby then
         state.SilentTarget = nil
         state.SilentTargetPlayer = nil
-        state.FOVHasCandidate = false
-
-        if runtime.AimState then
-            runtime.AimState.Target = nil
-        end
     end
-
-    return changed
 end
 
--- Reacciona inmediatamente al estado real de MVSD en vez de esperar al polling.
-runtime.Track(player:GetAttributeChangedSignal("Match"):Connect(function()
-    refreshLobbyState()
-end))
-
-runtime.Track(player:GetAttributeChangedSignal("MatchStartTime"):Connect(function()
-    refreshLobbyState()
-end))
-
-runtime.Track(player:GetPropertyChangedSignal("Neutral"):Connect(function()
-    refreshLobbyState()
-end))
-
-runtime.Track(player.CharacterAdded:Connect(function()
-    task.defer(refreshLobbyState)
-end))
+-- Actualiza el gate de lobby inmediatamente cuando MVSD cambia de estado.
+runtime.Track(player:GetAttributeChangedSignal("Match"):Connect(refreshLobbyState))
+runtime.Track(player:GetAttributeChangedSignal("MatchStartTime"):Connect(refreshLobbyState))
+runtime.Track(player:GetPropertyChangedSignal("Neutral"):Connect(refreshLobbyState))
 
 -- ==========================================
 -- ENEMIES / HITBOXES / TARGET CACHE
@@ -333,8 +329,7 @@ end))
 
 local function isEnemy(plr)
     if not plr or plr == player then return false end
-
-    -- Team Check fijo: el usuario no puede apagarlo desde la UI.
+    -- Team Check fijo: siempre activo internamente.
     if player.Team ~= nil and plr.Team ~= nil then
         return player.Team ~= plr.Team
     end
@@ -345,7 +340,6 @@ local function isEnemy(plr)
         return myTeam ~= theirTeam
     end
 
-    -- Si el juego no expone team de forma detectable, no bloqueamos al jugador.
     return true
 end
 
@@ -390,26 +384,48 @@ local function playerIsInActiveRound(plr, char, hrp)
 
     local hum = char:FindFirstChildOfClass("Humanoid")
     hrp = hrp or char:FindFirstChild("HumanoidRootPart")
-
     if not hum or hum.Health <= 0 or not hrp then
         return false
     end
 
-    -- Spawn-protection / invulnerabilidad: no lo tratamos como target activo.
     if char:FindFirstChildOfClass("ForceField") then
         return false
     end
 
+    for i = 1, #LOBBY_TRUE_ATTRS do
+        local attr = LOBBY_TRUE_ATTRS[i]
+        if boolAttribute(plr, attr) == true or boolAttribute(char, attr) == true then
+            return false
+        end
+    end
+
+    local sawRoundFlag = false
+    local roundFlagTrue = false
+
+    for i = 1, #ROUND_TRUE_ATTRS do
+        local attr = ROUND_TRUE_ATTRS[i]
+        local pValue = boolAttribute(plr, attr)
+        local cValue = boolAttribute(char, attr)
+
+        if pValue ~= nil then
+            sawRoundFlag = true
+            roundFlagTrue = roundFlagTrue or pValue
+        end
+        if cValue ~= nil then
+            sawRoundFlag = true
+            roundFlagTrue = roundFlagTrue or cValue
+        end
+    end
+
+    if sawRoundFlag and not roundFlagTrue then
+        return false
+    end
+
+    if plr.Team and textContainsLobbyWord(plr.Team.Name) then
+        return false
+    end
+
     return true
-end
-
-local function isWithinESPDistance(hrp)
-    local myRoot = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
-    if not myRoot or not hrp then return false end
-
-    local delta = hrp.Position - myRoot.Position
-    local maxDistance = tonumber(state.ESPMaxDistance) or 650
-    return delta:Dot(delta) <= maxDistance * maxDistance
 end
 
 local function resolveActualHitbox(bodyPart)
@@ -496,13 +512,11 @@ local function getEquippedTool()
 
     local tool = state.EquippedTool
     if tool and tool.Parent == char and tool:IsA("Tool") then
-        bindSilentObservedTool(tool)
         return tool
     end
 
     tool = char:FindFirstChildOfClass("Tool")
     state.EquippedTool = tool
-    bindSilentObservedTool(tool)
     return tool
 end
 
@@ -510,56 +524,6 @@ local rayParams = RaycastParams.new()
 rayParams.FilterType = Enum.RaycastFilterType.Exclude
 rayParams.IgnoreWater = true
 local rayIgnore = {}
-
--- Primera persona:
--- el hook antiguo ignoraba raycasts cuyo origen estaba a <=1 stud de la cámara.
--- En primera persona el disparo real puede nacer justo ahí.
--- Abrimos una ventana MUY corta sólo cuando el usuario realmente dispara.
-runtime.LastManualShotInputAt = 0
-runtime.LastToolActivatedAt = 0
-runtime.SilentToolConnection = nil
-runtime.SilentObservedTool = nil
-
-local function bindSilentObservedTool(tool)
-    if runtime.SilentObservedTool == tool then
-        return
-    end
-
-    if runtime.SilentToolConnection then
-        pcall(function()
-            runtime.SilentToolConnection:Disconnect()
-        end)
-        runtime.SilentToolConnection = nil
-    end
-
-    runtime.SilentObservedTool = tool
-
-    if tool and tool:IsA("Tool") then
-        runtime.SilentToolConnection = runtime.Track(tool.Activated:Connect(function()
-            runtime.LastToolActivatedAt = os.clock()
-        end))
-    end
-end
-
-runtime.Track(UserInputService.InputBegan:Connect(function(input, processed)
-    if processed then return end
-    if not state.SilentAim then return end
-
-    if input.UserInputType == Enum.UserInputType.MouseButton1 then
-        local char = player.Character
-        local tool = char and char:FindFirstChildOfClass("Tool")
-        if tool then
-            runtime.LastManualShotInputAt = os.clock()
-            bindSilentObservedTool(tool)
-        end
-    end
-end))
-
-local function isRecentManualShot()
-    local t = os.clock()
-    return (t - (runtime.LastManualShotInputAt or 0) <= 0.22)
-        or (t - (runtime.LastToolActivatedAt or 0) <= 0.18)
-end
 
 -- WallCheck único para Silent Aim y color del FOV.
 -- 1) Sólo ignora nuestro Character: si el primer impacto es mundo/estructura, bloquea.
@@ -745,6 +709,26 @@ end
 -- SILENT AIM HOOK | MISMO MÉTODO QUE DUELS
 -- ==========================================
 
+-- Primera persona: el disparo real puede originarse pegado a la cámara.
+-- No simulamos input ni tocamos la selección de targets. Sólo abrimos una
+-- ventana corta cuando el usuario hace Mouse1 con un Tool equipado.
+runtime.LastManualShotInputAt = 0
+
+runtime.Track(UserInputService.InputBegan:Connect(function(input)
+    if not state.SilentAim then return end
+    if input.UserInputType ~= Enum.UserInputType.MouseButton1 then return end
+
+    local char = player.Character
+    local tool = char and char:FindFirstChildOfClass("Tool")
+    if tool then
+        runtime.LastManualShotInputAt = os.clock()
+    end
+end))
+
+local function allowNearCameraWeaponRay()
+    return os.clock() - (runtime.LastManualShotInputAt or 0) <= 0.25
+end
+
 local aimHookState = runtimeEnv.__XERO_MVSD_AIM_STATE
 
 if not aimHookState then
@@ -775,7 +759,7 @@ if not aimHookState then
                         local nearCamera = camera
                             and (origin - camera.CFrame.Position).Magnitude <= 1
 
-                        if not nearCamera or isRecentManualShot() then
+                        if not nearCamera or allowNearCameraWeaponRay() then
                             local delta = target.Position - origin
 
                             if delta.Magnitude > 0.01 then
@@ -800,7 +784,7 @@ if not aimHookState then
                         local nearCamera = camera
                             and (ray.Origin - camera.CFrame.Position).Magnitude <= 1
 
-                        if not nearCamera or isRecentManualShot() then
+                        if not nearCamera or allowNearCameraWeaponRay() then
                             local delta = target.Position - ray.Origin
 
                             if delta.Magnitude > 0.01 then
@@ -892,7 +876,6 @@ local function ensureESP(plr)
     local char, hum, hrp = getCharacterData(plr)
     if not char or not hum or not hrp
         or not playerIsInActiveRound(plr, char, hrp)
-        or not isWithinESPDistance(hrp)
     then
         removeESP(plr)
         return
@@ -1025,11 +1008,8 @@ end
 runtime.Track(RunService.Heartbeat:Connect(function(dt)
     if not runtime.Alive then return end
 
-    -- Los eventos de Match/MatchStartTime/Neutral actualizan el estado al instante.
-    -- Este poll de 1 s queda sólo como respaldo por si el juego reemplaza Character/atributos
-    -- sin disparar alguna señal esperada del ejecutor.
     state.LobbyTimer = state.LobbyTimer + dt
-    if state.LobbyTimer >= 1.0 then
+    if state.LobbyTimer >= 0.35 then
         state.LobbyTimer = 0
 
         local wasLobby = state.InLobby
@@ -2027,19 +2007,6 @@ UIElements.ColESP = Tabs.Vis:Colorpicker({
     end,
 })
 
-UIElements.SliESPDistance = Tabs.Vis:Slider({
-    Title = "Distancia máxima del ESP",
-    Desc = "Salvaguarda secundaria para no marcar personajes residuales lejos de la ronda.",
-    Step = 10,
-    Value = {
-        Min = 150,
-        Max = 1200,
-        Default = state.ESPMaxDistance,
-    },
-    Callback = function(value)
-        state.ESPMaxDistance = tonumber(value) or 650
-    end,
-})
 
 Tabs.Vis:Paragraph({
     Title = "Rendimiento",
@@ -2094,7 +2061,7 @@ Tabs.Config:Section({Title = "Validación de partida"})
 
 Tabs.Config:Paragraph({
     Title = "Lobby Guard",
-    Desc = "ESP y Silent Aim sólo funcionan cuando MVSD expone Match + MatchStartTime y Neutral=false.",
+    Desc = "Silent Aim y ESP sólo corren cuando MVSD expone Match + MatchStartTime y Neutral=false.",
 })
 
 -- Gestor de configs adaptado de DUELS.
@@ -2294,7 +2261,6 @@ local function serializeConfig(name)
         },
         Sliders = {
             FOVRadius = state.FOVRadius,
-            ESPMaxDistance = state.ESPMaxDistance,
         },
         Colors = {
             ESP = {
@@ -2378,10 +2344,6 @@ local function applyConfig(decoded)
     if sliders.FOVRadius ~= nil then
         state.FOVRadius = tonumber(sliders.FOVRadius) or state.FOVRadius
         setElement(UIElements.SliFOV, state.FOVRadius)
-    end
-    if sliders.ESPMaxDistance ~= nil then
-        state.ESPMaxDistance = tonumber(sliders.ESPMaxDistance) or state.ESPMaxDistance
-        setElement(UIElements.SliESPDistance, state.ESPMaxDistance)
     end
 
     if type(colors.ESP) == "table" then
@@ -2690,9 +2652,6 @@ runtimeEnv.__XERO_MVSD_HUB_CLEANUP = function()
     state.SilentAim = false
     state.ESP = false
     aimHookState.Target = nil
-    runtime.SilentObservedTool = nil
-    runtime.LastManualShotInputAt = 0
-    runtime.LastToolActivatedAt = 0
 
     clearESP()
 
@@ -2726,4 +2685,4 @@ end
 
 refreshLobbyState()
 
-print("[XeroHub] MVSD cargado | Match State nativo | Team Check fijo | Silent FP/TP | ESP sólo en partida")
+print("[XeroHub] MVSD cargado | Silent estable | Match State real | Team Check fijo | ESP sin límite de distancia")

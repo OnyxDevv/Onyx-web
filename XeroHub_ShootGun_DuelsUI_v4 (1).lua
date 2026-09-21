@@ -1,6 +1,6 @@
 -- XeroHub | MVSD | Kev
 -- UI portada desde DUELS + selector corporal 2D + configs + ESP de ronda + Silent Aim + Auto Shoot independiente + FOV exclusivo de Silent Aim.
--- Silent Aim estilo DUELS + Auto Shoot MVSD por Remote nativo ShootGun (sin input físico).
+-- Método de Silent Aim: igual que Duels (Raycast/Mouse spoof), NO toca ShootGun:FireServer.
 
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
@@ -568,107 +568,76 @@ rayParams.FilterType = Enum.RaycastFilterType.Exclude
 rayParams.IgnoreWater = true
 local rayIgnore = {}
 
-local strictRayParams = RaycastParams.new()
-strictRayParams.FilterType = Enum.RaycastFilterType.Exclude
-strictRayParams.IgnoreWater = true
-local strictRayIgnore = {}
-
-local worldOnlyRayParams = RaycastParams.new()
-worldOnlyRayParams.FilterType = Enum.RaycastFilterType.Exclude
-worldOnlyRayParams.IgnoreWater = true
-local worldOnlyRayIgnore = {}
-
--- LOS estricto: sólo ignoramos nuestro Character.
--- Si el primer impacto es una pared/estructura, el objetivo queda rechazado.
--- Si las partes del Character enemigo no son CanQuery, hacemos un segundo raycast
--- excluyendo también al enemigo únicamente para confirmar que NO existe mundo entre ambos.
-local function getStrictHit(localChar, enemyChar, targetPart, origin)
-    if not localChar or not enemyChar or not targetPart or not targetPart.Parent then
-        return nil, nil
+-- WallCheck único para Silent Aim, color del FOV y Auto Shoot.
+-- 1) Sólo ignora nuestro Character: si el primer impacto es mundo/estructura, bloquea.
+-- 2) Repite desde la cámara para cubrir esquinas donde cabeza/cámara no comparten línea.
+-- 3) GetPartsObscuringTarget añade una segunda comprobación para piezas que algunos
+--    raycasts del mapa pueden omitir.
+local function lineClearFrom(origin, localChar, enemyChar, targetPart)
+    if not origin or not localChar or not enemyChar or not targetPart or not targetPart.Parent then
+        return false
     end
 
     local delta = targetPart.Position - origin
     if delta:Dot(delta) <= 0.0001 then
-        return targetPart, targetPart.Position
+        return true
     end
 
-    strictRayIgnore[1] = localChar
-    strictRayIgnore[2] = nil
-    strictRayParams.FilterDescendantsInstances = strictRayIgnore
+    rayIgnore[1] = localChar
+    rayIgnore[2] = nil
+    rayParams.FilterDescendantsInstances = rayIgnore
 
-    local result = workspace:Raycast(origin, delta, strictRayParams)
+    local result = workspace:Raycast(origin, delta, rayParams)
     if result then
         local hit = result.Instance
-        if hit and hit:IsDescendantOf(enemyChar) then
-            return hit, result.Position
+        return hit ~= nil and hit:IsDescendantOf(enemyChar)
+    end
+
+    -- Si el rig enemigo usa hitboxes con CanQuery=false, un raycast puede no
+    -- golpearlo. En ese caso comprobamos que tampoco haya mundo ocultándolo.
+    local camera = workspace.CurrentCamera
+    if camera then
+        local ok, blockers = pcall(function()
+            return camera:GetPartsObscuringTarget(
+                {targetPart.Position},
+                {localChar, enemyChar}
+            )
+        end)
+
+        if ok and blockers then
+            for i = 1, #blockers do
+                local blocker = blockers[i]
+                if blocker
+                    and blocker.Parent
+                    and not blocker:IsDescendantOf(localChar)
+                    and not blocker:IsDescendantOf(enemyChar)
+                    and blocker.Transparency < 0.98
+                then
+                    return false
+                end
+            end
         end
-        return nil, nil
     end
 
-    -- Fallback para rigs/hitboxes con CanQuery=false: confirma que tampoco hay
-    -- una estructura del mapa antes del target.
-    worldOnlyRayIgnore[1] = localChar
-    worldOnlyRayIgnore[2] = enemyChar
-    worldOnlyRayParams.FilterDescendantsInstances = worldOnlyRayIgnore
-
-    local worldBlock = workspace:Raycast(origin, delta, worldOnlyRayParams)
-    if worldBlock then
-        return nil, nil
-    end
-
-    return targetPart, targetPart.Position
+    return true
 end
 
 local function visibleTarget(localChar, enemyChar, targetPart, origin)
-    local hitPart = getStrictHit(localChar, enemyChar, targetPart, origin)
-    return hitPart ~= nil
-end
-
--- Remote nativo confirmado con MVSD Shoot Lab v2.
-local shootGunRemote = nil
-local function getShootGunRemote()
-    if shootGunRemote and shootGunRemote.Parent then
-        return shootGunRemote
+    if not lineClearFrom(origin, localChar, enemyChar, targetPart) then
+        return false
     end
 
-    local remotes = ReplicatedStorage:FindFirstChild("Remotes")
-    local remote = remotes and remotes:FindFirstChild("ShootGun")
-    if remote and remote:IsA("RemoteEvent") then
-        shootGunRemote = remote
-        return remote
-    end
-
-    return nil
-end
-
-local function fireNativeShootGun(localChar, enemyChar, targetPart)
     local camera = workspace.CurrentCamera
-    local remote = getShootGunRemote()
-    if not camera or not remote or not localChar or not enemyChar or not targetPart then
-        return false
+    if camera then
+        local camOrigin = camera.CFrame.Position
+        if (camOrigin - origin):Dot(camOrigin - origin) > 0.01 then
+            if not lineClearFrom(camOrigin, localChar, enemyChar, targetPart) then
+                return false
+            end
+        end
     end
 
-    -- El disparo manual usa un origen prácticamente idéntico a la cámara.
-    local origin = camera.CFrame.Position
-    local hitPart, hitPosition = getStrictHit(localChar, enemyChar, targetPart, origin)
-    if not hitPart or not hitPosition then
-        return false
-    end
-
-    local delta = hitPosition - origin
-    if delta:Dot(delta) <= 0.0001 then
-        return false
-    end
-
-    -- En los dos disparos capturados, arg2 está exactamente ~10 studs después
-    -- de arg4. Replicamos esa geometría sin simular Mouse1.
-    local extendedPoint = hitPosition + delta.Unit * 10
-
-    local ok = pcall(function()
-        remote:FireServer(origin, extendedPoint, hitPart, hitPosition)
-    end)
-
-    return ok
+    return true
 end
 
 local function getCenter()
@@ -725,20 +694,16 @@ local function chooseTarget(mode, useFOV)
                             if part and part.Parent then
                                 local metric
                                 local passes = true
+                                local inFOV = false
 
                                 if mode == "SilentAim" then
                                     local screen, onScreen = camera:WorldToViewportPoint(part.Position)
-                                    local inFOV = false
 
                                     if onScreen and screen.Z > 0 then
                                         local dx = screen.X - centerX
                                         local dy = screen.Y - centerY
                                         local screenMetric = dx * dx + dy * dy
                                         inFOV = screenMetric <= fovSq
-
-                                        if inFOV then
-                                            fovCandidate = true
-                                        end
 
                                         if useFOV then
                                             metric = screenMetric
@@ -757,12 +722,20 @@ local function chooseTarget(mode, useFOV)
                                     metric = delta:Dot(delta)
                                 end
 
-                                if passes and metric and metric < bestMetric
-                                    and visibleTarget(localChar, char, part, origin)
-                                then
-                                    bestMetric = metric
-                                    bestPlayer = plr
-                                    bestPart = part
+                                if passes and metric then
+                                    local hasLOS = visibleTarget(localChar, char, part, origin)
+
+                                    -- El círculo sólo se pone verde si la MISMA parte
+                                    -- que está dentro del FOV también pasa el wallcheck.
+                                    if mode == "SilentAim" and inFOV and hasLOS then
+                                        fovCandidate = true
+                                    end
+
+                                    if hasLOS and metric < bestMetric then
+                                        bestMetric = metric
+                                        bestPlayer = plr
+                                        bestPart = part
+                                    end
                                 end
                             end
                         end
@@ -792,8 +765,20 @@ if not aimHookState then
     oldNamecall = hookmetamethod(game, "__namecall", function(self, ...)
         local target = aimHookState.Target
 
+        local method = getnamecallmethod()
+
+        -- El Shoot Lab mostró que la rutina local del arma termina aquí.
+        -- Guardamos la marca para saber si Tool.Activated produjo un disparo real.
+        if not checkcaller()
+            and method == "FireServer"
+            and typeof(self) == "Instance"
+            and self:IsA("RemoteEvent")
+            and self.Name == "ShootGun"
+        then
+            runtime.LastNativeShootAt = os.clock()
+        end
+
         if not checkcaller() and target and target.Parent then
-            local method = getnamecallmethod()
 
             if self == workspace then
                 if method == "Raycast" then
@@ -1049,6 +1034,65 @@ local function updateFOVCircle()
     end
 end
 
+-- Disparo sin secuestrar Mouse1.
+-- El Shoot Lab v2 mostró: Tool.Activated -> ShootGun:FireServer (~1 ms después).
+local function invokeToolActivatedNoInput(tool)
+    if not tool or not tool.Parent then
+        return false
+    end
+
+    local before = runtime.LastNativeShootAt or 0
+    local invoked = false
+
+    if type(firesignal) == "function" then
+        local ok = pcall(function()
+            firesignal(tool.Activated)
+        end)
+        invoked = ok
+    end
+
+    if not invoked and type(getconnections) == "function" then
+        local ok, connections = pcall(getconnections, tool.Activated)
+        if ok and type(connections) == "table" then
+            for i = 1, #connections do
+                local connection = connections[i]
+                if connection then
+                    local ran = false
+                    pcall(function()
+                        if connection.Fire then
+                            connection:Fire()
+                            ran = true
+                        elseif type(connection.Function) == "function" then
+                            connection.Function()
+                            ran = true
+                        end
+                    end)
+                    invoked = invoked or ran
+                end
+            end
+        end
+    end
+
+    -- En la ruta nativa el Remote ocurre de forma síncrona/prácticamente inmediata.
+    if (runtime.LastNativeShootAt or 0) > before then
+        return true
+    end
+
+    -- Respaldo DUELS. No toca el mouse físico.
+    local ok = pcall(function()
+        tool:Activate()
+        task.delay(0.02, function()
+            if runtime.Alive and tool and tool.Parent == player.Character then
+                pcall(function()
+                    tool:Deactivate()
+                end)
+            end
+        end)
+    end)
+
+    return ok
+end
+
 -- ==========================================
 -- MASTER LOOP
 -- ==========================================
@@ -1112,8 +1156,8 @@ runtime.Track(RunService.Heartbeat:Connect(function(dt)
     end
 
     -- Auto Shoot usa SU selección corporal y nunca usa el FOV.
-    -- MVSD nativo: NO mouse1click, NO VirtualInput.
-    -- Shoot Lab confirmó ReplicatedStorage.Remotes.ShootGun con 4 argumentos.
+    -- Auto Shoot usa Tool.Activated sin input físico. El Shoot Lab confirmó que
+    -- ShootGun sale inmediatamente después de esa señal; Tool:Activate() queda de respaldo.
     if state.AutoShoot then
         state.AutoAccumulator = state.AutoAccumulator + dt
 
@@ -1122,28 +1166,19 @@ runtime.Track(RunService.Heartbeat:Connect(function(dt)
 
             if not state.InLobby then
                 local tool = getEquippedTool()
-                local localChar = player.Character
 
-                if tool and localChar and tool.Parent == localChar and tool:FindFirstChild("Handle") then
+                if tool then
                     local plr, part = chooseTarget("AutoShoot", false)
 
                     state.AutoTargetPlayer = plr
                     state.AutoTarget = part
 
-                    if plr and part and plr.Character then
-                        -- Conservamos el mismo target global para que Silent Aim/hook
-                        -- no compitan con Auto Shoot durante este tick.
+                    if part then
                         aimHookState.Target = part
 
-                        -- fireNativeShootGun vuelve a validar LOS justo antes del remote.
-                        -- Si una pared apareció entre el scan y el tiro, NO dispara.
-                        local fired = fireNativeShootGun(localChar, plr.Character, part)
-
-                        if not fired then
-                            state.AutoTarget = nil
-                            state.AutoTargetPlayer = nil
-                            aimHookState.Target = state.SilentAim and state.SilentTarget or nil
-                        end
+                        -- No simulamos Mouse1. Ejecutamos la misma señal local
+                        -- que precede al ShootGun real en el disparo manual.
+                        invokeToolActivatedNoInput(tool)
                     else
                         aimHookState.Target = state.SilentAim and state.SilentTarget or nil
                     end
@@ -2085,7 +2120,7 @@ UIElements.SliFOV = Tabs.Aim:Slider({
 -- VISUALES
 -- ==========================================
 
-Tabs.Vis:Section({Title = "ESP de jugadores"})
+Tabs.Vis:Section({Title = "ESP de jugadores Test"})
 
 UIElements.TogESP = Tabs.Vis:Toggle({
     Title = "ESP Jugadores",
@@ -2866,4 +2901,4 @@ end
 
 refreshLobbyState()
 
-print("[XeroHub] MVSD cargado | Auto Shoot nativo ShootGun | LOS estricto | Sin mouse1click")
+print("[XeroHub] MVSD cargado | Tool.Activated AutoShoot | FOV=LOS real | WallCheck reforzado | ESP 10 Hz")

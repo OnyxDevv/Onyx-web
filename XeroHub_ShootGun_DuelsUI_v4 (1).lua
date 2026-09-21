@@ -2177,6 +2177,7 @@ local ghostFloatDragging = false
 local ghostFloatMoved = false
 local ghostFloatDragStart = nil
 local ghostFloatStartPosition = nil
+local ghostFloatActiveInput = nil
 
 local function updateGhostFloatVisual(enabled)
     enabled = enabled == true
@@ -2210,6 +2211,7 @@ runtime.Track(ghostFloatButton.InputBegan:Connect(function(input)
         ghostFloatMoved = false
         ghostFloatDragStart = input.Position
         ghostFloatStartPosition = ghostFloatButton.Position
+        ghostFloatActiveInput = input
     end
 end))
 
@@ -2217,13 +2219,18 @@ runtime.Track(UserInputService.InputChanged:Connect(function(input)
     if not ghostFloatDragging
         or not ghostFloatDragStart
         or not ghostFloatStartPosition
+        or not ghostFloatActiveInput
     then
         return
     end
 
-    if input.UserInputType ~= Enum.UserInputType.MouseMovement
-        and input.UserInputType ~= Enum.UserInputType.Touch
-    then
+    local sameTouch = ghostFloatActiveInput.UserInputType == Enum.UserInputType.Touch
+        and input == ghostFloatActiveInput
+
+    local sameMouse = ghostFloatActiveInput.UserInputType == Enum.UserInputType.MouseButton1
+        and input.UserInputType == Enum.UserInputType.MouseMovement
+
+    if not sameTouch and not sameMouse then
         return
     end
 
@@ -2241,10 +2248,17 @@ runtime.Track(UserInputService.InputChanged:Connect(function(input)
 end))
 
 runtime.Track(UserInputService.InputEnded:Connect(function(input)
-    if input.UserInputType == Enum.UserInputType.MouseButton1
-        or input.UserInputType == Enum.UserInputType.Touch
-    then
+    if not ghostFloatActiveInput then return end
+
+    local sameTouch = ghostFloatActiveInput.UserInputType == Enum.UserInputType.Touch
+        and input == ghostFloatActiveInput
+
+    local sameMouse = ghostFloatActiveInput.UserInputType == Enum.UserInputType.MouseButton1
+        and input.UserInputType == Enum.UserInputType.MouseButton1
+
+    if sameTouch or sameMouse then
         ghostFloatDragging = false
+        ghostFloatActiveInput = nil
     end
 end))
 
@@ -2408,6 +2422,81 @@ UIElements.ToggleGhostButton = Tabs.Mov:Toggle({
     Value = true,
     Callback = function(value)
         ghostFloatButton.Visible = value == true
+    end,
+})
+
+Tabs.Mov:Section({Title = "Noclip"})
+
+local noclipEnabled = false
+local noclipConnection = nil
+local noclipOriginalCollisions = setmetatable({}, {__mode = "k"})
+
+local function applyNoclipToCharacter()
+    if not noclipEnabled then return end
+
+    local char = player.Character
+    if not char then return end
+
+    for _, object in ipairs(char:GetDescendants()) do
+        if object:IsA("BasePart") then
+            if noclipOriginalCollisions[object] == nil then
+                noclipOriginalCollisions[object] = object.CanCollide
+            end
+
+            if object.CanCollide then
+                object.CanCollide = false
+            end
+        end
+    end
+end
+
+local function restoreNoclip()
+    for part, original in pairs(noclipOriginalCollisions) do
+        if part and part.Parent then
+            pcall(function()
+                part.CanCollide = original
+            end)
+        end
+        noclipOriginalCollisions[part] = nil
+    end
+end
+
+local function startNoclip()
+    if noclipConnection then
+        pcall(function() noclipConnection:Disconnect() end)
+        noclipConnection = nil
+    end
+
+    applyNoclipToCharacter()
+
+    noclipConnection = runtime.Track(RunService.Stepped:Connect(function()
+        if noclipEnabled then
+            applyNoclipToCharacter()
+        end
+    end))
+end
+
+local function stopNoclip()
+    if noclipConnection then
+        pcall(function() noclipConnection:Disconnect() end)
+        noclipConnection = nil
+    end
+
+    restoreNoclip()
+end
+
+UIElements.TogNoclip = Tabs.Mov:Toggle({
+    Title = "Noclip",
+    Desc = "Atraviesa paredes y objetos.",
+    Value = false,
+    Callback = function(value)
+        noclipEnabled = value == true
+
+        if noclipEnabled then
+            startNoclip()
+        else
+            stopNoclip()
+        end
     end,
 })
 
@@ -2706,6 +2795,9 @@ UIElements.SliFlySpeed = Tabs.Mov:Slider({
 })
 
 runtime.MovementCleanup = function()
+    noclipEnabled = false
+    stopNoclip()
+
     moveSpeedEnabled = false
     stopMoveSpeed()
 
@@ -2731,6 +2823,15 @@ runtime.Track(player.CharacterAdded:Connect(function()
         end)
     end
 
+    if noclipEnabled then
+        task.defer(function()
+            task.wait(0.10)
+            if noclipEnabled then
+                applyNoclipToCharacter()
+            end
+        end)
+    end
+
     if moveSpeedEnabled then
         task.defer(function()
             task.wait(0.15)
@@ -2741,11 +2842,34 @@ runtime.Track(player.CharacterAdded:Connect(function()
     end
 
     if flyEnabled then
-        flyEnabled = false
+        -- MVSD recrea el Character entre rondas.
+        -- Limpiamos la física del avatar viejo pero mantenemos Fly activado
+        -- y lo volvemos a montar automáticamente en el nuevo Character.
         destroyFlyPhysics()
-        task.defer(function()
-            if UIElements.TogFly then
-                pcall(function() UIElements.TogFly:Set(false) end)
+
+        local respawnedCharacter = player.Character
+        task.spawn(function()
+            local deadline = os.clock() + 4
+
+            while runtime.Alive
+                and flyEnabled
+                and os.clock() < deadline
+            do
+                if player.Character == respawnedCharacter
+                    and respawnedCharacter
+                    and respawnedCharacter.Parent
+                then
+                    local hum = respawnedCharacter:FindFirstChildOfClass("Humanoid")
+                    local hrp = respawnedCharacter:FindFirstChild("HumanoidRootPart")
+
+                    if hum and hum.Health > 0 and hrp then
+                        if startFly() then
+                            return
+                        end
+                    end
+                end
+
+                task.wait(0.05)
             end
         end)
     end
@@ -3419,4 +3543,4 @@ end
 
 refreshLobbyState()
 
-print("[XeroHub] MVSD cargado | Silent estable | Match filter | ESP correcto | Ghost | Speed | Mobile Fly")
+print("[XeroHub] MVSD cargado | Silent estable | Match filter | ESP correcto | Ghost | Noclip | Speed | Mobile Fly persistente")

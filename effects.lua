@@ -1,5 +1,5 @@
 --[[
-XeroHub | DUELS Death Effects · Stable Base R23 · Local Kills + Dummy Bridge
+XeroHub | DUELS Death Effects · Stable Base R29 · Local Kills + Dummy Bridge
 Kev
 
 Objetivo:
@@ -8,9 +8,9 @@ Objetivo:
 - Reconstruye el asset faltante bajo ReplicatedStorage.ReplicatedSkins.Effects.
 - Observa a los jugadores enemigos durante la ronda.
 - Cuando un enemigo muere, sólo continúa si el kill puede atribuirse al jugador local.
-- Usa un PROXY LOCAL externo; el Character enemigo queda intacto/read-only.
+- Usa SU Character real como víctima.
 - Llama la lógica NATIVA del juego:
-      DeathEffectPreview.play(localProxy, effectName, cleaner)
+      DeathEffectPreview.play(victimCharacter, effectName, cleaner)
   para que el propio módulo aplique deformaciones, transparencias, cambios del
   cuerpo, animaciones, etc., no sólo partículas/sonidos.
 
@@ -3189,409 +3189,6 @@ local function scheduleV2ClothingLock(dummy, asset)
 end
 
 
-
--- ============================================================
--- R28 · EXACT READ-ONLY VISUAL PROXY
--- Same principle as XeroHub ESP: the real enemy is only a reference.
--- We NEVER parent effect objects into the real Character and NEVER mutate
--- its body properties. DeathEffectPreview runs on a local cloned proxy.
--- ============================================================
-if ENV.__XERO_DEATH_PROXY
-    and type(ENV.__XERO_DEATH_PROXY.Cleanup) == "function" then
-    pcall(ENV.__XERO_DEATH_PROXY.Cleanup)
-end
-
-ENV.__XERO_DEATH_PROXY = {
-    Root = nil,
-    FollowConnections = setmetatable({}, {__mode = "k"}),
-    SourceByProxy = setmetatable({}, {__mode = "k"}),
-    TemplateByHumanoid = setmetatable({}, {__mode = "k"}),
-    TemplateBuilding = setmetatable({}, {__mode = "k"}),
-}
-
-ENV.__XERO_DEATH_PROXY.EnsureRoot = function()
-    if ENV.__XERO_DEATH_PROXY.Root
-        and ENV.__XERO_DEATH_PROXY.Root.Parent then
-        return ENV.__XERO_DEATH_PROXY.Root
-    end
-
-    pcall(function()
-        local old = Workspace:FindFirstChild("XeroDeathVisuals")
-        if old then old:Destroy() end
-    end)
-
-    local root = Instance.new("Folder")
-    root.Name = "XeroDeathVisuals"
-    root.Parent = Workspace
-    ENV.__XERO_DEATH_PROXY.Root = root
-    return root
-end
-
-ENV.__XERO_DEATH_PROXY.DisconnectFollow = function(proxy)
-    local conn = ENV.__XERO_DEATH_PROXY.FollowConnections[proxy]
-    if conn then
-        pcall(function() conn:Disconnect() end)
-        ENV.__XERO_DEATH_PROXY.FollowConnections[proxy] = nil
-    end
-end
-
-ENV.__XERO_DEATH_PROXY.DestroyProxy = function(proxy)
-    if not proxy then return end
-    ENV.__XERO_DEATH_PROXY.DisconnectFollow(proxy)
-    ENV.__XERO_DEATH_PROXY.SourceByProxy[proxy] = nil
-    cleanVictim(proxy)
-    pcall(function()
-        if proxy.Parent then proxy:Destroy() end
-    end)
-end
-
-ENV.__XERO_DEATH_PROXY.Clear = function()
-    for proxy in pairs(ENV.__XERO_DEATH_PROXY.FollowConnections) do
-        ENV.__XERO_DEATH_PROXY.DisconnectFollow(proxy)
-    end
-
-    local root = ENV.__XERO_DEATH_PROXY.Root
-    if root and root.Parent then
-        for _, child in ipairs(root:GetChildren()) do
-            ENV.__XERO_DEATH_PROXY.DestroyProxy(child)
-        end
-    end
-end
-
-ENV.__XERO_DEATH_PROXY.Cleanup = function()
-    ENV.__XERO_DEATH_PROXY.Clear()
-
-    for hum, template in pairs(ENV.__XERO_DEATH_PROXY.TemplateByHumanoid) do
-        ENV.__XERO_DEATH_PROXY.TemplateByHumanoid[hum] = nil
-        if template then
-            pcall(function() template:Destroy() end)
-        end
-    end
-
-    local root = ENV.__XERO_DEATH_PROXY.Root
-    if root then
-        pcall(function() root:Destroy() end)
-    end
-    ENV.__XERO_DEATH_PROXY.Root = nil
-end
-
-ENV.__XERO_DEATH_PROXY.Sanitize = function(model)
-    if not model then return nil end
-
-    for _, obj in ipairs(model:GetDescendants()) do
-        if obj:IsA("Script")
-            or obj:IsA("LocalScript")
-            or obj:IsA("ModuleScript")
-            or obj:IsA("Tool") then
-
-            pcall(function() obj:Destroy() end)
-
-        elseif obj:IsA("BasePart") then
-            pcall(function()
-                obj.CanCollide = false
-                obj.CanTouch = false
-                obj.CanQuery = false
-            end)
-
-        elseif obj:IsA("Humanoid") then
-            pcall(function()
-                obj.DisplayDistanceType = Enum.HumanoidDisplayDistanceType.None
-                obj.HealthDisplayType = Enum.HumanoidHealthDisplayType.AlwaysOff
-                obj.NameDisplayDistance = 0
-            end)
-        end
-    end
-
-    return model
-end
-
--- Build an EXACT detached visual template while the enemy is ALIVE.
--- R28 deliberately does NOT use HumanoidDescription/UserId reconstruction.
--- Those APIs can lose game-specific body meshes/accessories and produce a blocky rig.
--- Instead we copy the CURRENT visible Character hierarchy child-by-child. The real
--- enemy is read-only: no Archivable writes, no reparenting, no property mutation.
-ENV.__XERO_DEATH_PROXY.PairCloneTree = function(source, clone, map)
-    if not source or not clone then return end
-    map[source] = clone
-
-    local sourceCounts = {}
-    for _, sourceChild in ipairs(source:GetChildren()) do
-        local key = sourceChild.ClassName .. "\0" .. sourceChild.Name
-        sourceCounts[key] = (sourceCounts[key] or 0) + 1
-        local wantedIndex = sourceCounts[key]
-        local seen = 0
-        local cloneChild
-
-        for _, candidate in ipairs(clone:GetChildren()) do
-            if candidate.ClassName == sourceChild.ClassName
-                and candidate.Name == sourceChild.Name then
-                seen += 1
-                if seen == wantedIndex then
-                    cloneChild = candidate
-                    break
-                end
-            end
-        end
-
-        if cloneChild then
-            ENV.__XERO_DEATH_PROXY.PairCloneTree(sourceChild, cloneChild, map)
-        end
-    end
-end
-
-ENV.__XERO_DEATH_PROXY.RepairCloneRefs = function(sourceCharacter, proxy, map)
-    if not proxy or not map then return end
-
-    for sourceObj, cloneObj in pairs(map) do
-        if cloneObj and cloneObj.Parent then
-            if sourceObj:IsA("JointInstance") then
-                pcall(function()
-                    cloneObj.Part0 = map[sourceObj.Part0]
-                    cloneObj.Part1 = map[sourceObj.Part1]
-                end)
-            elseif sourceObj:IsA("WeldConstraint") then
-                pcall(function()
-                    cloneObj.Part0 = map[sourceObj.Part0]
-                    cloneObj.Part1 = map[sourceObj.Part1]
-                end)
-            elseif sourceObj:IsA("Constraint")
-                or sourceObj:IsA("Beam")
-                or sourceObj:IsA("Trail") then
-                pcall(function() cloneObj.Attachment0 = map[sourceObj.Attachment0] end)
-                pcall(function() cloneObj.Attachment1 = map[sourceObj.Attachment1] end)
-            end
-        end
-    end
-
-    pcall(function()
-        if sourceCharacter.PrimaryPart and map[sourceCharacter.PrimaryPart] then
-            proxy.PrimaryPart = map[sourceCharacter.PrimaryPart]
-        end
-    end)
-end
-
-ENV.__XERO_DEATH_PROXY.CopyExactCharacter = function(character)
-    if not character or not character:IsA("Model") then
-        return nil, "Character inválido"
-    end
-
-    local proxy = Instance.new("Model")
-    proxy.Name = tostring(character.Name)
-    local map = {[character] = proxy}
-    local copied = 0
-
-    for _, child in ipairs(character:GetChildren()) do
-        if not child:IsA("Script")
-            and not child:IsA("LocalScript")
-            and not child:IsA("ModuleScript")
-            and not child:IsA("Tool") then
-
-            local okClone, clone = pcall(function()
-                return child:Clone()
-            end)
-
-            if okClone and clone then
-                clone.Parent = proxy
-                copied += 1
-                ENV.__XERO_DEATH_PROXY.PairCloneTree(child, clone, map)
-            end
-        end
-    end
-
-    if copied == 0 then
-        proxy:Destroy()
-        return nil, "ningún hijo visual se pudo copiar"
-    end
-
-    -- A Humanoid is required by DeathEffectPreview. Normally it was copied
-    -- above; this is only a detached-proxy fallback and never touches source.
-    if not proxy:FindFirstChildOfClass("Humanoid") then
-        local hum = Instance.new("Humanoid")
-        hum.Name = "Humanoid"
-        hum.Parent = proxy
-    end
-
-    ENV.__XERO_DEATH_PROXY.RepairCloneRefs(character, proxy, map)
-    ENV.__XERO_DEATH_PROXY.Sanitize(proxy)
-    proxy.Parent = nil
-    return proxy
-end
-
-ENV.__XERO_DEATH_PROXY.BuildTemplate = function(player, character, hum)
-    if not hum or ENV.__XERO_DEATH_PROXY.TemplateBuilding[hum] then return end
-    if ENV.__XERO_DEATH_PROXY.TemplateByHumanoid[hum] then return end
-
-    ENV.__XERO_DEATH_PROXY.TemplateBuilding[hum] = true
-
-    task.spawn(function()
-        local template
-        if character and character.Parent then
-            template = select(1, ENV.__XERO_DEATH_PROXY.CopyExactCharacter(character))
-        end
-
-        if template then
-            template.Name = "XeroDeathTemplate_" .. tostring(player and player.Name or "Enemy")
-            template.Parent = nil
-
-            local old = ENV.__XERO_DEATH_PROXY.TemplateByHumanoid[hum]
-            if old and old ~= template then
-                pcall(function() old:Destroy() end)
-            end
-            ENV.__XERO_DEATH_PROXY.TemplateByHumanoid[hum] = template
-        end
-
-        ENV.__XERO_DEATH_PROXY.TemplateBuilding[hum] = nil
-    end)
-end
-
-ENV.__XERO_DEATH_PROXY.Make = function(source, effectName, hum, player, deathPosition)
-    local proxy
-    local reason
-
-    -- Best path: take a fresh read-only visual snapshot in the kill frame so
-    -- hair, accessories, package meshes and the current body pose are exact.
-    if source and source.Parent and source:IsA("Model") then
-        proxy, reason = ENV.__XERO_DEATH_PROXY.CopyExactCharacter(source)
-    end
-
-    -- If DUELS removed the Character before the confirmation arrived, use the
-    -- exact detached template captured while it was alive. No generic avatar.
-    if not proxy then
-        local base = hum and ENV.__XERO_DEATH_PROXY.TemplateByHumanoid[hum] or nil
-        if base then
-            local ok, generated = pcall(function() return base:Clone() end)
-            if ok and generated then proxy = generated end
-        end
-    end
-
-    if not proxy then
-        return nil, reason or "plantilla visual exacta aún no disponible"
-    end
-
-    ENV.__XERO_DEATH_PROXY.Sanitize(proxy)
-    proxy.Name = "XeroDeathVisual_" .. tostring(player and player.Name or (source and source.Name) or "Enemy")
-    proxy.Parent = ENV.__XERO_DEATH_PROXY.EnsureRoot()
-
-    local positioned = false
-    if source and source.Parent then
-        positioned = pcall(function() proxy:PivotTo(source:GetPivot()) end)
-    end
-    if not positioned and deathPosition then
-        pcall(function()
-            local pivot = proxy:GetPivot()
-            proxy:PivotTo(CFrame.new(deathPosition) * (pivot - pivot.Position))
-        end)
-    end
-
-    -- Only the detached proxy receives death state / effect physics.
-    local proxyHumanoid = proxy:FindFirstChildOfClass("Humanoid")
-    if proxyHumanoid then
-        pcall(function()
-            proxyHumanoid.BreakJointsOnDeath = false
-            proxyHumanoid.Health = 0
-        end)
-    end
-
-    proxy:SetAttribute("XeroDeathVisualProxy", true)
-    proxy:SetAttribute("XeroDeathEffect", tostring(effectName or ""))
-    ENV.__XERO_DEATH_PROXY.SourceByProxy[proxy] = source
-
-    task.delay(10.35, function()
-        if proxy and proxy.Parent then
-            ENV.__XERO_DEATH_PROXY.DestroyProxy(proxy)
-        end
-    end)
-
-    return proxy
-end
-
-ENV.__XERO_DEATH_PROXY.OwnsMotion = function(effectName, proxy)
-    local lower = string.lower(tostring(effectName or ""))
-
-    -- Known effects whose native behavior intentionally controls the body's
-    -- position/anchoring. Do not force them to follow the DUELS corpse.
-    if string.find(lower, "ufo", 1, true)
-        or string.find(lower, "abduct", 1, true)
-        or string.find(lower, "ghost", 1, true)
-        or string.find(lower, "freeze", 1, true) then
-        return true
-    end
-
-    -- Generic fallback: if the native renderer adds motion/force constraints,
-    -- or anchors any visible body part, let that physics own the proxy.
-    if proxy and proxy.Parent then
-        for _, obj in ipairs(proxy:GetDescendants()) do
-            if obj:IsA("BasePart")
-                and obj.Name ~= "HumanoidRootPart"
-                and obj.Anchored then
-                return true
-            end
-
-            local class = obj.ClassName
-            if class == "BodyPosition"
-                or class == "BodyVelocity"
-                or class == "BodyGyro"
-                or class == "BodyForce"
-                or class == "BodyAngularVelocity"
-                or class == "RocketPropulsion"
-                or class == "LinearVelocity"
-                or class == "AngularVelocity"
-                or class == "VectorForce"
-                or class == "AlignPosition"
-                or class == "AlignOrientation"
-                or class == "Torque" then
-                return true
-            end
-        end
-    end
-
-    return false
-end
-
-ENV.__XERO_DEATH_PROXY.FollowCorpse = function(proxy, corpse, effectName)
-    if not proxy or not proxy.Parent or not corpse or not corpse.Parent then
-        return false
-    end
-
-    ENV.__XERO_DEATH_PROXY.DisconnectFollow(proxy)
-
-    -- Freeze / UFO / Ghost etc. own their motion. Frostbite and normal
-    -- body-style effects do not, so they follow only the corpse's WORLD PIVOT
-    -- while preserving their own rigid/effect pose.
-    if ENV.__XERO_DEATH_PROXY.OwnsMotion(effectName, proxy) then
-        return false
-    end
-
-    ENV.__XERO_DEATH_PROXY.FollowConnections[proxy] =
-        game:GetService("RunService").RenderStepped:Connect(function()
-            if not proxy.Parent or not corpse.Parent then
-                ENV.__XERO_DEATH_PROXY.DisconnectFollow(proxy)
-                return
-            end
-
-            -- If the native effect later starts controlling physics, stop
-            -- following immediately instead of fighting the effect.
-            if ENV.__XERO_DEATH_PROXY.OwnsMotion(effectName, proxy) then
-                ENV.__XERO_DEATH_PROXY.DisconnectFollow(proxy)
-                return
-            end
-
-            local okPivot, pivot = pcall(function()
-                return corpse:GetPivot()
-            end)
-
-            if okPivot and typeof(pivot) == "CFrame" then
-                pcall(function()
-                    proxy:PivotTo(pivot)
-                end)
-            end
-        end)
-
-    return true
-end
-
-ENV.__XERO_DEATH_PROXY.EnsureRoot()
-
 local function cleanupLegacyDecoratedArtifacts()
     for _, obj in ipairs(Workspace:GetDescendants()) do
         if obj.Name == "XeroEffect_WeldToRoot" then
@@ -3638,7 +3235,8 @@ local function runNativeOnVictim(name, victim, statusLabel)
 
     local before = snapshotDummyState(victim)
 
-    observeNativeParticles(victim)
+    -- R29: Preview.play owns particle emission. Do NOT force Emit() again;
+    -- doing so can replay the same VFX a second time.
     enforceInvisibleCarriers(victim, asset, name)
 
     local clothesV2 = applyV2Clothing(victim, asset)
@@ -3653,8 +3251,8 @@ local function runNativeOnVictim(name, victim, statusLabel)
             tostring(assetStatus)
     end
 
-    -- R26: DeathEffectPreview runs on an EXTERNAL LOCAL PROXY. The real
-    -- enemy/dummy is only used as a read-only reference for position.
+    -- This is the important part: the native preview is executed on the
+    -- actual dead enemy character rather than on a disposable preview dummy.
     local ok, result = pcall(function()
         return Preview.play(victim, name, cleaner)
     end)
@@ -3678,9 +3276,10 @@ local function runNativeOnVictim(name, victim, statusLabel)
         bodyPatchSource = "Frostbite · sin cara/ropa + accesorios negros"
 
     elseif name == "Ghosted" then
-        playGhostedCapturedNativeFade(victim)
-        bodyPatched = true
-        bodyPatchSource = "Ghosted · fade + vuelo"
+        -- R29: no manual fly/fade replay here. Preview.play must own Ghosted's
+        -- native motion so it is not animated twice.
+        bodyPatched = false
+        bodyPatchSource = nil
 
     elseif name == "SpiritOverload" then
         scheduleSpiritOverloadReal(victim)
@@ -3784,7 +3383,7 @@ local title = Instance.new("TextLabel")
 title.BackgroundTransparency = 1
 title.Position = UDim2.fromOffset(16, 12)
 title.Size = UDim2.new(1,-32,0,22)
-title.Text = "XERO · DEATH EFFECTS · PROXY PHYSICS R26"
+title.Text = "XERO · DEATH EFFECTS · REAL CORPSE R29"
 title.TextColor3 = Color3.fromRGB(245,245,245)
 title.Font = Enum.Font.GothamBold
 title.TextSize = 14
@@ -3896,8 +3495,8 @@ local function isEnemyPlayer(player)
 end
 
 local function refreshHumanoidDeathMode(player, hum)
-    -- R27: strict read-only target policy. Do not write BreakJointsOnDeath or
-    -- any other property on the enemy Humanoid/Character.
+    -- R29: STRICT READ-ONLY on live enemy Humanoids.
+    -- Do not restore/change BreakJointsOnDeath or any other live-character property.
     return
 end
 
@@ -4064,15 +3663,13 @@ local function looksLikeBody(model)
 end
 
 local function rememberDeathModel(model)
-    if model and model:IsA("Model") and model.Parent
-        and model:GetAttribute("XeroDeathVisualProxy") ~= true then
+    if model and model:IsA("Model") and model.Parent then
         recentDeathModels[model] = os.clock()
     end
 end
 
 local function scoreDeathModel(model, player, originalCharacter, deathPosition, deathAt)
     if not model or model == originalCharacter or not model.Parent then return nil end
-    if model:GetAttribute("XeroDeathVisualProxy") == true then return nil end
     if isCurrentPlayerCharacter(model) then
         -- Some games briefly promote the corpse/dummy to Player.Character.
         -- Exclude only a LIVE character; a dead replacement is still a valid target.
@@ -4169,22 +3766,23 @@ local function nearbyNewModelSummary(deathPosition, deathAt)
 end
 
 local function waitForDeathTarget(player, originalCharacter, deathPosition, deathAt)
-    local deadline = os.clock() + 0.90
+    -- R29: use ONLY the real DUELS corpse/dummy. Never fall back to the live/original
+    -- Player.Character, because the user's security watches that object.
+    -- Check immediately and then once per Heartbeat; effect starts on the first frame
+    -- the native corpse is actually usable.
+    local deadline = os.clock() + 0.55
+
     repeat
         local best, score = findBestDeathModel(player, originalCharacter, deathPosition, deathAt)
         if best and score >= 55 then
-            task.wait(0.03)
-            return best, "dummy/cadáver"
+            return best, "dummy/cadáver real"
         end
-        task.wait(0.025)
-    until os.clock() >= deadline
 
-    if originalCharacter and originalCharacter.Parent
-        and originalCharacter:FindFirstChildOfClass("Humanoid") then
-        return originalCharacter, "Character original"
-    end
+        if os.clock() >= deadline then break end
+        RunService.Heartbeat:Wait()
+    until false
 
-    return nil, "sin cuerpo visual"
+    return nil, "sin dummy/cadáver real"
 end
 
 local function triggerVictim(player, character, hum, proof)
@@ -4204,111 +3802,45 @@ local function triggerVictim(player, character, hum, proof)
     local deathPosition = info.deathPosition or modelPosition(character)
     local deathAt = info.deathAt or os.clock()
 
-    -- IMPORTANT: the enemy Character is now READ-ONLY. We clone it and run
-    -- every mutation/physics operation on the external local proxy instead.
-    local proxy, proxyErr =
-        ENV.__XERO_DEATH_PROXY.Make(
-            character, effectName, hum, player, deathPosition
-        )
+    -- R29: DO NOT run the renderer on the enemy Character and DO NOT create a proxy.
+    -- We wait only for DUELS' own death body, then run the effect exactly once on it.
+    status.Text =
+        "1/3 · TU KILL CONFIRMADO\n" ..
+        tostring(effectName) .. " → " .. tostring(player.Name) ..
+        (proof and ("\n" .. tostring(proof)) or "")
 
-    local appliedToProxy = false
-
-    if proxy then
-        status.Text =
-            "2/3 · KILL CONFIRMADO · PROXY LOCAL\n" ..
-            tostring(effectName) .. " → " .. tostring(player.Name) ..
-            (proof and ("\n" .. tostring(proof)) or "")
-
-        local ok, result = pcall(function()
-            return runNativeOnVictim(effectName, proxy, status)
-        end)
-        appliedToProxy = ok and result == true
-
-        if not appliedToProxy then
-            ENV.__XERO_DEATH_PROXY.DestroyProxy(proxy)
-            proxy = nil
-        end
-    else
-        status.Text =
-            "Kill confirmado · proxy exacto no listo: " ..
-            tostring(proxyErr)
-    end
-
-    -- DUELS may create a separate corpse/dummy immediately after the hit.
-    -- We NEVER apply the effect to that real model. For body-style effects
-    -- (Frostbite etc.) the already-running proxy follows only its world pivot.
-    -- Effects with their own motion (Freeze/UFO/Ghost/forces/constraints) are
-    -- left completely alone so their native animation/physics can play.
     task.spawn(function()
         local target, targetKind =
             waitForDeathTarget(player, character, deathPosition, deathAt)
 
-        if target and target.Parent and target ~= character then
-            if proxy and proxy.Parent and appliedToProxy then
-                local following =
-                    ENV.__XERO_DEATH_PROXY.FollowCorpse(
-                        proxy,
-                        target,
-                        effectName
-                    )
-
-                status.Text =
-                    "3/3 · PROXY ACTIVO · ENEMIGO INTACTO\n" ..
-                    tostring(effectName) .. " · " ..
-                    (following
-                        and ("siguiendo " .. tostring(targetKind))
-                        or "física propia del efecto")
-                return
-            end
-
-            -- Rare fallback: if the live Character disappeared before it could
-            -- be cloned, clone the DUELS corpse and still keep the real corpse
-            -- untouched.
-            local fallbackProxy, fallbackErr =
-                ENV.__XERO_DEATH_PROXY.Make(
-                    target, effectName, nil, player, deathPosition
-                )
-
-            if fallbackProxy then
-                local ok, result = pcall(function()
-                    return runNativeOnVictim(
-                        effectName,
-                        fallbackProxy,
-                        status
-                    )
-                end)
-
-                if ok and result == true then
-                    ENV.__XERO_DEATH_PROXY.FollowCorpse(
-                        fallbackProxy,
-                        target,
-                        effectName
-                    )
-                    return
-                end
-
-                ENV.__XERO_DEATH_PROXY.DestroyProxy(fallbackProxy)
-            end
-
+        if not target or not target.Parent then
             status.Text =
-                "✕ Kill confirmado, proxy fallback falló.\n" ..
-                tostring(fallbackErr or "")
+                "✕ Kill confirmado, DUELS no creó un dummy utilizable a tiempo.\n" ..
+                "Nuevos cerca: " .. nearbyNewModelSummary(deathPosition, deathAt)
             return
         end
 
-        if not appliedToProxy then
+        -- One corpse, one Preview.play. No second bridge/proxy/reapply.
+        status.Text =
+            "2/3 · DUMMY REAL DETECTADO\n" ..
+            tostring(targetKind) .. " · " .. tostring(target.Name)
+
+        local ok, result = pcall(function()
+            return runNativeOnVictim(effectName, target, status)
+        end)
+
+        if ok and result == true then
             status.Text =
-                "✕ Kill confirmado, no hubo proxy/cuerpo utilizable.\n" ..
-                "Nuevos cerca: " ..
-                nearbyNewModelSummary(deathPosition, deathAt)
-        elseif proxy and proxy.Parent then
+                "3/3 · EFECTO NATIVO EN DUMMY REAL\n" ..
+                tostring(effectName) .. " · física DUELS · 1 sola ejecución"
+        else
             status.Text =
-                "3/3 · PROXY ACTIVO · ENEMIGO INTACTO\n" ..
-                tostring(effectName) .. " · física propia/local"
+                "✕ Dummy real encontrado, pero Preview.play falló.\n" ..
+                tostring(result)
         end
     end)
 
-    return appliedToProxy
+    return true
 end
 
 local function newestPending()
@@ -4514,20 +4046,6 @@ local function hookCharacter(player, character)
         }
         trackedHumanoids[hum] = info
 
-        -- Prebuild a detached visual body while the enemy is alive.
-        -- This avoids touching/cloning the real Character after DUELS removes it.
-        ENV.__XERO_DEATH_PROXY.BuildTemplate(player, character, hum)
-        task.delay(0.75, function()
-            if hum and hum.Parent and not ENV.__XERO_DEATH_PROXY.TemplateByHumanoid[hum] then
-                ENV.__XERO_DEATH_PROXY.BuildTemplate(player, character, hum)
-            end
-        end)
-        task.delay(1.80, function()
-            if hum and hum.Parent and not ENV.__XERO_DEATH_PROXY.TemplateByHumanoid[hum] then
-                ENV.__XERO_DEATH_PROXY.BuildTemplate(player, character, hum)
-            end
-        end)
-
         refreshHumanoidDeathMode(player, hum)
 
         info.connections[#info.connections + 1] = hum.Died:Connect(function()
@@ -4614,12 +4132,7 @@ local function refreshAllTracked()
             hookPlayer(player)
             local character = player.Character
             local hum = character and character:FindFirstChildOfClass("Humanoid")
-            if hum then
-                if not ENV.__XERO_DEATH_PROXY.TemplateByHumanoid[hum] then
-                    ENV.__XERO_DEATH_PROXY.BuildTemplate(player, character, hum)
-                end
-                refreshHumanoidDeathMode(player, hum)
-            end
+            if hum then refreshHumanoidDeathMode(player, hum) end
         end
     end
 end
@@ -4781,17 +4294,9 @@ toggle.MouseButton1Click:Connect(function()
     refreshAllTracked()
 
     if enabled then
-        local readyTemplates, trackedCount = 0, 0
-        for hum in pairs(trackedHumanoids) do
-            trackedCount += 1
-            if ENV.__XERO_DEATH_PROXY.TemplateByHumanoid[hum] then
-                readyTemplates += 1
-            end
-        end
         status.Text =
             "✓ Activo · " .. tostring(selectedEffect()) ..
-            "\nPlantillas visuales exactas: " .. tostring(readyTemplates) .. "/" .. tostring(trackedCount) ..
-            " · enemigo read-only · sin avatar genérico"
+            "\nTU kill → dummy/cadáver de DUELS → efecto."
     else
         for _, entry in ipairs(pendingDeaths) do
             removePending(entry)
@@ -4799,14 +4304,7 @@ toggle.MouseButton1Click:Connect(function()
         table.clear(pendingDeaths)
         table.clear(recentKillCredits)
         table.clear(recentDeathModels)
-        ENV.__XERO_DEATH_PROXY.Clear()
-        status.Text = "Desactivado · proxies locales limpiados."
-    end
-end)
-
-gui.Destroying:Connect(function()
-    if ENV.__XERO_DEATH_PROXY then
-        ENV.__XERO_DEATH_PROXY.Clear()
+        status.Text = "Desactivado · no se aplicarán efectos nuevos."
     end
 end)
 
@@ -4840,7 +4338,7 @@ UserInputService.InputChanged:Connect(function(input)
 end)
 
 print(
-    "[Xero Death Effects R28 ExactVisualProxy]",
+    "[Xero Death Effects R29 InstantStable]",
     #EFFECTS,
     "efectos ·",
     PRELOAD_STATS.loaded,

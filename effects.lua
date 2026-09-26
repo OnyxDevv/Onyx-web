@@ -1,14 +1,16 @@
 --[[
-XeroHub | DUELS Death Effects · Native Dummy Bridge R16 1x1 Color
+XeroHub | DUELS Death Effects · Native Enemy Bridge R18 · Local Kills Only
 Kev
 
 Objetivo:
 - VOLVER al comportamiento que ya funcionaba.
 - Descarga el V2 limpio del catálogo final.
 - Reconstruye el asset faltante bajo ReplicatedStorage.ReplicatedSkins.Effects.
-- Crea un dummy local con TU avatar.
+- Observa a los jugadores enemigos durante la ronda.
+- Cuando un enemigo muere, sólo continúa si el kill puede atribuirse al jugador local.
+- Usa SU Character real como víctima.
 - Llama la lógica NATIVA del juego:
-      DeathEffectPreview.play(dummy, effectName, cleaner)
+      DeathEffectPreview.play(victimCharacter, effectName, cleaner)
   para que el propio módulo aplique deformaciones, transparencias, cambios del
   cuerpo, animaciones, etc., no sólo partículas/sonidos.
 
@@ -64,7 +66,7 @@ end
 -- ============================================================
 -- Repo / cache
 -- ============================================================
-local CACHE_FOLDER = "XeroHub/DeathEffectsNativeDummyR16"
+local CACHE_FOLDER = "XeroHub/DeathEffectsNativeEnemyR18"
 
 local function ensureFolder(path)
     if type(makefolder) ~= "function" then return end
@@ -126,7 +128,8 @@ for _, entry in ipairs(manifest.effects) do
         and entry.name ~= "SoulReaper"
         and entry.name ~= "BlackvalkEffect"
         and entry.name ~= "GhostbringerEffect"
-        and entry.name ~= "Decorated" then
+        and entry.name ~= "Decorated"
+        and entry.name ~= "ClanFlagEffect" then
         EFFECTS[#EFFECTS + 1] = entry.name
         BY_NAME[entry.name] = entry
     end
@@ -885,86 +888,20 @@ local function makeCleaner()
 end
 
 -- ============================================================
--- Dummy
+-- Real enemy victims
 -- ============================================================
-local activeDummy
-local activeCleaner
+local victimCleaners = setmetatable({}, {__mode = "k"})
 
 local function safeDestroy(obj)
     if obj then pcall(function() obj:Destroy() end) end
 end
 
-local function cleanCurrent()
-    if activeCleaner then
-        pcall(function() activeCleaner:Clean() end)
-        activeCleaner = nil
+local function cleanVictim(victim)
+    local cleaner = victim and victimCleaners[victim]
+    if cleaner then
+        pcall(function() cleaner:Clean() end)
+        victimCleaners[victim] = nil
     end
-    if activeDummy then
-        safeDestroy(activeDummy)
-        activeDummy = nil
-    end
-end
-
-local function makeDummy()
-    cleanCurrent()
-
-    local char = LP.Character
-    local ownRoot = char and char:FindFirstChild("HumanoidRootPart")
-    if not char or not ownRoot then
-        return nil, "tu personaje aún no está listo"
-    end
-
-    local oldArchivable = char.Archivable
-    char.Archivable = true
-    local ok, dummy = pcall(function() return char:Clone() end)
-    char.Archivable = oldArchivable
-
-    if not ok or not dummy then
-        return nil, "no pude clonar tu avatar"
-    end
-
-    dummy.Name = "XeroNativeDeathDummy"
-
-    for _, obj in ipairs(dummy:GetDescendants()) do
-        if obj:IsA("Script") or obj:IsA("LocalScript") or obj:IsA("Tool") then
-            safeDestroy(obj)
-        elseif obj:IsA("ForceField") then
-            safeDestroy(obj)
-        elseif obj:IsA("BasePart") then
-            obj.CanCollide = false
-            obj.CanTouch = false
-            obj.CanQuery = false
-        end
-    end
-
-    local hum = dummy:FindFirstChildOfClass("Humanoid")
-    if hum then
-        pcall(function()
-            hum.DisplayDistanceType = Enum.HumanoidDisplayDistanceType.None
-            hum.NameDisplayDistance = 0
-            hum.HealthDisplayDistance = 0
-            hum.BreakJointsOnDeath = false
-            hum.AutoRotate = false
-        end)
-    end
-
-    dummy.Parent = Workspace
-
-    local dummyRoot = dummy:FindFirstChild("HumanoidRootPart")
-    if dummyRoot then
-        pcall(function()
-            dummy:PivotTo(
-                ownRoot.CFrame
-                * CFrame.new(0, 0, -8)
-                * CFrame.Angles(0, math.rad(180), 0)
-            )
-        end)
-        dummyRoot.Anchored = true
-        dummyRoot.Transparency = 1
-    end
-
-    activeDummy = dummy
-    return dummy
 end
 
 -- ============================================================
@@ -3226,114 +3163,6 @@ local function scheduleV2ClothingLock(dummy, asset)
 end
 
 
-local function clanFlagLooksComplete(model)
-    if not model or not model:IsA("Model") then return false end
-    return model:FindFirstChild("Flag_1", true) ~= nil
-        and model:FindFirstChild("Flag_2", true) ~= nil
-        and model:FindFirstChild("Pole_1", true) ~= nil
-        and model:FindFirstChild("Pole_2", true) ~= nil
-end
-
-local function findClanFlagNear(dummy)
-    local root = dummy and dummy:FindFirstChild("HumanoidRootPart")
-    if not root then return nil end
-
-    for _, obj in ipairs(Workspace:GetDescendants()) do
-        if obj:IsA("Model")
-            and (obj.Name == "Flag" or obj.Name == "XeroClanFlag")
-            and clanFlagLooksComplete(obj) then
-
-            local ok, pivot = pcall(function() return obj:GetPivot() end)
-            if ok and (pivot.Position - root.Position).Magnitude <= 45 then
-                return obj
-            end
-        end
-    end
-end
-
-local function renderClanFlagFull(dummy, asset, cleaner)
-    if not dummy or not dummy.Parent or not asset then return false end
-    if findClanFlagNear(dummy) then return true end
-
-    local template = asset:FindFirstChild("Flag")
-    if not template or not template:IsA("Model") then return false end
-
-    local root = dummy:FindFirstChild("HumanoidRootPart")
-    if not root then return false end
-
-    local clone = template:Clone()
-    clone.Name = "XeroClanFlag"
-
-    for _, obj in ipairs(clone:GetDescendants()) do
-        if obj:IsA("BasePart") then
-            obj.Anchored = true
-            obj.CanCollide = false
-            obj.CanTouch = false
-            obj.CanQuery = false
-        end
-    end
-
-    clone.Parent = Workspace
-    if cleaner then cleaner:Add(clone) end
-
-    local boxCF, boxSize = clone:GetBoundingBox()
-    local bodyCF, bodySize = dummy:GetBoundingBox()
-
-    local footY = bodyCF.Position.Y - bodySize.Y * .5
-    local pivot = clone:GetPivot()
-    local localBox = pivot:ToObjectSpace(boxCF)
-    local rotationOnly = root.CFrame - root.Position
-
-    local desiredBoxCF =
-        CFrame.new(
-            root.Position.X,
-            footY + boxSize.Y * .5,
-            root.Position.Z
-        ) * rotationOnly
-
-    local finalPivot = desiredBoxCF * localBox:Inverse()
-
-    local rise = tonumber(template:GetAttribute("PierceRise")) or 22
-    local delayTime = tonumber(template:GetAttribute("PierceStart")) or .10
-    local travel = tonumber(template:GetAttribute("PierceTravel")) or .20
-
-    local startPivot = finalPivot * CFrame.new(0, -rise, 0)
-    clone:PivotTo(startPivot)
-
-    local driver = Instance.new("CFrameValue")
-    driver.Value = startPivot
-
-    local changed = driver:GetPropertyChangedSignal("Value"):Connect(function()
-        if clone.Parent then
-            clone:PivotTo(driver.Value)
-        end
-    end)
-
-    if cleaner then
-        cleaner:Add(driver)
-        cleaner:Add(changed)
-    end
-
-    task.delay(delayTime, function()
-        if not clone.Parent then return end
-
-        local tween = TweenService:Create(
-            driver,
-            TweenInfo.new(
-                math.max(.05, travel),
-                Enum.EasingStyle.Quad,
-                Enum.EasingDirection.Out
-            ),
-            {Value = finalPivot}
-        )
-
-        if cleaner then cleaner:Add(tween) end
-        tween:Play()
-    end)
-
-    return true
-end
-
 local function cleanupLegacyDecoratedArtifacts()
     for _, obj in ipairs(Workspace:GetDescendants()) do
         if obj.Name == "XeroEffect_WeldToRoot" then
@@ -3342,140 +3171,107 @@ local function cleanupLegacyDecoratedArtifacts()
     end
 end
 
-local function runNative(name, statusLabel)
+local function runNativeOnVictim(name, victim, statusLabel)
+    if not victim or not victim.Parent then
+        if statusLabel then statusLabel.Text = "✕ La víctima ya no existe." end
+        return false
+    end
+
     if isJellyEffect(name) then
-        statusLabel.Text = "Jelly eliminado del renderer."
-        return
+        if statusLabel then statusLabel.Text = "Jelly eliminado del renderer." end
+        return false
     end
 
-    if name == "Heartbeat" then
-        statusLabel.Text = "Heartbeat eliminado del renderer."
-        return
-    end
-
-    if name == "SoulReaper" then
-        statusLabel.Text = "SoulReaper eliminado del renderer."
-        return
-    end
-
-    if name == "BlackvalkEffect" then
-        statusLabel.Text = "Blackvalk eliminado del renderer."
-        return
-    end
-
-    if name == "GhostbringerEffect" then
-        statusLabel.Text = "Ghostbringer eliminado del renderer."
-        return
-    end
-
-    if name == "Decorated" then
-        statusLabel.Text = "Decorated eliminado del renderer."
-        return
+    if name == "Heartbeat"
+        or name == "SoulReaper"
+        or name == "BlackvalkEffect"
+        or name == "GhostbringerEffect"
+        or name == "Decorated" then
+        if statusLabel then
+            statusLabel.Text = tostring(name) .. " eliminado del renderer."
+        end
+        return false
     end
 
     local asset, injected, assetStatus = ensureNativeAsset(name)
     if not asset then
-        statusLabel.Text = "✕ Asset: " .. tostring(assetStatus)
-        return
+        if statusLabel then statusLabel.Text = "✕ Asset: " .. tostring(assetStatus) end
+        return false
     end
 
-    local dummy, dummyErr = makeDummy()
-    if not dummy then
-        statusLabel.Text = "✕ Dummy: " .. tostring(dummyErr)
-        return
+    local hum = victim:FindFirstChildOfClass("Humanoid")
+    if not hum then
+        if statusLabel then statusLabel.Text = "✕ La víctima no tiene Humanoid." end
+        return false
     end
 
-    local before = snapshotDummyState(dummy)
+    cleanVictim(victim)
 
-    observeNativeParticles(dummy)
+    local before = snapshotDummyState(victim)
 
-    enforceInvisibleCarriers(dummy, asset, name)
+    observeNativeParticles(victim)
+    enforceInvisibleCarriers(victim, asset, name)
 
-    local clothesV2 = applyV2Clothing(dummy, asset)
-    local hatsV2 = attachV2HatIfNeeded(dummy, asset)
-
-    local decorated3D = 0
-    local decoratedStatus = nil
-
-    if name == "Decorated" then
-        cleanupLegacyDecoratedArtifacts()
-    end
+    local clothesV2 = applyV2Clothing(victim, asset)
+    local hatsV2 = attachV2HatIfNeeded(victim, asset)
 
     local cleaner = makeCleaner()
-    activeCleaner = cleaner
+    victimCleaners[victim] = cleaner
 
-    statusLabel.Text =
-        "Aplicando efecto a víctima completa...\n" ..
-        tostring(assetStatus)
-
-    local ok, result = pcall(function()
-        return Preview.play(dummy, name, cleaner)
-    end)
-
-    if name == "Decorated" then
-        decorated3D, decoratedStatus =
-            installDecoratedRigR15(dummy, asset)
-
-        rescanMarkedEmittersNearDummy(dummy, 2.2)
+    if statusLabel then
+        statusLabel.Text =
+            "Aplicando " .. tostring(name) .. " a " .. tostring(victim.Name) .. "...\n" ..
+            tostring(assetStatus)
     end
+
+    -- This is the important part: the native preview is executed on the
+    -- actual dead enemy character rather than on a disposable preview dummy.
+    local ok, result = pcall(function()
+        return Preview.play(victim, name, cleaner)
+    end)
 
     local bodyPatched = false
     local bodyPatchSource = nil
 
-    if name == "ClanFlagEffect" then
-        task.delay(.12, function()
-            if dummy and dummy.Parent then
-                renderClanFlagFull(dummy, asset, cleaner)
-                rescanMarkedEmittersNearDummy(dummy, 2.0)
-            end
-        end)
-    end
-
     if name == "1x1x1x1Effect" then
-        schedule1x1x1x1Color(dummy)
+        schedule1x1x1x1Color(victim)
         bodyPatched = true
         bodyPatchSource = "1x1x1x1 · verde nativo completo"
 
     elseif name == "Freeze" then
-        scheduleFreezeReal(dummy)
+        scheduleFreezeReal(victim)
         bodyPatched = true
         bodyPatchSource = "Freeze · TODO sólido"
 
     elseif name == "Frostbite" then
-        scheduleFrostbiteReal(dummy)
+        scheduleFrostbiteReal(victim)
         bodyPatched = true
         bodyPatchSource = "Frostbite · sin cara/ropa + accesorios negros"
 
     elseif name == "Ghosted" then
-        playGhostedCapturedNativeFade(dummy)
+        playGhostedCapturedNativeFade(victim)
         bodyPatched = true
         bodyPatchSource = "Ghosted · fade + vuelo"
 
     elseif name == "SpiritOverload" then
-        scheduleSpiritOverloadReal(dummy)
+        scheduleSpiritOverloadReal(victim)
         bodyPatched = true
         bodyPatchSource = "SpiritOverload · TODO RGB 36,75,26"
 
     elseif name == "Heartache" then
-        scheduleHeartacheReal(dummy)
+        scheduleHeartacheReal(victim)
         bodyPatched = true
         bodyPatchSource = "Heartache · TODO rojo · material intacto"
 
     elseif name == "LightningStrike"
         or name == "LightningEffect" then
-        scheduleLightningBlack(dummy)
+        scheduleLightningBlack(victim)
         bodyPatched = true
         bodyPatchSource = "Lightning · TODO negro · material intacto"
 
     else
         bodyPatched, bodyPatchSource =
-            scheduleBodyStylePatch(dummy, name, asset)
-    end
-
-    if name == "Decorated" then
-        -- The Effect part is handled natively; this second pass catches all
-        -- marked emitters once the native clone is actually in Workspace.
-        rescanMarkedEmittersNearDummy(dummy, 2.0)
+            scheduleBodyStylePatch(victim, name, asset)
     end
 
     if clothesV2 > 0
@@ -3488,40 +3284,50 @@ local function runNative(name, statusLabel)
         and name ~= "Heartache"
         and name ~= "LightningStrike"
         and name ~= "LightningEffect" then
-
-        scheduleV2ClothingLock(dummy, asset)
+        scheduleV2ClothingLock(victim, asset)
     end
 
     if not ok then
-        statusLabel.Text =
-            "✕ DeathEffectPreview falló:\n" ..
-            tostring(result)
-        return
+        if statusLabel then
+            statusLabel.Text = "✕ DeathEffectPreview falló:\n" .. tostring(result)
+        end
+        cleanVictim(victim)
+        return false
     end
 
-    statusLabel.Text =
-        "✓ Nativo ejecutado · " .. name ..
-        "\nR14 · precargado · víctima completa."
+    if statusLabel then
+        statusLabel.Text =
+            "✓ " .. tostring(name) .. " aplicado nativamente a " .. tostring(victim.Name)
+    end
 
     task.delay(.90, function()
-        if not dummy.Parent then return end
+        if not victim or not victim.Parent or not statusLabel or not statusLabel.Parent then
+            return
+        end
 
-        local mutations =
-            countMutations(before, snapshotDummyState(dummy))
-
+        local mutations = countMutations(before, snapshotDummyState(victim))
         statusLabel.Text =
             "✓ " .. name ..
+            " · " .. tostring(victim.Name) ..
             " · body " .. tostring(mutations) ..
             (bodyPatched and (" · " .. tostring(bodyPatchSource)) or "") ..
-            (decorated3D > 0 and " · Decorated rig completo" or "") ..
             (clothesV2 > 0 and (" · ropa V2 " .. tostring(clothesV2)) or "") ..
-            (hatsV2 > 0 and (" · 3D " .. tostring(hatsV2)) or "") ..
-            "\n" .. tostring(assetStatus)
+            (hatsV2 > 0 and (" · 3D " .. tostring(hatsV2)) or "")
     end)
+
+    -- Death effects are short-lived. Keep cleanup isolated per victim so one
+    -- kill never cancels the visuals of another kill.
+    task.delay(10, function()
+        if victimCleaners[victim] == cleaner then
+            cleanVictim(victim)
+        end
+    end)
+
+    return true
 end
 
 -- ============================================================
--- Compact UI
+-- Compact UI + enemy death listener
 -- ============================================================
 local oldGui = PlayerGui:FindFirstChild("XeroDeathNativeBridge")
 if oldGui then oldGui:Destroy() end
@@ -3533,8 +3339,8 @@ gui.IgnoreGuiInset = true
 gui.Parent = PlayerGui
 
 local frame = Instance.new("Frame")
-frame.Size = UDim2.fromOffset(430, 226)
-frame.Position = UDim2.new(.5, -215, .72, -113)
+frame.Size = UDim2.fromOffset(430, 220)
+frame.Position = UDim2.new(.5, -215, .72, -110)
 frame.BackgroundColor3 = Color3.fromRGB(12,12,12)
 frame.BorderSizePixel = 0
 frame.Parent = gui
@@ -3548,7 +3354,7 @@ local title = Instance.new("TextLabel")
 title.BackgroundTransparency = 1
 title.Position = UDim2.fromOffset(16, 12)
 title.Size = UDim2.new(1,-32,0,22)
-title.Text = "XERO · DEATH EFFECT · NATIVE DUMMY R16"
+title.Text = "XERO · DEATH EFFECTS · ENEMIES R17"
 title.TextColor3 = Color3.fromRGB(245,245,245)
 title.Font = Enum.Font.GothamBold
 title.TextSize = 14
@@ -3568,11 +3374,11 @@ Instance.new("UICorner", effectLabel).CornerRadius = UDim.new(0,10)
 
 local status = Instance.new("TextLabel")
 status.BackgroundTransparency = 1
-status.Position = UDim2.fromOffset(16, 157)
+status.Position = UDim2.fromOffset(16, 151)
 status.Size = UDim2.new(1,-32,0,54)
 status.Text =
     string.format(
-        "%d efectos · %d precargados · lógica NATIVA",
+        "%d efectos · %d precargados · esperando activación",
         #EFFECTS,
         PRELOAD_STATS.loaded
     )
@@ -3600,8 +3406,7 @@ local function mkButton(txt, x, w)
 end
 
 local prev = mkButton("‹", 16, 44)
-local test = mkButton("PROBAR NATIVO", 68, 182)
-local dummyBtn = mkButton("NUEVO DUMMY", 258, 112)
+local toggle = mkButton("ENEMIGOS: OFF", 68, 302)
 local nxt = mkButton("›", 378, 36)
 
 local index = 1
@@ -3612,36 +3417,540 @@ for i, effectName in ipairs(EFFECTS) do
     end
 end
 
+local enabled = false
+local trackedHumanoids = setmetatable({}, {__mode = "k"})
+local playerConnections = {}
+local localTeamConnections = {}
+
+-- A death is NOT enough anymore. We keep it pending until we can attribute
+-- the elimination to LocalPlayer through a native killer tag, a local kill
+-- counter increment, or the local weapon's kill-confirm sound.
+local pendingDeaths = {}
+local pendingByHumanoid = setmetatable({}, {__mode = "k"})
+local killSignalConnections = {}
+local hookedKillValues = setmetatable({}, {__mode = "k"})
+local hookedKillSounds = setmetatable({}, {__mode = "k"})
+local recentKillCredits = {}
+local lastAcceptedSignalAt = 0
+local lastAcceptedSignalSource = nil
+local lastAppliedAt = 0
+
+local PENDING_LIFETIME = 1.35
+local CREDIT_LIFETIME = 0.85
+local SIGNAL_DEDUPE_WINDOW = 0.28
+
+local function selectedEffect()
+    return EFFECTS[index]
+end
+
 local function refresh()
-    effectLabel.Text = EFFECTS[index] or "Sin efectos"
+    effectLabel.Text = selectedEffect() or "Sin efectos"
 end
 refresh()
+
+local function isEnemyPlayer(player)
+    if not player or player == LP then return false end
+
+    -- DUELS exposes lobby vs. round cleanly through Neutral/Team.
+    -- This also prevents the death hook from doing anything in the lobby.
+    if LP.Neutral == true or player.Neutral == true then
+        return false
+    end
+
+    if LP.Team ~= nil and player.Team ~= nil then
+        return LP.Team ~= player.Team
+    end
+
+    return LP.TeamColor ~= player.TeamColor
+end
+
+local function refreshHumanoidDeathMode(player, hum)
+    local info = trackedHumanoids[hum]
+    if not info or not hum.Parent then return end
+
+    local shouldPrepare = enabled and isEnemyPlayer(player)
+    if shouldPrepare then
+        pcall(function()
+            hum.BreakJointsOnDeath = false
+        end)
+    else
+        pcall(function()
+            hum.BreakJointsOnDeath = info.originalBreakJoints
+        end)
+    end
+end
+
+local function normalized(s)
+    return string.lower(tostring(s or "")):gsub("[%s_%-]", "")
+end
+
+local function isKillKey(name)
+    local n = normalized(name)
+    return n == "creator"
+        or n == "killer"
+        or n == "killedby"
+        or n == "lastdamager"
+        or n == "lastattacker"
+        or n == "damager"
+        or n == "attacker"
+        or n == "owner"
+        or n == "creatorid"
+        or n == "killerid"
+        or n == "lastdamagerid"
+end
+
+local function valueMatchesLocal(v)
+    if typeof(v) == "Instance" then
+        return v == LP
+    end
+
+    if type(v) == "number" then
+        return v == LP.UserId
+    end
+
+    if type(v) == "string" then
+        local x = string.lower(v)
+        return x == string.lower(LP.Name)
+            or x == tostring(LP.UserId)
+    end
+
+    return false
+end
+
+local function objectValueMatchesLocal(obj)
+    if not obj then return false end
+
+    if obj:IsA("ObjectValue") then
+        local ok, v = pcall(function() return obj.Value end)
+        return ok and v == LP
+    end
+
+    if obj:IsA("IntValue") or obj:IsA("NumberValue") then
+        local ok, v = pcall(function() return obj.Value end)
+        return ok and tonumber(v) == LP.UserId
+    end
+
+    if obj:IsA("StringValue") then
+        local ok, v = pcall(function() return obj.Value end)
+        return ok and valueMatchesLocal(v)
+    end
+
+    return false
+end
+
+local function attributesPointToLocal(obj)
+    if not obj then return false end
+    local ok, attrs = pcall(function() return obj:GetAttributes() end)
+    if not ok or type(attrs) ~= "table" then return false end
+
+    for key, value in pairs(attrs) do
+        if isKillKey(key) and valueMatchesLocal(value) then
+            return true
+        end
+    end
+    return false
+end
+
+local function hasLocalKillerTag(character, hum)
+    if attributesPointToLocal(hum) or attributesPointToLocal(character) then
+        return true
+    end
+
+    for _, root in ipairs({hum, character}) do
+        if root then
+            for _, obj in ipairs(root:GetDescendants()) do
+                if isKillKey(obj.Name) and objectValueMatchesLocal(obj) then
+                    return true
+                end
+            end
+        end
+    end
+
+    return false
+end
+
+local function removePending(entry)
+    if not entry or entry.removed then return end
+    entry.removed = true
+    if entry.hum then pendingByHumanoid[entry.hum] = nil end
+end
+
+local function prunePending()
+    local now = os.clock()
+    local write = 1
+    for read = 1, #pendingDeaths do
+        local entry = pendingDeaths[read]
+        if entry
+            and not entry.removed
+            and now - entry.at <= PENDING_LIFETIME
+            and entry.character
+            and entry.character.Parent then
+            pendingDeaths[write] = entry
+            write += 1
+        else
+            if entry then removePending(entry) end
+        end
+    end
+    for i = write, #pendingDeaths do pendingDeaths[i] = nil end
+end
+
+local function pruneCredits()
+    local now = os.clock()
+    local write = 1
+    for read = 1, #recentKillCredits do
+        local credit = recentKillCredits[read]
+        if credit and now - credit.at <= CREDIT_LIFETIME then
+            recentKillCredits[write] = credit
+            write += 1
+        end
+    end
+    for i = write, #recentKillCredits do recentKillCredits[i] = nil end
+end
+
+local function triggerVictim(player, character, hum, proof)
+    local info = trackedHumanoids[hum]
+    if not info or info.triggered then return false end
+    if not enabled or not isEnemyPlayer(player) then return false end
+    if not character or not character.Parent then return false end
+
+    info.triggered = true
+    local pending = pendingByHumanoid[hum]
+    if pending then removePending(pending) end
+
+    local effectName = selectedEffect()
+    if not effectName then return false end
+
+    lastAppliedAt = os.clock()
+    status.Text =
+        "☠ Kill confirmado: " .. tostring(player.Name) ..
+        " · " .. tostring(effectName) ..
+        (proof and ("\n" .. tostring(proof)) or "")
+
+    task.defer(function()
+        if character and character.Parent then
+            runNativeOnVictim(effectName, character, status)
+        end
+    end)
+    return true
+end
+
+local function newestPending()
+    prunePending()
+    for i = #pendingDeaths, 1, -1 do
+        local entry = pendingDeaths[i]
+        if entry
+            and not entry.removed
+            and enabled
+            and isEnemyPlayer(entry.player)
+            and entry.character
+            and entry.character.Parent then
+            return entry
+        end
+    end
+    return nil
+end
+
+local function consumeOnePending(proof)
+    local entry = newestPending()
+    if not entry then return false end
+    removePending(entry)
+    return triggerVictim(entry.player, entry.character, entry.hum, proof)
+end
+
+local function consumeFreshCredit(player, character, hum)
+    pruneCredits()
+    if #recentKillCredits == 0 then return false end
+
+    local credit = table.remove(recentKillCredits, 1)
+    if not credit then return false end
+    return triggerVictim(player, character, hum, credit.source)
+end
+
+local function recordLocalKillSignal(source, count)
+    if not enabled then return end
+    count = math.max(1, math.floor(tonumber(count) or 1))
+    local now = os.clock()
+
+    -- GunKill + Kills counter often fire for the same elimination. Do not
+    -- convert the second native confirmation into a credit for the next death.
+    if lastAcceptedSignalSource ~= source
+        and now - lastAcceptedSignalAt <= SIGNAL_DEDUPE_WINDOW then
+        return
+    end
+
+    -- A direct creator/killer tag may already have applied the effect before
+    -- the sound/stat arrives. Ignore the trailing confirmation in that case.
+    if now - lastAppliedAt <= SIGNAL_DEDUPE_WINDOW and not newestPending() then
+        lastAcceptedSignalAt = now
+        lastAcceptedSignalSource = source
+        return
+    end
+
+    lastAcceptedSignalAt = now
+    lastAcceptedSignalSource = source
+
+    for _ = 1, count do
+        if not consumeOnePending(source) then
+            pruneCredits()
+            recentKillCredits[#recentKillCredits + 1] = {
+                at = now,
+                source = source,
+            }
+        end
+    end
+end
+
+local function queueVictimDeath(player, character, hum)
+    local info = trackedHumanoids[hum]
+    if not info or info.triggered then return end
+    if not enabled or not isEnemyPlayer(player) then return end
+    if not character or not character.Parent then return end
+    if pendingByHumanoid[hum] then return end
+
+    -- Best case: the game already stamped the killer/creator on the Humanoid.
+    if hasLocalKillerTag(character, hum) then
+        triggerVictim(player, character, hum, "killer/creator nativo")
+        return
+    end
+
+    -- Some local kill-confirm signals arrive a fraction before Humanoid.Died.
+    if consumeFreshCredit(player, character, hum) then
+        return
+    end
+
+    local entry = {
+        player = player,
+        character = character,
+        hum = hum,
+        at = os.clock(),
+        removed = false,
+    }
+    pendingByHumanoid[hum] = entry
+    pendingDeaths[#pendingDeaths + 1] = entry
+
+    status.Text = "Muerte detectada: " .. tostring(player.Name) .. " · esperando confirmar TU kill..."
+
+    -- Killer tags can be attached just after Died, so recheck briefly.
+    task.defer(function()
+        for _, delayTime in ipairs({0.03, 0.09, 0.18, 0.32}) do
+            task.wait(delayTime)
+            if info.triggered or entry.removed then return end
+            if hasLocalKillerTag(character, hum) then
+                removePending(entry)
+                triggerVictim(player, character, hum, "killer/creator nativo")
+                return
+            end
+        end
+    end)
+
+    task.delay(PENDING_LIFETIME + 0.05, function()
+        if entry.removed or info.triggered then return end
+        removePending(entry)
+        if enabled then
+            status.Text = "Muerte ignorada: no se confirmó que el kill fuera tuyo."
+        end
+    end)
+end
+
+local function hookCharacter(player, character)
+    if player == LP or not character then return end
+
+    task.spawn(function()
+        local hum = character:FindFirstChildOfClass("Humanoid")
+            or character:WaitForChild("Humanoid", 10)
+        if not hum or trackedHumanoids[hum] then return end
+
+        local info = {
+            originalBreakJoints = hum.BreakJointsOnDeath,
+            triggered = false,
+            connections = {},
+        }
+        trackedHumanoids[hum] = info
+
+        refreshHumanoidDeathMode(player, hum)
+
+        info.connections[#info.connections + 1] = hum.Died:Connect(function()
+            queueVictimDeath(player, character, hum)
+        end)
+
+        info.connections[#info.connections + 1] = hum.HealthChanged:Connect(function(health)
+            if health <= 0 then
+                queueVictimDeath(player, character, hum)
+            end
+        end)
+
+        info.connections[#info.connections + 1] = character.AncestryChanged:Connect(function(_, parent)
+            if parent == nil then
+                local pending = pendingByHumanoid[hum]
+                if pending then removePending(pending) end
+                for _, conn in ipairs(info.connections) do
+                    pcall(function() conn:Disconnect() end)
+                end
+                trackedHumanoids[hum] = nil
+                cleanVictim(character)
+            end
+        end)
+    end)
+end
+
+local function hookPlayer(player)
+    if player == LP or playerConnections[player] then return end
+
+    local conns = {}
+    playerConnections[player] = conns
+
+    conns[#conns + 1] = player.CharacterAdded:Connect(function(character)
+        hookCharacter(player, character)
+    end)
+
+    local function refreshPlayerHumanoid()
+        local character = player.Character
+        local hum = character and character:FindFirstChildOfClass("Humanoid")
+        if hum then refreshHumanoidDeathMode(player, hum) end
+    end
+
+    conns[#conns + 1] = player:GetPropertyChangedSignal("Team"):Connect(refreshPlayerHumanoid)
+    conns[#conns + 1] = player:GetPropertyChangedSignal("TeamColor"):Connect(refreshPlayerHumanoid)
+    conns[#conns + 1] = player:GetPropertyChangedSignal("Neutral"):Connect(refreshPlayerHumanoid)
+
+    if player.Character then
+        hookCharacter(player, player.Character)
+    end
+end
+
+local function refreshAllTracked()
+    for _, player in ipairs(Players:GetPlayers()) do
+        if player ~= LP then
+            hookPlayer(player)
+            local character = player.Character
+            local hum = character and character:FindFirstChildOfClass("Humanoid")
+            if hum then refreshHumanoidDeathMode(player, hum) end
+        end
+    end
+end
+
+-- ===== Local kill confirmations =============================================
+local function looksLikeKillCounter(obj)
+    if not (obj:IsA("IntValue") or obj:IsA("NumberValue")) then return false end
+    local n = normalized(obj.Name)
+    return n == "kills"
+        or n == "kill"
+        or n == "eliminations"
+        or n == "elimination"
+        or n == "elims"
+        or n == "kos"
+end
+
+local function hookKillCounter(obj)
+    if not looksLikeKillCounter(obj) or hookedKillValues[obj] then return end
+    hookedKillValues[obj] = true
+
+    local previous = tonumber(obj.Value) or 0
+    local conn = obj:GetPropertyChangedSignal("Value"):Connect(function()
+        local current = tonumber(obj.Value) or previous
+        local delta = current - previous
+        previous = current
+        if delta > 0 then
+            recordLocalKillSignal("contador " .. tostring(obj.Name), delta)
+        end
+    end)
+    killSignalConnections[#killSignalConnections + 1] = conn
+end
+
+local function isKillConfirmSound(sound)
+    if not sound:IsA("Sound") then return false end
+    local n = normalized(sound.Name)
+    -- Confirmed native DUELS path seen on the local weapon:
+    -- Character.DefaultGun.Handle.GunKill
+    return n == "gunkill"
+        or n == "killconfirm"
+        or n == "killsound"
+        or n == "knifeKill"
+end
+
+local function hookKillSound(sound)
+    if not isKillConfirmSound(sound) or hookedKillSounds[sound] then return end
+    hookedKillSounds[sound] = true
+    local conn = sound.Played:Connect(function()
+        recordLocalKillSignal("sonido " .. tostring(sound.Name), 1)
+    end)
+    killSignalConnections[#killSignalConnections + 1] = conn
+end
+
+local function scanLocalKillSignals(root)
+    if not root then return end
+    hookKillCounter(root)
+    hookKillSound(root)
+    for _, obj in ipairs(root:GetDescendants()) do
+        hookKillCounter(obj)
+        hookKillSound(obj)
+    end
+end
+
+scanLocalKillSignals(LP)
+scanLocalKillSignals(LP.Character)
+scanLocalKillSignals(LP:FindFirstChildOfClass("Backpack"))
+
+killSignalConnections[#killSignalConnections + 1] = LP.DescendantAdded:Connect(function(obj)
+    hookKillCounter(obj)
+    hookKillSound(obj)
+end)
+
+killSignalConnections[#killSignalConnections + 1] = LP.CharacterAdded:Connect(function(character)
+    task.defer(function()
+        scanLocalKillSignals(character)
+    end)
+end)
+
+for _, propertyName in ipairs({"Team", "TeamColor", "Neutral"}) do
+    localTeamConnections[#localTeamConnections + 1] =
+        LP:GetPropertyChangedSignal(propertyName):Connect(refreshAllTracked)
+end
+
+Players.PlayerAdded:Connect(hookPlayer)
+Players.PlayerRemoving:Connect(function(player)
+    local conns = playerConnections[player]
+    if conns then
+        for _, conn in ipairs(conns) do
+            pcall(function() conn:Disconnect() end)
+        end
+        playerConnections[player] = nil
+    end
+end)
+
+refreshAllTracked()
 
 prev.MouseButton1Click:Connect(function()
     index -= 1
     if index < 1 then index = #EFFECTS end
     refresh()
+    status.Text = "Efecto seleccionado: " .. tostring(selectedEffect())
 end)
 
 nxt.MouseButton1Click:Connect(function()
     index += 1
     if index > #EFFECTS then index = 1 end
     refresh()
+    status.Text = "Efecto seleccionado: " .. tostring(selectedEffect())
 end)
 
-test.MouseButton1Click:Connect(function()
-    local name = EFFECTS[index]
-    status.Text = "Preparando " .. tostring(name) .. "..."
-    task.spawn(function()
-        runNative(name, status)
-    end)
-end)
+toggle.MouseButton1Click:Connect(function()
+    enabled = not enabled
+    toggle.Text = enabled and "ENEMIGOS: ON" or "ENEMIGOS: OFF"
+    refreshAllTracked()
 
-dummyBtn.MouseButton1Click:Connect(function()
-    local dummy, err = makeDummy()
-    status.Text = dummy
-        and "✓ Dummy recreado con tu avatar."
-        or ("✕ " .. tostring(err))
+    if enabled then
+        status.Text =
+            "✓ Activo · " .. tostring(selectedEffect()) ..
+            "\nSólo TU kill confirmado · lobby/Neutral ignorado."
+    else
+        for _, entry in ipairs(pendingDeaths) do
+            removePending(entry)
+        end
+        table.clear(pendingDeaths)
+        table.clear(recentKillCredits)
+        status.Text = "Desactivado · no se aplicarán efectos nuevos."
+    end
 end)
 
 -- drag
@@ -3673,16 +3982,12 @@ UserInputService.InputChanged:Connect(function(input)
     end
 end)
 
-task.defer(function()
-    local dummy, err = makeDummy()
-    status.Text = dummy
-        and (
-            tostring(#EFFECTS) ..
-            " efectos · " ..
-            tostring(PRELOAD_STATS.loaded) ..
-            " precargados · ✓ dummy listo"
-        )
-        or ("✕ dummy: " .. tostring(err))
-end)
+print(
+    "[Xero Death Native Enemy R17]",
+    #EFFECTS,
+    "efectos ·",
+    PRELOAD_STATS.loaded,
+    "precargados ·",
+    BASE
+)
 
-print("[Xero Death Native Dummy R16]", #EFFECTS, "efectos ·", PRELOAD_STATS.loaded, "precargados ·", BASE)

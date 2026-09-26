@@ -1,5 +1,5 @@
 --[[
-XeroHub | DUELS Death Effects · CurrentCamera R36 · Fix duplicados · Base original
+XeroHub | DUELS Death Effects · CurrentCamera R36 · Fix duplicados · Base original ghsot
 Kev
 
 Objetivo:
@@ -4166,7 +4166,7 @@ local function runNativeOnVictim(name, victim, statusLabel)
 
     local cleaner = makeCleaner()
     victimCleaners[victim] = cleaner
-    if string.find(string.lower(tostring(name)), "venom", 1, true) then
+    if name == "Ghosted" or string.find(string.lower(tostring(name)), "venom", 1, true) then
         lockVenomDisappearance(victim, cleaner)
     end
 
@@ -4211,9 +4211,10 @@ local function runNativeOnVictim(name, victim, statusLabel)
         bodyPatchSource = "Frostbite · sin cara/ropa + accesorios negros"
 
     elseif name == "Ghosted" then
-        -- CurrentCamera proxy: native preview owns Ghosted movement/fade.
-        bodyPatched = false
-        bodyPatchSource = nil
+        -- Reconnect the existing captured fade / reconstructed rise to the proxy.
+        playGhostedCapturedNativeFade(victim)
+        bodyPatched = true
+        bodyPatchSource = "Ghosted · subida y desvanecimiento"
 
     elseif name == "SpiritOverload" then
         scheduleSpiritOverloadReal(victim)

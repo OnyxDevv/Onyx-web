@@ -1,5 +1,5 @@
 --[[
-XeroHub | DUELS Death Effects · Stable Base R23 · Local Kills + Dummy Bridge
+XeroHub | DUELS Death Effects · Stable Base R288883 · Local Kills + Dummy Bridge
 Kev
 
 Objetivo:

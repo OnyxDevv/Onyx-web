@@ -62,7 +62,7 @@ local function httpGet(url)
     return nil
 end
 
-local CACHE_FOLDER = "XeroHub/DeathEffectsV2"
+local CACHE_FOLDER = "XeroHub/DeathEffectsV2_DummyR2"
 
 local function ensureCacheFolder()
     if type(makefolder) ~= "function" then return false end
@@ -114,6 +114,7 @@ end
 table.sort(EFFECTS)
 
 local activeRoot
+local activeDummy
 local currentIndex = 1
 local renderSerial = 0
 local decodedCache = {}
@@ -122,24 +123,46 @@ local function safeDestroy(obj)
     if obj then pcall(function() obj:Destroy() end) end
 end
 
+local function isValidV2Wrapper(data)
+    return type(data) == "table"
+        and tonumber(data.schemaVersion) == 2
+        and type(data.snapshot) == "table"
+        and type(data.snapshot.nodes) == "table"
+        and #data.snapshot.nodes > 0
+end
+
+local function decodeWrapper(body)
+    if type(body) ~= "string" then return nil end
+    local ok, data = pcall(function()
+        return HttpService:JSONDecode(body)
+    end)
+    if ok and isValidV2Wrapper(data) then
+        return data
+    end
+    return nil
+end
+
 local function fetchEffect(name)
     if decodedCache[name] then return decodedCache[name] end
 
     local entry = EFFECT_BY_NAME[name]
     if not entry then return nil, "No existe en manifest." end
 
+    -- Cache local primero, PERO sólo si de verdad es schema V2.
     local body = readCachedEffect(entry.file)
-    if not body then
-        body = httpGet(BASE .. "/effects/" .. entry.file)
-        if body then writeCachedEffect(entry.file, body) end
-    end
-    if not body then return nil, "No pude descargar " .. tostring(entry.file) end
+    local data = decodeWrapper(body)
 
-    local ok, data = pcall(function()
-        return HttpService:JSONDecode(body)
-    end)
-    if not ok or type(data) ~= "table" then
-        return nil, "JSON inválido: " .. tostring(entry.file)
+    -- Si quedó un JSON viejo/V1 en cache, se ignora y se vuelve a bajar.
+    if not data then
+        body = httpGet(BASE .. "/effects/" .. entry.file)
+        data = decodeWrapper(body)
+        if data and body then
+            writeCachedEffect(entry.file, body)
+        end
+    end
+
+    if not data then
+        return nil, "JSON no es Full Snapshot V2: " .. tostring(entry.file)
     end
 
     decodedCache[name] = data
@@ -229,10 +252,117 @@ local function setAttributes(instance, attributes)
     end
 end
 
-local function targetCFrame()
+local function clearDummy()
+    if activeDummy then
+        safeDestroy(activeDummy)
+        activeDummy = nil
+    end
+end
+
+local function createDummy()
+    clearDummy()
+
     local char = LocalPlayer.Character
-    local hrp = char and char:FindFirstChild("HumanoidRootPart")
-    if hrp then return hrp.CFrame * CFrame.new(0, -2.4, -7) end
+    local sourceHrp = char and char:FindFirstChild("HumanoidRootPart")
+    if not char or not sourceHrp then
+        return nil, "Tu personaje todavía no está listo."
+    end
+
+    local oldArchivable = char.Archivable
+    char.Archivable = true
+    local ok, dummy = pcall(function() return char:Clone() end)
+    char.Archivable = oldArchivable
+
+    if not ok or not dummy then
+        return nil, "No pude clonar tu personaje."
+    end
+
+    dummy.Name = "XeroDeathEffectDummy"
+
+    -- El dummy conserva TU avatar, accesorios y proporciones,
+    -- pero quitamos scripts/tools para que sea sólo un maniquí local.
+    for _, obj in ipairs(dummy:GetDescendants()) do
+        if obj:IsA("LocalScript") or obj:IsA("Script") or obj:IsA("Tool") then
+            safeDestroy(obj)
+        elseif obj:IsA("BasePart") then
+            obj.CanCollide = false
+            obj.CanTouch = false
+            obj.CanQuery = false
+            obj.Massless = true
+        elseif obj:IsA("ForceField") then
+            safeDestroy(obj)
+        end
+    end
+
+    local hum = dummy:FindFirstChildOfClass("Humanoid")
+    if hum then
+        pcall(function()
+            hum.DisplayDistanceType = Enum.HumanoidDisplayDistanceType.None
+            hum.NameDisplayDistance = 0
+            hum.HealthDisplayDistance = 0
+            hum.AutoRotate = false
+            hum.BreakJointsOnDeath = false
+            hum.Health = hum.MaxHealth
+        end)
+    end
+
+    local hrp = dummy:FindFirstChild("HumanoidRootPart")
+    if not hrp then
+        safeDestroy(dummy)
+        return nil, "El clon no tiene HumanoidRootPart."
+    end
+
+    dummy.Parent = Workspace
+
+    -- 8 studs enfrente y mirando hacia ti.
+    local dummyCF =
+        sourceHrp.CFrame
+        * CFrame.new(0, 0, -8)
+        * CFrame.Angles(0, math.rad(180), 0)
+
+    pcall(function() dummy:PivotTo(dummyCF) end)
+
+    -- Sólo fijamos el root; el resto del cuerpo conserva sus Motor6D.
+    hrp.Anchored = true
+    hrp.Transparency = 1
+
+    activeDummy = dummy
+    return dummy
+end
+
+local function ensureDummy(reposition)
+    if not activeDummy or not activeDummy.Parent then
+        local dummy, err = createDummy()
+        if not dummy then return nil, err end
+    elseif reposition then
+        local char = LocalPlayer.Character
+        local sourceHrp = char and char:FindFirstChild("HumanoidRootPart")
+        local dummyHrp = activeDummy:FindFirstChild("HumanoidRootPart")
+        if sourceHrp and dummyHrp then
+            local dummyCF =
+                sourceHrp.CFrame
+                * CFrame.new(0, 0, -8)
+                * CFrame.Angles(0, math.rad(180), 0)
+            pcall(function() activeDummy:PivotTo(dummyCF) end)
+            dummyHrp.Anchored = true
+        end
+    end
+    return activeDummy
+end
+
+local function targetCFrame()
+    local dummy = ensureDummy(true)
+    local hrp = dummy and dummy:FindFirstChild("HumanoidRootPart")
+    if hrp then
+        return hrp.CFrame
+    end
+
+    local char = LocalPlayer.Character
+    local ownHrp = char and char:FindFirstChild("HumanoidRootPart")
+    if ownHrp then
+        return ownHrp.CFrame * CFrame.new(0, 0, -8)
+    end
+
     local cam = Workspace.CurrentCamera
     return cam and cam.CFrame * CFrame.new(0, 0, -10) or CFrame.new()
 end
@@ -245,12 +375,57 @@ local function rawCFrame(raw)
 end
 
 local function sourceAnchor(nodes)
+    local byId = {}
+    for _, node in ipairs(nodes) do
+        byId[node.id] = node
+    end
+
+    -- Si el snapshot trae Model.PrimaryPart, es normalmente la mejor referencia
+    -- para centrar el death effect sobre el HRP del dummy.
+    for _, node in ipairs(nodes) do
+        if node.class == "Model" then
+            local raw = (node.properties or {}).PrimaryPart
+            if type(raw) == "table" and raw.t == "InstanceRef" then
+                local partNode = byId[raw.id]
+                if partNode and (partNode.class == "Part" or partNode.class == "MeshPart") then
+                    local cf = rawCFrame((partNode.properties or {}).CFrame)
+                    if cf then return cf end
+                end
+            end
+        end
+    end
+
+    -- Sin PrimaryPart: preferimos hosts típicos de los efectos.
+    local bestNode, bestScore = nil, -1
+    for _, node in ipairs(nodes) do
+        if node.class == "Part" or node.class == "MeshPart" then
+            local name = string.lower(tostring(node.name or ""))
+            local score = 0
+            if name == "effect" then score = 100
+            elseif name == "weldtoroot" then score = 95
+            elseif string.find(name, "root", 1, true) then score = 90
+            elseif string.find(name, "maindeath", 1, true) then score = 88
+            elseif string.find(name, "death", 1, true) then score = 80
+            elseif string.find(name, "effect", 1, true) then score = 75
+            end
+
+            if score > bestScore and rawCFrame((node.properties or {}).CFrame) then
+                bestNode, bestScore = node, score
+            end
+        end
+    end
+
+    if bestNode then
+        return rawCFrame((bestNode.properties or {}).CFrame)
+    end
+
     for _, node in ipairs(nodes) do
         if node.class == "Part" or node.class == "MeshPart" then
             local cf = rawCFrame((node.properties or {}).CFrame)
             if cf then return cf end
         end
     end
+
     return CFrame.new()
 end
 
@@ -260,14 +435,42 @@ local SKIP_PROPERTIES = {
     PhysicsRepRootRef = true,
     AudioContent = true,
     AnimationContent = true,
+
+    -- Derivadas de mundo. Si las restauramos literalmente, mandan Attachments
+    -- a las coordenadas originales de la partida donde fueron capturados.
+    WorldPosition = true,
+    WorldOrientation = true,
+    WorldCFrame = true,
+    WorldAxis = true,
+    WorldSecondaryAxis = true,
+    TransformedWorldCFrame = true,
 }
 
 local function applyProperty(instance, propertyName, raw, transform)
     if SKIP_PROPERTIES[propertyName] then return end
+
+    -- CRÍTICO: algunos snapshots incluyen CFrame + Position/Orientation.
+    -- Después de transformar CFrame al dummy, restaurar Position original
+    -- teletransportaba las piezas a las coordenadas del snapshot.
+    if instance:IsA("BasePart") then
+        if propertyName == "Position"
+            or propertyName == "Orientation"
+            or propertyName == "Rotation" then
+            return
+        end
+    end
+
+    if (instance:IsA("Attachment") or instance:IsA("Bone"))
+        and string.sub(propertyName, 1, 5) == "World" then
+        return
+    end
+
     local value, ok = decodeTyped(raw)
     if ok ~= true then return end
 
-    if propertyName == "CFrame" and instance:IsA("BasePart") and typeof(value) == "CFrame" then
+    if propertyName == "CFrame"
+        and instance:IsA("BasePart")
+        and typeof(value) == "CFrame" then
         value = transform * value
     end
 
@@ -355,6 +558,11 @@ local function renderEffect(name)
     local nodes = snapshot and snapshot.nodes
     if type(nodes) ~= "table" or #nodes == 0 then
         return false, "Snapshot vacío."
+    end
+
+    local dummy, dummyError = ensureDummy(true)
+    if not dummy then
+        return false, dummyError or "No pude crear el dummy."
     end
 
     local transform = targetCFrame() * sourceAnchor(nodes):Inverse()
@@ -447,8 +655,8 @@ gui.ResetOnSpawn = false
 gui.Parent = PlayerGui
 
 local frame = Instance.new("Frame")
-frame.Size = UDim2.fromOffset(420, 190)
-frame.Position = UDim2.new(.5, -210, .72, -95)
+frame.Size = UDim2.fromOffset(420, 232)
+frame.Position = UDim2.new(.5, -210, .72, -116)
 frame.BackgroundColor3 = Color3.fromRGB(12,12,12)
 frame.BorderSizePixel = 0
 frame.Parent = gui
@@ -462,7 +670,7 @@ local title = Instance.new("TextLabel")
 title.BackgroundTransparency = 1
 title.Position = UDim2.fromOffset(16, 12)
 title.Size = UDim2.new(1,-32,0,22)
-title.Text = "XERO · DEATH EFFECT V2 REMOTE"
+title.Text = "XERO · DEATH EFFECT V2 · DUMMY LAB"
 title.TextColor3 = Color3.fromRGB(245,245,245)
 title.Font = Enum.Font.GothamBold
 title.TextSize = 14
@@ -482,9 +690,9 @@ Instance.new("UICorner", effectLabel).CornerRadius = UDim.new(0,10)
 
 local status = Instance.new("TextLabel")
 status.BackgroundTransparency = 1
-status.Position = UDim2.fromOffset(16, 142)
+status.Position = UDim2.fromOffset(16, 184)
 status.Size = UDim2.new(1,-32,0,30)
-status.Text = tostring(#EFFECTS) .. " efectos desde GitHub"
+status.Text = tostring(#EFFECTS) .. " efectos · creando tu dummy..."
 status.TextColor3 = Color3.fromRGB(145,145,145)
 status.Font = Enum.Font.Gotham
 status.TextSize = 11
@@ -508,9 +716,33 @@ local function button(txt, x, w)
 end
 
 local prev = button("‹", 16, 46)
-local play = button("DESCARGAR / PROBAR", 70, 196)
+local play = button("PROBAR EFECTO", 70, 196)
 local clear = button("LIMPIAR", 274, 82)
 local nxt = button("›", 364, 40)
+
+local dummyBtn = Instance.new("TextButton")
+dummyBtn.Size = UDim2.fromOffset(196, 34)
+dummyBtn.Position = UDim2.fromOffset(70, 140)
+dummyBtn.BackgroundColor3 = Color3.fromRGB(26,26,26)
+dummyBtn.BorderSizePixel = 0
+dummyBtn.Text = "RECREAR MI DUMMY"
+dummyBtn.TextColor3 = Color3.fromRGB(235,235,235)
+dummyBtn.Font = Enum.Font.GothamMedium
+dummyBtn.TextSize = 11
+dummyBtn.Parent = frame
+Instance.new("UICorner", dummyBtn).CornerRadius = UDim.new(0,9)
+
+local clearAllBtn = Instance.new("TextButton")
+clearAllBtn.Size = UDim2.fromOffset(130, 34)
+clearAllBtn.Position = UDim2.fromOffset(274, 140)
+clearAllBtn.BackgroundColor3 = Color3.fromRGB(26,26,26)
+clearAllBtn.BorderSizePixel = 0
+clearAllBtn.Text = "LIMPIAR TODO"
+clearAllBtn.TextColor3 = Color3.fromRGB(235,235,235)
+clearAllBtn.Font = Enum.Font.GothamMedium
+clearAllBtn.TextSize = 11
+clearAllBtn.Parent = frame
+Instance.new("UICorner", clearAllBtn).CornerRadius = UDim.new(0,9)
 
 local function refresh()
     effectLabel.Text = EFFECTS[currentIndex] or "Sin efectos"
@@ -545,6 +777,29 @@ clear.MouseButton1Click:Connect(function()
     status.Text = "Preview limpiado."
 end)
 
+dummyBtn.MouseButton1Click:Connect(function()
+    renderSerial += 1
+    safeDestroy(activeRoot)
+    activeRoot = nil
+    local dummy, err = createDummy()
+    status.Text = dummy and "✓ Dummy recreado con tu avatar." or ("✕ " .. tostring(err))
+end)
+
+clearAllBtn.MouseButton1Click:Connect(function()
+    renderSerial += 1
+    safeDestroy(activeRoot)
+    activeRoot = nil
+    clearDummy()
+    status.Text = "Efecto + dummy eliminados."
+end)
+
+task.defer(function()
+    local dummy, err = createDummy()
+    status.Text = dummy
+        and (tostring(#EFFECTS) .. " efectos · ✓ tu dummy está listo")
+        or ("✕ Dummy: " .. tostring(err))
+end)
+
 -- drag
 local dragging, dragStart, startPos
 frame.InputBegan:Connect(function(input)
@@ -572,4 +827,4 @@ UserInputService.InputChanged:Connect(function(input)
     end
 end)
 
-print("[Xero Death V2 Remote] manifest:", #EFFECTS, "efectos ·", BASE)
+print("[Xero Death V2 Dummy R2] manifest:", #EFFECTS, "efectos ·", BASE)

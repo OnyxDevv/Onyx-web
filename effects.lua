@@ -1,5 +1,5 @@
 --[[
-XeroHub | DUELS Death Effects · Native Enemy Bridge R22 · Signal First Fix
+XeroHub | DUELS Death Effects · Native Enemy Bridge R22.1 · Nil Guard Fix
 Kev
 
 Objetivo:
@@ -32,6 +32,72 @@ local BASE = ENV.XERO_DEATH_FINAL_ROOT
     or "https://raw.githubusercontent.com/OnyxDevv/Onyx-web/main/death_effects_final"
 
 local requestFn = (syn and syn.request) or (http and http.request) or http_request or request
+
+-- ============================================================
+-- Runtime compatibility / nil-call guards (R22.1)
+-- ============================================================
+local _task = task
+local _legacyWait = (type(wait) == "function") and wait or nil
+
+local function taskWait(seconds)
+    if _task and type(_task.wait) == "function" then
+        return _task.wait(seconds)
+    end
+    if _legacyWait then
+        return _legacyWait(seconds)
+    end
+    local RunService = game:GetService("RunService")
+    local duration = tonumber(seconds) or 0
+    local started = os.clock()
+    repeat RunService.Heartbeat:Wait() until os.clock() - started >= duration
+    return os.clock() - started
+end
+
+local function taskSpawn(fn, ...)
+    if _task and type(_task.spawn) == "function" then
+        return _task.spawn(fn, ...)
+    end
+    local args = {...}
+    local co = coroutine.create(function()
+        fn(((type(table.unpack) == "function") and table.unpack or unpack)(args))
+    end)
+    local ok, err = coroutine.resume(co)
+    if not ok then error(err, 0) end
+    return co
+end
+
+local function taskDefer(fn, ...)
+    if _task and type(_task.defer) == "function" then
+        return _task.defer(fn, ...)
+    end
+    local args = {...}
+    return taskSpawn(function()
+        taskWait()
+        fn(((type(table.unpack) == "function") and table.unpack or unpack)(args))
+    end)
+end
+
+local function taskDelay(seconds, fn, ...)
+    if _task and type(_task.delay) == "function" then
+        return _task.delay(seconds, fn, ...)
+    end
+    local args = {...}
+    return taskSpawn(function()
+        taskWait(seconds)
+        fn(((type(table.unpack) == "function") and table.unpack or unpack)(args))
+    end)
+end
+
+local function taskCancel(thread)
+    if _task and type(_task.cancel) == "function" then
+        return _task.cancel(thread)
+    end
+    if type(coroutine.close) == "function" and type(thread) == "thread" then
+        pcall(coroutine.close, thread)
+    end
+end
+
+local unpackArgs = (type(table.unpack) == "function" and table.unpack) or unpack
 
 -- Compatibility: Roblox Luau has table.clear, but some executor runtimes expose
 -- an incomplete table library. Do not let the OFF button crash for that reason.
@@ -270,7 +336,7 @@ local function preloadAllEffectData()
     end
 
     for _ = 1, workerCount do
-        task.spawn(function()
+        taskSpawn(function()
             while true do
                 -- No yield between reading/incrementing nextIndex, so each
                 -- cooperative worker claims a unique slot.
@@ -286,7 +352,7 @@ local function preloadAllEffectData()
                 if not data then
                     -- One retry at startup. We prefer paying the pause here,
                     -- not later when the user selects the effect.
-                    task.wait(.08)
+                    taskWait(.08)
                     data, err = fetchEffect(name)
                 end
 
@@ -298,7 +364,7 @@ local function preloadAllEffectData()
                 end
 
                 updateStatus(name)
-                task.wait()
+                taskWait()
             end
 
             workersDone += 1
@@ -306,7 +372,7 @@ local function preloadAllEffectData()
     end
 
     repeat
-        task.wait(.03)
+        taskWait(.03)
     until workersDone >= workerCount
 
     if preloadStatus and preloadStatus.Parent then
@@ -321,7 +387,7 @@ local function preloadAllEffectData()
             )
     end
 
-    task.wait(.16)
+    taskWait(.16)
 
     if preloadGui and preloadGui.Parent then
         preloadGui:Destroy()
@@ -877,7 +943,7 @@ local function makeCleaner()
                 elseif type(object) == "function" then
                     object()
                 elseif type(object) == "thread" then
-                    task.cancel(object)
+                    taskCancel(object)
                 elseif type(object) == "table" then
                     if type(object.Destroy) == "function" then
                         object:Destroy()
@@ -925,7 +991,27 @@ local previewModule =
     :WaitForChild("BundlePreviewUI")
     :WaitForChild("DeathEffectPreview")
 
-local Preview = require(previewModule)
+local okPreviewRequire, Preview = pcall(require, previewModule)
+if not okPreviewRequire then
+    error(
+        "Xero Native Bridge: DeathEffectPreview require falló: " .. tostring(Preview),
+        0
+    )
+end
+
+local PreviewPlay
+if type(Preview) == "table" then
+    PreviewPlay = Preview.play or Preview.Play
+elseif type(Preview) == "function" then
+    PreviewPlay = Preview
+end
+
+if type(PreviewPlay) ~= "function" then
+    error(
+        "Xero Native Bridge: DeathEffectPreview cargó, pero no expone play/Play como función. Tipo: " .. type(Preview),
+        0
+    )
+end
 
 local function findFunction(nameWanted, sourceNeedle)
     if type(getgc) ~= "function" then return nil end
@@ -1174,13 +1260,13 @@ local function scheduleBodyStylePatch(dummy, name, asset)
 
     -- Preview.play spawns work asynchronously. First pass mimics the color tween,
     -- second pass makes sure async native work did not restore the avatar colors.
-    task.delay(0.04, function()
+    taskDelay(0.04, function()
         if dummy and dummy.Parent then
             applyBodyStyleOnly(dummy, style, false)
         end
     end)
 
-    task.delay(0.34, function()
+    taskDelay(0.34, function()
         if dummy and dummy.Parent then
             applyBodyStyleOnly(dummy, style, true)
         end
@@ -1574,7 +1660,7 @@ local function forceMarkedEmitter(emitter)
     local emitDelay = tonumber(emitter:GetAttribute("EmitDelay")) or 0
     local emitDuration = tonumber(emitter:GetAttribute("EmitDuration")) or 0
 
-    task.delay(math.max(0, emitDelay), function()
+    taskDelay(math.max(0, emitDelay), function()
         if not emitter.Parent then return end
 
         if emitCount and emitCount > 0 then
@@ -1585,7 +1671,7 @@ local function forceMarkedEmitter(emitter)
 
         if emitDuration > 0 then
             pcall(function() emitter.Enabled = true end)
-            task.delay(emitDuration, function()
+            taskDelay(emitDuration, function()
                 if emitter.Parent then
                     pcall(function() emitter.Enabled = false end)
                 end
@@ -1652,12 +1738,12 @@ local function observeNativeParticles(dummy)
         end
     end
 
-    task.delay(.06, rescan)
-    task.delay(.20, rescan)
-    task.delay(.48, rescan)
-    task.delay(.90, rescan)
+    taskDelay(.06, rescan)
+    taskDelay(.20, rescan)
+    taskDelay(.48, rescan)
+    taskDelay(.90, rescan)
 
-    task.delay(1.65, function()
+    taskDelay(1.65, function()
         active = false
         for _, conn in ipairs(connections) do
             pcall(function() conn:Disconnect() end)
@@ -1835,19 +1921,19 @@ local function scheduleFreezeReal(dummy)
     -- Re-apply because native preview can add/re-parent visual avatar pieces
     -- asynchronously after play() returns.
     for _, delayTime in ipairs({0, .05, .14, .30, .55, .90, 1.35, 1.80}) do
-        task.delay(delayTime, function()
+        taskDelay(delayTime, function()
             forceFreezePass(dummy)
         end)
     end
 
     local conn
     conn = dummy.DescendantAdded:Connect(function()
-        task.defer(function()
+        taskDefer(function()
             forceFreezePass(dummy)
         end)
     end)
 
-    task.delay(2.0, function()
+    taskDelay(2.0, function()
         pcall(function() conn:Disconnect() end)
     end)
 end
@@ -1941,14 +2027,14 @@ end
 
 local function scheduleFrostbiteReal(dummy)
     for _, delayTime in ipairs({0, .04, .12, .28, .52, .86, 1.25, 1.70, 2.15}) do
-        task.delay(delayTime, function()
+        taskDelay(delayTime, function()
             forceFrostbitePass(dummy)
         end)
     end
 
     local conn
     conn = dummy.DescendantAdded:Connect(function(obj)
-        task.defer(function()
+        taskDefer(function()
             if not dummy.Parent then return end
 
             if obj:IsA("Shirt")
@@ -1962,7 +2048,7 @@ local function scheduleFrostbiteReal(dummy)
         end)
     end)
 
-    task.delay(2.35, function()
+    taskDelay(2.35, function()
         pcall(function() conn:Disconnect() end)
     end)
 end
@@ -2078,7 +2164,7 @@ local function playGhostedCapturedNativeFade(dummy)
         local duration = math.max(0.01, current[1] - prev[1])
         local targetAlpha = current[2]
 
-        task.delay(delayTime, function()
+        taskDelay(delayTime, function()
             if not dummy or not dummy.Parent then return end
 
             for _, part in ipairs(allBaseParts(dummy)) do
@@ -2154,7 +2240,7 @@ local function applyExactNativeBodyStyle(dummy, effectName)
     local style = cfg.BodyStyle
     applyBodyStyleOnly(dummy, style, false)
 
-    task.delay(.30, function()
+    taskDelay(.30, function()
         if dummy and dummy.Parent then
             applyBodyStyleOnly(dummy, style, true)
         end
@@ -2181,7 +2267,7 @@ local function callNativeAdapter(effectName, dummy, asset, cleaner)
 
     for _, args in ipairs(attempts) do
         local ok = pcall(function()
-            adapter(table.unpack(args))
+            adapter(unpackArgs(args))
         end)
 
         if ok then
@@ -2402,7 +2488,7 @@ local function forceAllMarkedEmitters(root)
         if emitCount ~= nil or duration > 0 then
             count += 1
 
-            task.delay(math.max(0, delayTime), function()
+            taskDelay(math.max(0, delayTime), function()
                 if not obj.Parent then return end
 
                 if emitCount and emitCount > 0 then
@@ -2414,7 +2500,7 @@ local function forceAllMarkedEmitters(root)
                 if duration > 0 then
                     pcall(function() obj.Enabled = true end)
 
-                    task.delay(duration, function()
+                    taskDelay(duration, function()
                         if obj.Parent then
                             pcall(function() obj.Enabled = false end)
                         end
@@ -2468,10 +2554,10 @@ local function rescanMarkedEmittersNearDummy(dummy, duration)
     end
 
     for _, delayTime in ipairs({.03, .10, .22, .42, .70, 1.05, 1.45}) do
-        task.delay(delayTime, scan)
+        taskDelay(delayTime, scan)
     end
 
-    task.delay(duration or 1.7, function()
+    taskDelay(duration or 1.7, function()
         alive = false
     end)
 end
@@ -2565,7 +2651,7 @@ local function installGhostbringerAggressiveCarrierGuard(dummy)
 
     conns[#conns+1] =
         Workspace.DescendantAdded:Connect(function(obj)
-            task.defer(function()
+            taskDefer(function()
                 if obj:IsA("BasePart") then
                     inspect(obj)
                 else
@@ -2579,7 +2665,7 @@ local function installGhostbringerAggressiveCarrierGuard(dummy)
     if camera then
         conns[#conns+1] =
             camera.DescendantAdded:Connect(function(obj)
-                task.defer(function()
+                taskDefer(function()
                     if obj:IsA("BasePart") then
                         inspect(obj)
                     else
@@ -2619,10 +2705,10 @@ local function installGhostbringerAggressiveCarrierGuard(dummy)
         0, .01, .025, .05, .09, .15, .24, .36,
         .52, .74, 1.02, 1.36, 1.75, 2.20, 2.70
     }) do
-        task.delay(t, rescan)
+        taskDelay(t, rescan)
     end
 
-    task.delay(3.0, function()
+    taskDelay(3.0, function()
         for _, conn in ipairs(conns) do
             pcall(function() conn:Disconnect() end)
         end
@@ -2781,15 +2867,15 @@ local function scheduleWholeVictimColorLockR14(
     end
 
     local conn = dummy.DescendantAdded:Connect(function()
-        task.defer(apply)
+        taskDefer(apply)
     end)
 
-    task.spawn(function()
+    taskSpawn(function()
         local deadline = os.clock() + duration
 
         repeat
             apply()
-            task.wait(.045)
+            taskWait(.045)
         until not alive
             or not dummy
             or not dummy.Parent
@@ -2798,7 +2884,7 @@ local function scheduleWholeVictimColorLockR14(
         apply()
     end)
 
-    task.delay(duration + .12, function()
+    taskDelay(duration + .12, function()
         alive = false
         pcall(function() conn:Disconnect() end)
     end)
@@ -2829,15 +2915,15 @@ local function schedule1x1x1x1Color(dummy)
     end
 
     local conn = dummy.DescendantAdded:Connect(function()
-        task.defer(apply)
+        taskDefer(apply)
     end)
 
-    task.spawn(function()
+    taskSpawn(function()
         local deadline = os.clock() + 2.35
 
         repeat
             apply()
-            task.wait(.045)
+            taskWait(.045)
         until not alive
             or not dummy
             or not dummy.Parent
@@ -2846,7 +2932,7 @@ local function schedule1x1x1x1Color(dummy)
         apply()
     end)
 
-    task.delay(2.48, function()
+    taskDelay(2.48, function()
         alive = false
         pcall(function() conn:Disconnect() end)
     end)
@@ -2888,7 +2974,7 @@ local function scheduleSpiritOverloadReal(dummy)
     local spiritColor = Color3.fromRGB(36,75,26)
 
     for _, delayTime in ipairs({0, .05, .16, .34, .70, 1.15}) do
-        task.delay(delayTime, function()
+        taskDelay(delayTime, function()
             forceWholeAvatarSolid(
                 dummy,
                 spiritColor,
@@ -2900,7 +2986,7 @@ local function scheduleSpiritOverloadReal(dummy)
 
     local conn
     conn = dummy.DescendantAdded:Connect(function()
-        task.defer(function()
+        taskDefer(function()
             forceWholeAvatarSolid(
                 dummy,
                 spiritColor,
@@ -2910,7 +2996,7 @@ local function scheduleSpiritOverloadReal(dummy)
         end)
     end)
 
-    task.delay(1.5, function()
+    taskDelay(1.5, function()
         pcall(function() conn:Disconnect() end)
     end)
 end
@@ -2969,7 +3055,7 @@ local function playSoulReaperCapturedBody(dummy)
         local prev = points[i-1]
         local current = points[i]
 
-        task.delay(prev[1], function()
+        taskDelay(prev[1], function()
             if not dummy or not dummy.Parent then return end
 
             local duration = math.max(.01, current[1] - prev[1])
@@ -3157,10 +3243,10 @@ local function enforceInvisibleCarriers(dummy, asset, effectName)
     for _, delayTime in ipairs({
         0, .03, .08, .16, .28, .45, .70, 1.0, 1.35, 1.75, 2.20
     }) do
-        task.delay(delayTime, rescan)
+        taskDelay(delayTime, rescan)
     end
 
-    task.delay(2.45, function()
+    taskDelay(2.45, function()
         for _, conn in ipairs(conns) do
             pcall(function() conn:Disconnect() end)
         end
@@ -3176,7 +3262,7 @@ local function scheduleV2ClothingLock(dummy, asset)
     -- Reapply effect-owned clothing AFTER native async work.
     -- This prevents the scanned victim's clothing from winning later.
     for _, delayTime in ipairs({.08, .28, .62}) do
-        task.delay(delayTime, function()
+        taskDelay(delayTime, function()
             if dummy and dummy.Parent and asset and asset.Parent then
                 applyV2Clothing(dummy, asset)
             end
@@ -3249,7 +3335,7 @@ local function runNativeOnVictim(name, victim, statusLabel)
     -- This is the important part: the native preview is executed on the
     -- actual dead enemy character rather than on a disposable preview dummy.
     local ok, result = pcall(function()
-        return Preview.play(victim, name, cleaner)
+        return PreviewPlay(victim, name, cleaner)
     end)
 
     local bodyPatched = false
@@ -3322,7 +3408,7 @@ local function runNativeOnVictim(name, victim, statusLabel)
             "✓ " .. tostring(name) .. " aplicado nativamente a " .. tostring(victim.Name)
     end
 
-    task.delay(.90, function()
+    taskDelay(.90, function()
         if not victim or not victim.Parent or not statusLabel or not statusLabel.Parent then
             return
         end
@@ -3339,7 +3425,7 @@ local function runNativeOnVictim(name, victim, statusLabel)
 
     -- Death effects are short-lived. Keep cleanup isolated per victim so one
     -- kill never cancels the visuals of another kill.
-    task.delay(10, function()
+    taskDelay(10, function()
         if victimCleaners[victim] == cleaner then
             cleanVictim(victim)
         end
@@ -3376,7 +3462,7 @@ local title = Instance.new("TextLabel")
 title.BackgroundTransparency = 1
 title.Position = UDim2.fromOffset(16, 12)
 title.Size = UDim2.new(1,-32,0,22)
-title.Text = "XERO · DEATH EFFECTS · SIGNAL FIRST R22"
+title.Text = "XERO · DEATH EFFECTS · SIGNAL FIRST R22.1"
 title.TextColor3 = Color3.fromRGB(245,245,245)
 title.Font = Enum.Font.GothamBold
 title.TextSize = 14
@@ -3766,10 +3852,10 @@ local function waitForDeathTarget(player, originalCharacter, deathPosition, deat
     repeat
         local best, score = findBestDeathModel(player, originalCharacter, deathPosition, deathAt)
         if best and score >= 55 then
-            task.wait(0.03)
+            taskWait(0.03)
             return best, "dummy/cadáver"
         end
-        task.wait(0.025)
+        taskWait(0.025)
     until os.clock() >= deadline
 
     if originalCharacter and originalCharacter.Parent
@@ -3897,7 +3983,7 @@ local function resolveKillFromSignal(source)
         tostring(source) .. " · " .. anchorText ..
         "\nBuscando dummy/cadáver..."
 
-    task.spawn(function()
+    taskSpawn(function()
         local deadline = os.clock() + 1.35
         local target, score = nil, -math.huge
         local didWorldScan = false
@@ -3913,7 +3999,7 @@ local function resolveKillFromSignal(source)
             local threshold = anchorPos and 45 or 90
             if target and score >= threshold then break end
             target = nil
-            task.wait(0.035)
+            taskWait(0.035)
         until os.clock() >= deadline
 
         if not target then
@@ -3981,7 +4067,7 @@ local function triggerVictim(player, character, hum, proof)
     local deathPosition = info.deathPosition or modelPosition(character)
     local deathAt = info.deathAt or os.clock()
 
-    task.spawn(function()
+    taskSpawn(function()
         local target, targetKind = waitForDeathTarget(player, character, deathPosition, deathAt)
         if not target or not target.Parent then
             status.Text =
@@ -4115,9 +4201,9 @@ local function queueVictimDeath(player, character, hum)
     status.Text = "Muerte detectada: " .. tostring(player.Name) .. " · esperando confirmar TU kill..."
 
     -- Killer tags can be attached just after Died, so recheck briefly.
-    task.defer(function()
+    taskDefer(function()
         for _, delayTime in ipairs({0.03, 0.09, 0.18, 0.32}) do
-            task.wait(delayTime)
+            taskWait(delayTime)
             if info.triggered or entry.removed then return end
             if hasLocalKillerTag(character, hum) then
                 removePending(entry)
@@ -4127,7 +4213,7 @@ local function queueVictimDeath(player, character, hum)
         end
     end)
 
-    task.delay(PENDING_LIFETIME + 0.05, function()
+    taskDelay(PENDING_LIFETIME + 0.05, function()
         if entry.removed or info.triggered then return end
         removePending(entry)
         if enabled then
@@ -4139,7 +4225,7 @@ end
 local function hookCharacter(player, character)
     if player == LP or not character then return end
 
-    task.spawn(function()
+    taskSpawn(function()
         local hum = character:FindFirstChildOfClass("Humanoid")
             or character:WaitForChild("Humanoid", 10)
         if not hum or trackedHumanoids[hum] then return end
@@ -4170,7 +4256,7 @@ local function hookCharacter(player, character)
                 -- reaching Humanoid.Died, keep its last body position as an anchor.
                 pushBodyEvent(character, "Player Character removido")
                 cleanVictim(character)
-                task.delay(PENDING_LIFETIME + 0.25, function()
+                taskDelay(PENDING_LIFETIME + 0.25, function()
                     if trackedHumanoids[hum] == info and not info.triggered then
                         for _, conn in ipairs(info.connections) do
                             pcall(function() conn:Disconnect() end)
@@ -4296,10 +4382,21 @@ local function hookKillSound(sound)
     killSignalConnections[#killSignalConnections + 1] = sound.AncestryChanged:Connect(function()
         wasLocal = wasLocal or localOwnsKillSound(sound)
     end)
-    killSignalConnections[#killSignalConnections + 1] = sound.Played:Connect(confirm)
-    killSignalConnections[#killSignalConnections + 1] = sound:GetPropertyChangedSignal("Playing"):Connect(function()
-        if sound.Playing then confirm() end
+    local okPlayed, playedConn = pcall(function()
+        return sound.Played:Connect(confirm)
     end)
+    if okPlayed and playedConn then
+        killSignalConnections[#killSignalConnections + 1] = playedConn
+    end
+
+    local okPlaying, playingConn = pcall(function()
+        return sound:GetPropertyChangedSignal("Playing"):Connect(function()
+            if sound.Playing then confirm() end
+        end)
+    end)
+    if okPlaying and playingConn then
+        killSignalConnections[#killSignalConnections + 1] = playingConn
+    end
 
     if sound.Playing or sound.IsPlaying then confirm() end
 end
@@ -4371,7 +4468,7 @@ killSignalConnections[#killSignalConnections + 1] = LP.DescendantAdded:Connect(f
 end)
 
 killSignalConnections[#killSignalConnections + 1] = LP.CharacterAdded:Connect(function(character)
-    task.defer(function()
+    taskDefer(function()
         scanLocalKillSignals(character)
     end)
 end)
@@ -4461,7 +4558,7 @@ UserInputService.InputChanged:Connect(function(input)
 end)
 
 print(
-    "[Xero Death Dummy Kills R22]",
+    "[Xero Death Dummy Kills R22.1]",
     #EFFECTS,
     "efectos ·",
     PRELOAD_STATS.loaded,

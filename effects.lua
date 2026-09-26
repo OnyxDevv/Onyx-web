@@ -1,5 +1,5 @@
 --[[
-XeroHub | DUELS Death Effects · Native Dummy Bridge R4 Hybrid Completer
+XeroHub | DUELS Death Effects · Native Dummy Bridge R5 Fidelity Fix
 Kev
 
 Objetivo:
@@ -64,7 +64,7 @@ end
 -- ============================================================
 -- Repo / cache
 -- ============================================================
-local CACHE_FOLDER = "XeroHub/DeathEffectsNativeDummyR4"
+local CACHE_FOLDER = "XeroHub/DeathEffectsNativeDummyR5"
 
 local function ensureFolder(path)
     if type(makefolder) ~= "function" then return end
@@ -1241,43 +1241,102 @@ local function ensureDirectClothing(dummy, path, entry)
     return obj
 end
 
-local function applySelectiveV3Entry(dummy, path, entry)
-    if type(entry) ~= "table" or pathTouchesAccessory(path) then
+local function rawDeepEqual(a, b, depth)
+    if a == b then return true end
+    if type(a) ~= type(b) then return false end
+    if type(a) ~= "table" then return false end
+
+    depth = (depth or 0) + 1
+    if depth > 10 then return false end
+
+    for key, value in pairs(a) do
+        if not rawDeepEqual(value, b[key], depth) then
+            return false
+        end
+    end
+
+    for key in pairs(b) do
+        if a[key] == nil then return false end
+    end
+
+    return true
+end
+
+local function applySelectiveV3Diff(dummy, path, oldEntry, newEntry)
+    if type(newEntry) ~= "table" or pathTouchesAccessory(path) then
         return 0
     end
 
     local obj = resolveBodyPath(dummy, path)
-    if not obj then
-        obj = ensureDirectClothing(dummy, path, entry)
-    end
     if not obj then return 0 end
+
+    local oldProps =
+        type(oldEntry) == "table"
+        and type(oldEntry.props) == "table"
+        and oldEntry.props
+        or {}
+
+    local newProps =
+        type(newEntry.props) == "table"
+        and newEntry.props
+        or {}
+
+    local allowed
 
     if obj:IsA("BasePart") then
         if not BODY_PART_NAMES[obj.Name] then return 0 end
-        return applyAllowedProps(obj, entry.props, SAFE_BODY_PROPS)
-    end
+        allowed = SAFE_BODY_PROPS
 
-    if obj:IsA("Shirt")
+    elseif obj:IsA("Shirt")
         or obj:IsA("Pants")
         or obj:IsA("ShirtGraphic")
         or obj:IsA("BodyColors") then
-        return applyAllowedProps(obj, entry.props, SAFE_CLOTHING_PROPS)
+
+        -- R5 intentionally does NOT trust clothing from V3.
+        -- Reassembly after death can insert the scanned victim's clothes.
+        return 0
+
+    else
+        return 0
     end
 
-    return 0
+    local applied = 0
+
+    for prop in pairs(allowed) do
+        local raw = newProps[prop]
+
+        if raw ~= nil and not rawDeepEqual(oldProps[prop], raw) then
+            local value, ok = decodeTyped(raw)
+            if ok == true then
+                local success = pcall(function()
+                    obj[prop] = value
+                end)
+                if success then applied += 1 end
+            end
+        end
+    end
+
+    return applied
 end
 
 local function startSelectiveV3Replay(dummy, entry)
     local v3 = fetchBehavior(entry)
     if not v3 then return false, 0 end
 
-    local timeline = v3.behavior and v3.behavior.timeline
+    local behavior = v3.behavior or {}
+    local timeline = behavior.timeline
+
     if type(timeline) ~= "table" or #timeline == 0 then
         return false, 0
     end
 
+    local state = {}
+    for path, baselineEntry in pairs(behavior.baseline or {}) do
+        state[path] = baselineEntry
+    end
+
     local token = HttpService:GenerateGUID(false)
-    dummy:SetAttribute("XeroR4ReplayToken", token)
+    dummy:SetAttribute("XeroR5ReplayToken", token)
 
     task.spawn(function()
         local started = os.clock()
@@ -1288,7 +1347,7 @@ local function startSelectiveV3Replay(dummy, entry)
 
         for _, frame in ipairs(timeline) do
             if not dummy.Parent
-                or dummy:GetAttribute("XeroR4ReplayToken") ~= token then
+                or dummy:GetAttribute("XeroR5ReplayToken") ~= token then
                 return
             end
 
@@ -1296,13 +1355,16 @@ local function startSelectiveV3Replay(dummy, entry)
             if waitFor > 0 then task.wait(waitFor) end
             if not dummy.Parent then return end
 
-            for path, bodyEntry in pairs(frame.changed or {}) do
-                applySelectiveV3Entry(dummy, path, bodyEntry)
+            for path, newEntry in pairs(frame.changed or {}) do
+                local oldEntry = state[path]
+                applySelectiveV3Diff(dummy, path, oldEntry, newEntry)
+                state[path] = newEntry
             end
 
-            for path, bodyEntry in pairs(frame.added or {}) do
-                applySelectiveV3Entry(dummy, path, bodyEntry)
-            end
+            -- IMPORTANT:
+            -- Do NOT replay frame.added from V3 here.
+            -- Gifted proved that death/reassembly can add the scanned player's
+            -- Shirt/Pants/BodyColors/Accessory and contaminate the effect.
         end
     end)
 
@@ -1442,10 +1504,18 @@ end
 local function observeNativeParticles(dummy)
     local active = true
     local seen = setmetatable({}, {__mode="k"})
+    local baselineTop = setmetatable({}, {__mode="k"})
+    local connections = {}
 
-    local conn = Workspace.DescendantAdded:Connect(function(obj)
-        if not active or not obj:IsA("ParticleEmitter") then return end
+    for _, child in ipairs(Workspace:GetChildren()) do
+        baselineTop[child] = true
+    end
+
+    local function inspect(obj)
+        if not active or not obj or not obj.Parent then return end
+        if not obj:IsA("ParticleEmitter") then return end
         if seen[obj] or not emitterIsNear(dummy, obj) then return end
+
         seen[obj] = true
 
         if obj:GetAttribute("EmitCount") ~= nil
@@ -1453,18 +1523,212 @@ local function observeNativeParticles(dummy)
             or obj:GetAttribute("KillEffectEmitCount") ~= nil then
             forceMarkedEmitter(obj)
         end
-    end)
+    end
 
-    task.delay(1.5, function()
+    local function scanRoot(root)
+        if not root or not root.Parent then return end
+        inspect(root)
+        for _, obj in ipairs(root:GetDescendants()) do
+            inspect(obj)
+        end
+    end
+
+    connections[#connections+1] =
+        Workspace.DescendantAdded:Connect(inspect)
+
+    local camera = Workspace.CurrentCamera
+    if camera then
+        connections[#connections+1] =
+            camera.DescendantAdded:Connect(inspect)
+    end
+
+    local function rescan()
+        if not active then return end
+
+        scanRoot(dummy)
+
+        local cam = Workspace.CurrentCamera
+        if cam then scanRoot(cam) end
+
+        -- Only scan Workspace roots that appeared AFTER the preview started.
+        -- This avoids walking the whole map repeatedly.
+        for _, child in ipairs(Workspace:GetChildren()) do
+            if not baselineTop[child] and child ~= dummy then
+                scanRoot(child)
+            end
+        end
+    end
+
+    task.delay(.06, rescan)
+    task.delay(.20, rescan)
+    task.delay(.48, rescan)
+    task.delay(.90, rescan)
+
+    task.delay(1.65, function()
         active = false
-        pcall(function() conn:Disconnect() end)
+        for _, conn in ipairs(connections) do
+            pcall(function() conn:Disconnect() end)
+        end
     end)
 end
 
+-- ============================================================
+-- R5 appearance fidelity helpers
+-- ============================================================
+
+local ICE_ACCESSORY_PRESERVE = {
+    Freeze = true,
+    Frostbite = true,
+    IcemanEffect = true,
+}
+
+local function captureAccessoryAppearance(dummy)
+    local snap = setmetatable({}, {__mode="k"})
+
+    for _, accessory in ipairs(dummy:GetChildren()) do
+        if accessory:IsA("Accessory") then
+            for _, obj in ipairs(accessory:GetDescendants()) do
+                if obj:IsA("BasePart") then
+                    snap[obj] = {
+                        Color = obj.Color,
+                        Material = obj.Material,
+                        MaterialVariant = obj.MaterialVariant,
+                        Transparency = obj.Transparency,
+                        Reflectance = obj.Reflectance,
+                    }
+                end
+            end
+        end
+    end
+
+    return snap
+end
+
+local function restoreAccessoryAppearance(snapshot)
+    for obj, state in pairs(snapshot or {}) do
+        if obj and obj.Parent then
+            pcall(function()
+                obj.Color = state.Color
+                obj.Material = state.Material
+                obj.MaterialVariant = state.MaterialVariant
+                obj.Transparency = state.Transparency
+                obj.Reflectance = state.Reflectance
+            end)
+        end
+    end
+end
+
+local function scheduleAccessoryRestore(snapshot)
+    for _, delayTime in ipairs({.08, .22, .44, .82, 1.30}) do
+        task.delay(delayTime, function()
+            restoreAccessoryAppearance(snapshot)
+        end)
+    end
+end
+
+local function stripFrostbiteAvatarVisuals(dummy)
+    if not dummy or not dummy.Parent then return end
+
+    -- Frostbite/"hipotermia": original behavior removes classic clothes/face,
+    -- while accessories remain present and keep their own appearance.
+    for _, child in ipairs(dummy:GetChildren()) do
+        if child:IsA("Shirt")
+            or child:IsA("Pants")
+            or child:IsA("ShirtGraphic") then
+            pcall(function() child:Destroy() end)
+        end
+    end
+
+    local head = dummy:FindFirstChild("Head")
+    if head then
+        for _, child in ipairs(head:GetChildren()) do
+            if child:IsA("Decal")
+                or child:IsA("Texture") then
+                pcall(function() child:Destroy() end)
+            end
+        end
+    end
+end
+
+local function scheduleFrostbiteStrip(dummy)
+    for _, delayTime in ipairs({.03, .20, .45, .90}) do
+        task.delay(delayTime, function()
+            stripFrostbiteAvatarVisuals(dummy)
+        end)
+    end
+end
+
+local function allVisibleCharacterParts(dummy, includeAccessories)
+    local out = {}
+
+    for _, obj in ipairs(dummy:GetDescendants()) do
+        if obj:IsA("BasePart")
+            and obj.Name ~= "HumanoidRootPart" then
+
+            local inAccessory =
+                obj:FindFirstAncestorOfClass("Accessory") ~= nil
+
+            if includeAccessories or not inAccessory then
+                out[#out+1] = obj
+            end
+        end
+    end
+
+    return out
+end
+
+local function playGhostedFullFade(dummy)
+    if not dummy or not dummy.Parent then return end
+
+    -- V2 Ghosted is explicitly neon green. V3 confirms that its actual body
+    -- timeline is a progressive fade to Transparency=1.
+    local ghostGreen = Color3.fromRGB(32,255,69)
+
+    -- Body gets the ghost tint; accessories keep their textures/colors.
+    for _, part in ipairs(allVisibleCharacterParts(dummy, false)) do
+        pcall(function()
+            part.Color = ghostGreen
+            part.Material = Enum.Material.Neon
+        end)
+    end
+
+    -- The death animation itself fades the complete visible avatar away.
+    task.delay(.08, function()
+        if not dummy.Parent then return end
+
+        for _, part in ipairs(allVisibleCharacterParts(dummy, true)) do
+            local duration = 1.30
+            pcall(function()
+                TweenService:Create(
+                    part,
+                    TweenInfo.new(
+                        duration,
+                        Enum.EasingStyle.Quad,
+                        Enum.EasingDirection.In
+                    ),
+                    {Transparency = 1}
+                ):Play()
+            end)
+        end
+    end)
+end
+
+local function scheduleV2ClothingLock(dummy, asset)
+    -- Reapply effect-owned clothing AFTER native async work.
+    -- This prevents the scanned victim's clothing from winning later.
+    for _, delayTime in ipairs({.08, .28, .62}) do
+        task.delay(delayTime, function()
+            if dummy and dummy.Parent and asset and asset.Parent then
+                applyV2Clothing(dummy, asset)
+            end
+        end)
+    end
+end
+
 local function runNative(name, statusLabel)
-    -- IMPORTANTE R4:
+    -- IMPORTANTE R5:
     -- Preview.play sigue siendo el renderer principal.
-    -- Sólo completamos body/ropa/hat y partículas marcadas.
+    -- R5 corrige sólo contaminación/fidelidad del dummy.
     local asset, injected, assetStatus = ensureNativeAsset(name)
     if not asset then
         statusLabel.Text = "✕ Asset: " .. tostring(assetStatus)
@@ -1479,10 +1743,15 @@ local function runNative(name, statusLabel)
 
     local before = snapshotDummyState(dummy)
 
-    -- Start before native renderer creates Workspace clones.
+    local accessoryAppearance
+    if ICE_ACCESSORY_PRESERVE[name] then
+        accessoryAppearance = captureAccessoryAppearance(dummy)
+    end
+
+    -- Starts BEFORE native renderer creates visual clones.
     observeNativeParticles(dummy)
 
-    -- Only safe template complements.
+    -- V2 is authoritative for effect-owned clothing and 3D hats.
     local clothesV2 = applyV2Clothing(dummy, asset)
     local hatsV2 = attachV2HatIfNeeded(dummy, asset)
 
@@ -1490,7 +1759,7 @@ local function runNative(name, statusLabel)
     activeCleaner = cleaner
 
     statusLabel.Text =
-        "Aplicando NATIVO + completer...\n" ..
+        "Aplicando NATIVO + fidelity fix...\n" ..
         tostring(assetStatus)
 
     local ok, result = pcall(function()
@@ -1503,6 +1772,24 @@ local function runNative(name, statusLabel)
     local entry = BY_NAME[name]
     local v3Replayed, v3Frames =
         startSelectiveV3Replay(dummy, entry)
+
+    -- Effect-specific fidelity rules confirmed from the collected assets/
+    -- behavior and the in-game result.
+    if name == "Frostbite" then
+        scheduleFrostbiteStrip(dummy)
+    end
+
+    if name == "Ghosted" then
+        playGhostedFullFade(dummy)
+    end
+
+    if accessoryAppearance then
+        scheduleAccessoryRestore(accessoryAppearance)
+    end
+
+    if clothesV2 > 0 then
+        scheduleV2ClothingLock(dummy, asset)
+    end
 
     -- Jelly has a separate DestroyBody path.
     if not ok and string.find(name, "Jelly", 1, true) then
@@ -1524,9 +1811,9 @@ local function runNative(name, statusLabel)
 
     statusLabel.Text =
         "✓ Nativo ejecutado · " .. name ..
-        "\nCompletando body/ropa/VFX..."
+        "\nCorrigiendo fidelidad..."
 
-    task.delay(.72, function()
+    task.delay(.78, function()
         if not dummy.Parent then return end
 
         local mutations =
@@ -1539,10 +1826,10 @@ local function runNative(name, statusLabel)
                 and (" · " .. tostring(bodyPatchSource))
                 or "") ..
             (v3Replayed
-                and (" · V3 " .. tostring(v3Frames) .. "f")
+                and (" · V3-diff " .. tostring(v3Frames) .. "f")
                 or "") ..
             (clothesV2 > 0
-                and (" · ropa " .. tostring(clothesV2))
+                and (" · ropa V2 " .. tostring(clothesV2))
                 or "") ..
             (hatsV2 > 0
                 and (" · 3D " .. tostring(hatsV2))
@@ -1579,7 +1866,7 @@ local title = Instance.new("TextLabel")
 title.BackgroundTransparency = 1
 title.Position = UDim2.fromOffset(16, 12)
 title.Size = UDim2.new(1,-32,0,22)
-title.Text = "XERO · DEATH EFFECT · NATIVE DUMMY R4"
+title.Text = "XERO · DEATH EFFECT · NATIVE DUMMY R5"
 title.TextColor3 = Color3.fromRGB(245,245,245)
 title.Font = Enum.Font.GothamBold
 title.TextSize = 14

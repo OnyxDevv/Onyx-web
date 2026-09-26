@@ -1,5 +1,5 @@
 --[[
-XeroHub | DUELS Death Effects · Native Dummy Bridge R10 Lightning Black
+XeroHub | DUELS Death Effects · Native Dummy Bridge R12 SoulReaper Native-Only
 Kev
 
 Objetivo:
@@ -64,7 +64,7 @@ end
 -- ============================================================
 -- Repo / cache
 -- ============================================================
-local CACHE_FOLDER = "XeroHub/DeathEffectsNativeDummyR10"
+local CACHE_FOLDER = "XeroHub/DeathEffectsNativeDummyR12"
 
 local function ensureFolder(path)
     if type(makefolder) ~= "function" then return end
@@ -2233,14 +2233,15 @@ local function installGhostbringerAggressiveCarrierGuard(dummy)
     local root = dummy and dummy:FindFirstChild("HumanoidRootPart")
     if not root then return end
 
-    local baseline = setmetatable({}, {__mode="k"})
+    local baselineParts = setmetatable({}, {__mode="k"})
     for _, obj in ipairs(Workspace:GetDescendants()) do
         if obj:IsA("BasePart") then
-            baseline[obj] = true
+            baselineParts[obj] = true
         end
     end
 
     local watched = setmetatable({}, {__mode="k"})
+    local propConnections = setmetatable({}, {__mode="k"})
     local conns = {}
 
     local function hasVfx(part)
@@ -2254,24 +2255,26 @@ local function installGhostbringerAggressiveCarrierGuard(dummy)
         return false
     end
 
-    local function hide(part)
+    local function shouldHide(part)
         if not part or not part.Parent or not part:IsA("BasePart") then
-            return
+            return false
         end
 
-        if part:IsDescendantOf(dummy) then
-            return
+        if (part.Position - root.Position).Magnitude > 55 then
+            return false
         end
 
-        if (part.Position - root.Position).Magnitude > 50 then
-            return
+        if part.Name == "ghostbringer VFX" then
+            return true
         end
 
-        if not hasVfx(part)
-            and part.Name ~= "ghostbringer VFX" then
-            return
-        end
+        -- Newly-created VFX carrier, including carriers parented inside
+        -- the dummy, weapon or accessory.
+        return not baselineParts[part] and hasVfx(part)
+    end
 
+    local function forceHidden(part)
+        if not watched[part] and not shouldHide(part) then return end
         watched[part] = true
 
         pcall(function()
@@ -2280,101 +2283,91 @@ local function installGhostbringerAggressiveCarrierGuard(dummy)
             part.CanCollide = false
             part.CanTouch = false
             part.CanQuery = false
+            part.CastShadow = false
+        end)
+
+        if not propConnections[part] then
+            local ok, conn = pcall(function()
+                return part:GetPropertyChangedSignal("Transparency"):Connect(function()
+                    if part.Parent and part.Transparency < .999 then
+                        pcall(function()
+                            part.Transparency = 1
+                            part.LocalTransparencyModifier = 1
+                        end)
+                    end
+                end)
+            end)
+
+            if ok and conn then
+                propConnections[part] = conn
+            end
+        end
+    end
+
+    local function inspect(obj)
+        if not obj then return end
+
+        if obj:IsA("BasePart") then
+            if shouldHide(obj) then
+                forceHidden(obj)
+            end
+        elseif obj:IsA("ParticleEmitter")
+            or obj:IsA("Beam")
+            or obj:IsA("Trail") then
+
+            local carrier = nearestPart(obj)
+            if carrier and shouldHide(carrier) then
+                forceHidden(carrier)
+            end
+        end
+    end
+
+    conns[#conns+1] = Workspace.DescendantAdded:Connect(function(obj)
+        task.defer(function() inspect(obj) end)
+    end)
+
+    local camera = Workspace.CurrentCamera
+    if camera then
+        conns[#conns+1] = camera.DescendantAdded:Connect(function(obj)
+            task.defer(function() inspect(obj) end)
         end)
     end
 
-    conns[#conns+1] =
-        Workspace.DescendantAdded:Connect(function(obj)
-            if obj:IsA("BasePart") then
-                task.defer(function() hide(obj) end)
-
-            elseif obj:IsA("ParticleEmitter")
-                or obj:IsA("Beam")
-                or obj:IsA("Trail") then
-
-                task.defer(function()
-                    local carrier = nearestPart(obj)
-                    if carrier then hide(carrier) end
-                end)
-            end
-        end)
-
     local function rescan()
-        for _, part in ipairs(Workspace:GetDescendants()) do
-            if part:IsA("BasePart")
-                and (not baseline[part] or watched[part]) then
-                hide(part)
+        if not dummy or not dummy.Parent then return end
+
+        for _, obj in ipairs(Workspace:GetDescendants()) do
+            if obj:IsA("BasePart") and (watched[obj] or shouldHide(obj)) then
+                forceHidden(obj)
+            end
+        end
+
+        local cam = Workspace.CurrentCamera
+        if cam then
+            for _, obj in ipairs(cam:GetDescendants()) do
+                inspect(obj)
             end
         end
 
         for part in pairs(watched) do
-            hide(part)
+            forceHidden(part)
         end
     end
 
-    for _, t in ipairs({0, .02, .06, .12, .22, .38, .62, .95, 1.35, 1.85, 2.35}) do
+    for _, t in ipairs({
+        0, .015, .035, .07, .12, .20, .32, .48,
+        .70, .98, 1.30, 1.70, 2.15, 2.65
+    }) do
         task.delay(t, rescan)
     end
 
-    task.delay(2.55, function()
+    task.delay(2.9, function()
         for _, conn in ipairs(conns) do
             pcall(function() conn:Disconnect() end)
         end
-    end)
-end
-
-local function scheduleHeartacheReal(dummy)
-    local red = Color3.fromRGB(255,0,0)
-
-    for _, t in ipairs({0, .04, .12, .30, .58, .95}) do
-        task.delay(t, function()
-            forceWholeAvatarSolid(
-                dummy,
-                red,
-                Enum.Material.SmoothPlastic,
-                0
-            )
-        end)
-    end
-end
-
-
-local function scheduleLightningBlack(dummy)
-    -- Lightning / LightningStrike native victim look:
-    -- whole visible avatar goes black, including hair/accessories.
-    local black = Color3.new(0, 0, 0)
-
-    for _, t in ipairs({0, .03, .09, .18, .34, .58, .90, 1.30}) do
-        task.delay(t, function()
-            if dummy and dummy.Parent then
-                forceWholeAvatarSolid(
-                    dummy,
-                    black,
-                    Enum.Material.SmoothPlastic,
-                    0
-                )
-            end
-        end)
-    end
-
-    -- Native renderers can insert/reparent avatar visuals asynchronously,
-    -- so keep newly-added pieces black too.
-    local conn
-    conn = dummy.DescendantAdded:Connect(function()
-        task.defer(function()
-            if dummy and dummy.Parent then
-                forceWholeAvatarSolid(
-                    dummy,
-                    black,
-                    Enum.Material.SmoothPlastic,
-                    0
-                )
-            end
-        end)
-    end)
-
-    task.delay(1.55, function()
-        pcall(function() conn:Disconnect() end)
+        for _, conn in pairs(propConnections) do
+            pcall(function() conn:Disconnect() end)
+        end
     end)
 end
 
@@ -2453,6 +2446,58 @@ local function forceWholeAvatarSolid(dummy, color, material, transparency)
             end)
         end
     end
+end
+
+
+local function scheduleWholeVictimColorLockR11(dummy, color, material, duration)
+    duration = duration or 2.25
+    material = material or Enum.Material.SmoothPlastic
+    local alive = true
+
+    local function apply()
+        if alive and dummy and dummy.Parent then
+            forceWholeAvatarSolid(dummy, color, material, 0)
+        end
+    end
+
+    local conn = dummy.DescendantAdded:Connect(function()
+        task.defer(apply)
+    end)
+
+    task.spawn(function()
+        local deadline = os.clock() + duration
+        repeat
+            apply()
+            task.wait(.045)
+        until not alive
+            or not dummy
+            or not dummy.Parent
+            or os.clock() >= deadline
+        apply()
+    end)
+
+    task.delay(duration + .12, function()
+        alive = false
+        pcall(function() conn:Disconnect() end)
+    end)
+end
+
+local function scheduleHeartacheReal(dummy)
+    scheduleWholeVictimColorLockR11(
+        dummy,
+        Color3.fromRGB(255, 0, 0),
+        Enum.Material.SmoothPlastic,
+        2.20
+    )
+end
+
+local function scheduleLightningBlack(dummy)
+    scheduleWholeVictimColorLockR11(
+        dummy,
+        Color3.new(0, 0, 0),
+        Enum.Material.SmoothPlastic,
+        2.40
+    )
 end
 
 local function scheduleSpiritOverloadReal(dummy)
@@ -2756,6 +2801,123 @@ local function scheduleV2ClothingLock(dummy, asset)
     end
 end
 
+
+local function clanFlagLooksComplete(model)
+    if not model or not model:IsA("Model") then return false end
+    return model:FindFirstChild("Flag_1", true) ~= nil
+        and model:FindFirstChild("Flag_2", true) ~= nil
+        and model:FindFirstChild("Pole_1", true) ~= nil
+        and model:FindFirstChild("Pole_2", true) ~= nil
+end
+
+local function findClanFlagNear(dummy)
+    local root = dummy and dummy:FindFirstChild("HumanoidRootPart")
+    if not root then return nil end
+
+    for _, obj in ipairs(Workspace:GetDescendants()) do
+        if obj:IsA("Model")
+            and (obj.Name == "Flag" or obj.Name == "XeroClanFlag")
+            and clanFlagLooksComplete(obj) then
+
+            local ok, pivot = pcall(function() return obj:GetPivot() end)
+            if ok and (pivot.Position - root.Position).Magnitude <= 45 then
+                return obj
+            end
+        end
+    end
+end
+
+local function renderClanFlagFull(dummy, asset, cleaner)
+    if not dummy or not dummy.Parent or not asset then return false end
+    if findClanFlagNear(dummy) then return true end
+
+    local template = asset:FindFirstChild("Flag")
+    if not template or not template:IsA("Model") then return false end
+
+    local root = dummy:FindFirstChild("HumanoidRootPart")
+    if not root then return false end
+
+    local clone = template:Clone()
+    clone.Name = "XeroClanFlag"
+
+    for _, obj in ipairs(clone:GetDescendants()) do
+        if obj:IsA("BasePart") then
+            obj.Anchored = true
+            obj.CanCollide = false
+            obj.CanTouch = false
+            obj.CanQuery = false
+        end
+    end
+
+    clone.Parent = Workspace
+    if cleaner then cleaner:Add(clone) end
+
+    local boxCF, boxSize = clone:GetBoundingBox()
+    local bodyCF, bodySize = dummy:GetBoundingBox()
+
+    local footY = bodyCF.Position.Y - bodySize.Y * .5
+    local pivot = clone:GetPivot()
+    local localBox = pivot:ToObjectSpace(boxCF)
+    local rotationOnly = root.CFrame - root.Position
+
+    local desiredBoxCF =
+        CFrame.new(
+            root.Position.X,
+            footY + boxSize.Y * .5,
+            root.Position.Z
+        ) * rotationOnly
+
+    local finalPivot = desiredBoxCF * localBox:Inverse()
+
+    local rise = tonumber(template:GetAttribute("PierceRise")) or 22
+    local delayTime = tonumber(template:GetAttribute("PierceStart")) or .10
+    local travel = tonumber(template:GetAttribute("PierceTravel")) or .20
+
+    local startPivot = finalPivot * CFrame.new(0, -rise, 0)
+    clone:PivotTo(startPivot)
+
+    local driver = Instance.new("CFrameValue")
+    driver.Value = startPivot
+
+    local changed = driver:GetPropertyChangedSignal("Value"):Connect(function()
+        if clone.Parent then
+            clone:PivotTo(driver.Value)
+        end
+    end)
+
+    if cleaner then
+        cleaner:Add(driver)
+        cleaner:Add(changed)
+    end
+
+    task.delay(delayTime, function()
+        if not clone.Parent then return end
+
+        local tween = TweenService:Create(
+            driver,
+            TweenInfo.new(
+                math.max(.05, travel),
+                Enum.EasingStyle.Quad,
+                Enum.EasingDirection.Out
+            ),
+            {Value = finalPivot}
+        )
+
+        if cleaner then cleaner:Add(tween) end
+        tween:Play()
+    end)
+
+    return true
+end
+
+local function cleanupLegacyDecoratedArtifacts()
+    for _, obj in ipairs(Workspace:GetDescendants()) do
+        if obj.Name == "XeroEffect_WeldToRoot" then
+            pcall(function() obj:Destroy() end)
+        end
+    end
+end
+
 local function runNative(name, statusLabel)
     if isJellyEffect(name) then
         statusLabel.Text = "Jelly eliminado del renderer."
@@ -2794,8 +2956,8 @@ local function runNative(name, statusLabel)
 
     local decorated3D = 0
     if name == "Decorated" then
-        decorated3D = installDecoratedFullModel(dummy, asset)
-        rescanMarkedEmittersNearDummy(dummy, 1.8)
+        cleanupLegacyDecoratedArtifacts()
+        rescanMarkedEmittersNearDummy(dummy, 2.2)
     end
 
     local cleaner = makeCleaner()
@@ -2811,6 +2973,15 @@ local function runNative(name, statusLabel)
 
     local bodyPatched = false
     local bodyPatchSource = nil
+
+    if name == "ClanFlagEffect" then
+        task.delay(.12, function()
+            if dummy and dummy.Parent then
+                renderClanFlagFull(dummy, asset, cleaner)
+                rescanMarkedEmittersNearDummy(dummy, 2.0)
+            end
+        end)
+    end
 
     if name == "Freeze" then
         scheduleFreezeReal(dummy)
@@ -2833,9 +3004,13 @@ local function runNative(name, statusLabel)
         bodyPatchSource = "SpiritOverload · TODO RGB 36,75,26"
 
     elseif name == "SoulReaper" then
-        playSoulReaperCapturedBody(dummy)
-        bodyPatched = true
-        bodyPatchSource = "SoulReaper · lime Neon + fade"
+        -- R12: do NOT fabricate SoulReaper victim animation.
+        -- The collected V2 contains the correct VFX, but SoulReaper is not
+        -- present in DeathEffectPreview's native config table and our V3
+        -- collector did not capture the real movement/AnimationTrack.
+        -- Keep Preview.play's VFX only until the real motion is captured.
+        bodyPatched = false
+        bodyPatchSource = "SoulReaper · VFX nativo, animación pendiente"
 
     elseif name == "Heartache" then
         scheduleHeartacheReal(dummy)
@@ -2885,7 +3060,7 @@ local function runNative(name, statusLabel)
 
     statusLabel.Text =
         "✓ Nativo ejecutado · " .. name ..
-        "\nR9 · víctima completa."
+        "\nR12 · víctima completa."
 
     task.delay(.90, function()
         if not dummy.Parent then return end
@@ -2897,7 +3072,7 @@ local function runNative(name, statusLabel)
             "✓ " .. name ..
             " · body " .. tostring(mutations) ..
             (bodyPatched and (" · " .. tostring(bodyPatchSource)) or "") ..
-            (decorated3D > 0 and " · Decorated 3D" or "") ..
+            (name == "Decorated" and " · Decorated nativo/VFX" or "") ..
             (clothesV2 > 0 and (" · ropa V2 " .. tostring(clothesV2)) or "") ..
             (hatsV2 > 0 and (" · 3D " .. tostring(hatsV2)) or "") ..
             "\n" .. tostring(assetStatus)
@@ -2932,7 +3107,7 @@ local title = Instance.new("TextLabel")
 title.BackgroundTransparency = 1
 title.Position = UDim2.fromOffset(16, 12)
 title.Size = UDim2.new(1,-32,0,22)
-title.Text = "XERO · DEATH EFFECT · NATIVE DUMMY R10"
+title.Text = "XERO · DEATH EFFECT · NATIVE DUMMY R12"
 title.TextColor3 = Color3.fromRGB(245,245,245)
 title.Font = Enum.Font.GothamBold
 title.TextSize = 14

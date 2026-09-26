@@ -4509,21 +4509,50 @@ ENV.__XERO_DEATH_PROXY.GuardEffectSounds = function(proxy)
     local state = ENV.__XERO_DEATH_PROXY
     if state.SoundGuards[proxy] then return end
 
-    -- One-shot por víctima: el cuerpo puede persistir toda la ronda, pero los
-    -- sonidos del efecto NO. Cada sonido lógico sólo puede iniciar una vez y,
-    -- pasado el arranque del efecto, cualquier Sound tardío queda silenciado.
-    local connections, seen, played = {}, setmetatable({}, {__mode="k"}), {}
+    -- HARD ONE-SHOT AUDIO GATE
+    -- DeathEffectPreview puede crear dos Sounds equivalentes casi en el mismo frame.
+    -- Esperar a Sound.Played para mutear el duplicado deja escapar un transient corto,
+    -- porque Played se dispara cuando la reproducción ya comenzó. Por eso cada Sound
+    -- del proxy entra PRE-MUTEADO y sólo recupera su volumen si gana el primer Play
+    -- para su asset lógico. Copias/replays posteriores nunca llegan a ser audibles.
+    local connections = {}
+    local seen = setmetatable({}, {__mode = "k"})
+    local originalVolume = setmetatable({}, {__mode = "k"})
+    local played = {}
     local alive, sealed = true, false
 
-    local function soundKey(sound)
+    local function normalizedSoundKey(sound)
         local id = tostring(sound.SoundId or "")
-        -- El módulo a veces recrea el mismo Sound con otro nombre/ruta. Si existe
-        -- SoundId, ésa es la identidad: cada audio del efecto suena una sola vez.
-        if id ~= "" then return id end
-        return tostring(sound.Name or "Sound")
+        -- Normaliza rbxassetid://123, "123" y URLs ?id=123 al mismo asset.
+        local digits = id:match("^rbxassetid://(%d+)$")
+            or id:match("^(%d+)$")
+            or id:match("[?&]id=(%d+)")
+            or id:match("(%d+)")
+        if digits and digits ~= "" then
+            return "id:" .. digits
+        end
+        return "name:" .. string.lower(tostring(sound.Name or "Sound"))
+    end
+
+    local function rememberVolume(sound)
+        if originalVolume[sound] == nil then
+            local ok, volume = pcall(function() return sound.Volume end)
+            originalVolume[sound] = ok and volume or 1
+        end
+        return originalVolume[sound]
+    end
+
+    local function preMute(sound)
+        local volume = rememberVolume(sound)
+        pcall(function()
+            if sound.Volume ~= 0 then sound.Volume = 0 end
+            sound.Looped = false
+        end)
+        return volume
     end
 
     local function silence(sound)
+        rememberVolume(sound)
         pcall(function()
             sound.Looped = false
             sound.Volume = 0
@@ -4531,47 +4560,91 @@ ENV.__XERO_DEATH_PROXY.GuardEffectSounds = function(proxy)
         end)
     end
 
+    local function allowFirstPlay(sound)
+        local volume = rememberVolume(sound)
+        pcall(function()
+            sound.Looped = false
+            sound.Volume = volume
+        end)
+    end
+
     local function watch(sound)
         if not sound:IsA("Sound") or seen[sound] then return end
         seen[sound] = true
+
         local started = false
+        preMute(sound)
 
         local function onPlay()
-            if not alive then return end
-            local key = soundKey(sound)
+            if not alive or not sound.Parent then return end
+            local key = normalizedSoundKey(sound)
+
             if sealed or started or played[key] then
                 silence(sound)
                 return
             end
+
+            -- Esta instancia ganó el primer Play de este SoundId lógico.
+            -- Como estaba en Volume=0 ANTES del Play, ninguna copia perdedora
+            -- alcanza a filtrar un transient audible.
             started = true
-            played[key] = true
-            pcall(function() sound.Looped = false end)
+            played[key] = sound
+            allowFirstPlay(sound)
         end
 
-        pcall(function() sound.Looped = false end)
+        connections[#connections+1] = sound.Played:Connect(onPlay)
+        connections[#connections+1] = sound:GetPropertyChangedSignal("Playing"):Connect(function()
+            if not alive then return end
+            if sound.Playing then
+                onPlay()
+            elseif not started and sound.Parent then
+                -- Si el renderer tocó Volume antes de arrancar, seguimos pre-muteados.
+                preMute(sound)
+            end
+        end)
         connections[#connections+1] = sound:GetPropertyChangedSignal("Looped"):Connect(function()
             if alive and sound.Looped then
                 pcall(function() sound.Looped = false end)
             end
         end)
-        connections[#connections+1] = sound.Played:Connect(onPlay)
+        connections[#connections+1] = sound:GetPropertyChangedSignal("Volume"):Connect(function()
+            if not alive or not sound.Parent then return end
+            local key = normalizedSoundKey(sound)
+            if sealed or (played[key] and played[key] ~= sound) or (started and played[key] ~= sound) then
+                pcall(function() sound.Volume = 0 end)
+            elseif not started then
+                -- Conserva el volumen que el renderer pretendía usar, pero no lo hace
+                -- audible hasta que esta instancia gane el primer Play.
+                local current = sound.Volume
+                if current > 0 then originalVolume[sound] = current end
+                pcall(function() sound.Volume = 0 end)
+            end
+        end)
 
-        if sealed then
-            silence(sound)
-        elseif sound.Playing or sound.IsPlaying then
+        -- Si DescendantAdded llegó después de que Roblox marcara Playing=true,
+        -- todavía lo reclamamos inmediatamente. El preMute ocurrió antes de esto.
+        if sound.Playing or sound.IsPlaying then
             onPlay()
         end
     end
 
-    connections[#connections+1] = proxy.DescendantAdded:Connect(watch)
-    for _, obj in ipairs(proxy:GetDescendants()) do watch(obj) end
+    connections[#connections+1] = proxy.DescendantAdded:Connect(function(obj)
+        if obj:IsA("Sound") then watch(obj) end
+    end)
+    for _, obj in ipairs(proxy:GetDescendants()) do
+        if obj:IsA("Sound") then watch(obj) end
+    end
 
-    -- A partir de aquí no permitimos que el renderer vuelva a crear/reproducir
-    -- audio en un cadáver persistente. Un sonido que ya arrancó puede terminar
-    -- su reproducción normal; sólo se bloquean reinicios y sonidos tardíos.
+    -- El cuerpo puede persistir toda la ronda, el audio no. Tras la coreografía
+    -- inicial no se admite ningún Sound nuevo/replay en este cadáver.
     task.delay(3.0, function()
         if alive and proxy and proxy.Parent then
             sealed = true
+            for sound in pairs(seen) do
+                if not sound.Playing and not sound.IsPlaying then
+                    silence(sound)
+                end
+            end
         end
     end)
 
@@ -5593,19 +5666,33 @@ ENV.__XERO_DEATH_PROXY.FollowCorpse = function(proxy, corpse, effectName)
         return false
     end
 
+    -- XERO PERF: antes cada cadáver tenía un RenderStepped que además hacía
+    -- proxy:GetDescendants() TODOS los frames dentro de OwnsMotion(). En 4v4,
+    -- varios cadáveres + ofuscación podían multiplicar ese costo. Seguimos a
+    -- 30 Hz (visual suficiente) y sólo revalidamos control físico a 5 Hz.
+    local followAccum = 0
+    local motionAccum = 0
     ENV.__XERO_DEATH_PROXY.FollowConnections[proxy] =
-        game:GetService("RunService").RenderStepped:Connect(function()
+        game:GetService("RunService").Heartbeat:Connect(function(deltaTime)
             if not proxy.Parent or not corpse.Parent then
                 ENV.__XERO_DEATH_PROXY.DisconnectFollow(proxy)
                 return
             end
 
-            -- If the native effect later starts controlling physics, stop
-            -- following immediately instead of fighting the effect.
-            if ENV.__XERO_DEATH_PROXY.OwnsMotion(effectName, proxy) then
-                ENV.__XERO_DEATH_PROXY.DisconnectFollow(proxy)
-                return
+            motionAccum += deltaTime
+            if motionAccum >= 0.20 then
+                motionAccum = 0
+                -- Si el efecto toma control de física posteriormente, soltamos el
+                -- seguimiento. El escaneo caro ocurre 5 veces/s, no 60-240.
+                if ENV.__XERO_DEATH_PROXY.OwnsMotion(effectName, proxy) then
+                    ENV.__XERO_DEATH_PROXY.DisconnectFollow(proxy)
+                    return
+                end
             end
+
+            followAccum += deltaTime
+            if followAccum < (1 / 30) then return end
+            followAccum = 0
 
             local okPivot, pivot = pcall(function()
                 return corpse:GetPivot()
@@ -7190,7 +7277,7 @@ local function selectEffect(value)
         state.Selecting = false
     end)
 end
-Tabs.Efectos:Paragraph({Title = "Efectos de muerte", Desc = "Elige un efecto de muerte. Algunos efectos pueden estar incompletos y se irán mejorando (Visuales)."})
+Tabs.Efectos:Paragraph({Title = "Efectos de muerte", Desc = "Elige un efecto de muerte. Algunos efectos pueden estar incompletos y se irán mejorando. Todo es visual."})
 dropdown = Tabs.Efectos:Dropdown({Title = "Efecto", Values = choices, Value = state.Selected, Callback = selectEffect})
 toggle = Tabs.Efectos:Toggle({Title = "Cambiar efecto de muerte", Desc = "Aplica el efecto seleccionado a tus eliminaciones.", Value = false, Callback = function(value)
     if not state.Syncing then setEnabled(value == true) end
@@ -10729,6 +10816,7 @@ function updateEnemy(p) enemyCache[p] = nil end -- Borramos solo al enemigo que 
 
 runtime.Track(player:GetPropertyChangedSignal("Team"):Connect(updateMyTeam))
 runtime.Track(player:GetPropertyChangedSignal("TeamColor"):Connect(updateMyTeam))
+runtime.Track(player:GetPropertyChangedSignal("Neutral"):Connect(updateMyTeam))
 runtime.Track(player:GetAttributeChangedSignal("Team"):Connect(updateMyTeam))
 runtime.Track(player:GetAttributeChangedSignal("team"):Connect(updateMyTeam))
 
@@ -10748,6 +10836,7 @@ function setupPlayerEvents(p)
     local bundle = {
         p:GetPropertyChangedSignal("Team"):Connect(function() updateEnemy(p) end),
         p:GetPropertyChangedSignal("TeamColor"):Connect(function() updateEnemy(p) end),
+        p:GetPropertyChangedSignal("Neutral"):Connect(function() updateEnemy(p) end),
         p:GetAttributeChangedSignal("Team"):Connect(function() updateEnemy(p) end),
         p:GetAttributeChangedSignal("team"):Connect(function() updateEnemy(p) end),
     }
@@ -10766,24 +10855,55 @@ runtime.Track(Players.PlayerRemoving:Connect(function(p)
 end))
 
 function isEnemy(targetPlayer)
-    if not teamCheckEnabled then return true end
     if targetPlayer == player then return false end
-    
+    if not teamCheckEnabled then return true end
+    if not targetPlayer or targetPlayer.Parent ~= Players then return false end
+
     if enemyCache[targetPlayer] ~= nil then return enemyCache[targetPlayer] end
 
-    local isDiff = true
-    if player.Team ~= nil and targetPlayer.Team ~= nil then
-        isDiff = (player.Team ~= targetPlayer.Team)
+    -- XERO TEAM FIX: nunca asumir "enemigo" mientras DUELS todavía está
+    -- resolviendo Team/TeamColor al entrar, respawnear o cambiar de ronda.
+    -- Ese fallback optimista era el que podía meter aliados en el caché del ESP.
+    local isDiff = false
+    local myTeam = player.Team
+    local theirTeam = targetPlayer.Team
+
+    if myTeam ~= nil or theirTeam ~= nil then
+        -- Si sólo uno de los dos Team está listo, esperamos al siguiente evento.
+        -- setupPlayerEvents/updateMyTeam invalidan el caché al resolverse.
+        if myTeam ~= nil and theirTeam ~= nil then
+            isDiff = (myTeam ~= theirTeam)
+        end
     else
-        local pAttr = player:GetAttribute("Team") or player:GetAttribute("team") 
+        local pAttr = player:GetAttribute("Team") or player:GetAttribute("team")
         local tAttr = targetPlayer:GetAttribute("Team") or targetPlayer:GetAttribute("team")
-        if pAttr ~= nil and tAttr ~= nil then
-            isDiff = (pAttr ~= tAttr)
-        elseif player.TeamColor.Name ~= "White" and player.TeamColor.Name ~= "Medium stone grey" then
-            isDiff = (player.TeamColor ~= targetPlayer.TeamColor)
+
+        if pAttr ~= nil or tAttr ~= nil then
+            if pAttr ~= nil and tAttr ~= nil then
+                isDiff = tostring(pAttr) ~= tostring(tAttr)
+            end
+        elseif player.Neutral == true or targetPlayer.Neutral == true then
+            -- Lobby/espectador/transición: no marcar como enemigo por descarte.
+            isDiff = false
+        else
+            local myColor = player.TeamColor
+            local theirColor = targetPlayer.TeamColor
+            if myColor ~= nil and theirColor ~= nil then
+                -- Igual color = aliado. Distinto color sólo cuenta cuando al menos
+                -- uno dejó los colores neutros/default típicos de transición.
+                if myColor == theirColor then
+                    isDiff = false
+                else
+                    local myName = tostring(myColor.Name or "")
+                    local theirName = tostring(theirColor.Name or "")
+                    local myDefault = myName == "White" or myName == "Medium stone grey"
+                    local theirDefault = theirName == "White" or theirName == "Medium stone grey"
+                    isDiff = not (myDefault and theirDefault)
+                end
+            end
         end
     end
-    
+
     enemyCache[targetPlayer] = isDiff
     return isDiff
 end

@@ -1,5 +1,5 @@
 --[[
-XeroHub | DUELS Death Effects · Stable Base R27 · Local Kills + Dummy Bridge
+XeroHub | DUELS Death Effects · Stable Base R23 · Local Kills + Dummy Bridge
 Kev
 
 Objetivo:
@@ -3191,7 +3191,7 @@ end
 
 
 -- ============================================================
--- R27 · EXTERNAL PREBUILT VISUAL PROXY
+-- R28 · EXACT READ-ONLY VISUAL PROXY
 -- Same principle as XeroHub ESP: the real enemy is only a reference.
 -- We NEVER parent effect objects into the real Character and NEVER mutate
 -- its body properties. DeathEffectPreview runs on a local cloned proxy.
@@ -3305,10 +3305,118 @@ ENV.__XERO_DEATH_PROXY.Sanitize = function(model)
     return model
 end
 
--- Build a detached visual template while the enemy is ALIVE.
--- This is read-only with respect to the real Character: no Archivable toggle,
--- no reparenting, no property writes. HumanoidDescription is used first so the
--- template does not depend on Character:Clone() being possible at death time.
+-- Build an EXACT detached visual template while the enemy is ALIVE.
+-- R28 deliberately does NOT use HumanoidDescription/UserId reconstruction.
+-- Those APIs can lose game-specific body meshes/accessories and produce a blocky rig.
+-- Instead we copy the CURRENT visible Character hierarchy child-by-child. The real
+-- enemy is read-only: no Archivable writes, no reparenting, no property mutation.
+ENV.__XERO_DEATH_PROXY.PairCloneTree = function(source, clone, map)
+    if not source or not clone then return end
+    map[source] = clone
+
+    local sourceCounts = {}
+    for _, sourceChild in ipairs(source:GetChildren()) do
+        local key = sourceChild.ClassName .. "\0" .. sourceChild.Name
+        sourceCounts[key] = (sourceCounts[key] or 0) + 1
+        local wantedIndex = sourceCounts[key]
+        local seen = 0
+        local cloneChild
+
+        for _, candidate in ipairs(clone:GetChildren()) do
+            if candidate.ClassName == sourceChild.ClassName
+                and candidate.Name == sourceChild.Name then
+                seen += 1
+                if seen == wantedIndex then
+                    cloneChild = candidate
+                    break
+                end
+            end
+        end
+
+        if cloneChild then
+            ENV.__XERO_DEATH_PROXY.PairCloneTree(sourceChild, cloneChild, map)
+        end
+    end
+end
+
+ENV.__XERO_DEATH_PROXY.RepairCloneRefs = function(sourceCharacter, proxy, map)
+    if not proxy or not map then return end
+
+    for sourceObj, cloneObj in pairs(map) do
+        if cloneObj and cloneObj.Parent then
+            if sourceObj:IsA("JointInstance") then
+                pcall(function()
+                    cloneObj.Part0 = map[sourceObj.Part0]
+                    cloneObj.Part1 = map[sourceObj.Part1]
+                end)
+            elseif sourceObj:IsA("WeldConstraint") then
+                pcall(function()
+                    cloneObj.Part0 = map[sourceObj.Part0]
+                    cloneObj.Part1 = map[sourceObj.Part1]
+                end)
+            elseif sourceObj:IsA("Constraint")
+                or sourceObj:IsA("Beam")
+                or sourceObj:IsA("Trail") then
+                pcall(function() cloneObj.Attachment0 = map[sourceObj.Attachment0] end)
+                pcall(function() cloneObj.Attachment1 = map[sourceObj.Attachment1] end)
+            end
+        end
+    end
+
+    pcall(function()
+        if sourceCharacter.PrimaryPart and map[sourceCharacter.PrimaryPart] then
+            proxy.PrimaryPart = map[sourceCharacter.PrimaryPart]
+        end
+    end)
+end
+
+ENV.__XERO_DEATH_PROXY.CopyExactCharacter = function(character)
+    if not character or not character:IsA("Model") then
+        return nil, "Character inválido"
+    end
+
+    local proxy = Instance.new("Model")
+    proxy.Name = tostring(character.Name)
+    local map = {[character] = proxy}
+    local copied = 0
+
+    for _, child in ipairs(character:GetChildren()) do
+        if not child:IsA("Script")
+            and not child:IsA("LocalScript")
+            and not child:IsA("ModuleScript")
+            and not child:IsA("Tool") then
+
+            local okClone, clone = pcall(function()
+                return child:Clone()
+            end)
+
+            if okClone and clone then
+                clone.Parent = proxy
+                copied += 1
+                ENV.__XERO_DEATH_PROXY.PairCloneTree(child, clone, map)
+            end
+        end
+    end
+
+    if copied == 0 then
+        proxy:Destroy()
+        return nil, "ningún hijo visual se pudo copiar"
+    end
+
+    -- A Humanoid is required by DeathEffectPreview. Normally it was copied
+    -- above; this is only a detached-proxy fallback and never touches source.
+    if not proxy:FindFirstChildOfClass("Humanoid") then
+        local hum = Instance.new("Humanoid")
+        hum.Name = "Humanoid"
+        hum.Parent = proxy
+    end
+
+    ENV.__XERO_DEATH_PROXY.RepairCloneRefs(character, proxy, map)
+    ENV.__XERO_DEATH_PROXY.Sanitize(proxy)
+    proxy.Parent = nil
+    return proxy
+end
+
 ENV.__XERO_DEATH_PROXY.BuildTemplate = function(player, character, hum)
     if not hum or ENV.__XERO_DEATH_PROXY.TemplateBuilding[hum] then return end
     if ENV.__XERO_DEATH_PROXY.TemplateByHumanoid[hum] then return end
@@ -3317,50 +3425,11 @@ ENV.__XERO_DEATH_PROXY.BuildTemplate = function(player, character, hum)
 
     task.spawn(function()
         local template
-
-        -- Exact read-only snapshot when Roblox allows cloning this Character.
-        -- We never toggle Archivable or write anything to the source.
         if character and character.Parent then
-            local okClone, generated = pcall(function()
-                return character:Clone()
-            end)
-            if okClone and generated then
-                template = generated
-            end
-        end
-
-        -- Reliable fallback: reconstruct the CURRENT avatar from a read-only
-        -- HumanoidDescription, so Character removal can no longer race the kill.
-        if not template then
-            local okDesc, description = pcall(function()
-                return hum:GetAppliedDescription()
-            end)
-
-            if okDesc and description then
-                local okModel, generated = pcall(function()
-                    return Players:CreateHumanoidModelFromDescription(
-                        description,
-                        hum.RigType
-                    )
-                end)
-                if okModel and generated then
-                    template = generated
-                end
-            end
-        end
-
-        -- Final fallback: account avatar. Still completely separate from target.
-        if not template and player then
-            local okUser, generated = pcall(function()
-                return Players:CreateHumanoidModelFromUserId(player.UserId)
-            end)
-            if okUser and generated then
-                template = generated
-            end
+            template = select(1, ENV.__XERO_DEATH_PROXY.CopyExactCharacter(character))
         end
 
         if template then
-            ENV.__XERO_DEATH_PROXY.Sanitize(template)
             template.Name = "XeroDeathTemplate_" .. tostring(player and player.Name or "Enemy")
             template.Parent = nil
 
@@ -3376,23 +3445,27 @@ ENV.__XERO_DEATH_PROXY.BuildTemplate = function(player, character, hum)
 end
 
 ENV.__XERO_DEATH_PROXY.Make = function(source, effectName, hum, player, deathPosition)
-    local base = hum and ENV.__XERO_DEATH_PROXY.TemplateByHumanoid[hum] or nil
     local proxy
+    local reason
 
-    if base then
-        local ok, generated = pcall(function() return base:Clone() end)
-        if ok and generated then proxy = generated end
+    -- Best path: take a fresh read-only visual snapshot in the kill frame so
+    -- hair, accessories, package meshes and the current body pose are exact.
+    if source and source.Parent and source:IsA("Model") then
+        proxy, reason = ENV.__XERO_DEATH_PROXY.CopyExactCharacter(source)
     end
 
-    -- If the live Character still exists, a direct clone is a harmless read and
-    -- preserves game-specific appearance that HumanoidDescription may omit.
-    if not proxy and source and source.Parent and source:IsA("Model") then
-        local ok, generated = pcall(function() return source:Clone() end)
-        if ok and generated then proxy = generated end
+    -- If DUELS removed the Character before the confirmation arrived, use the
+    -- exact detached template captured while it was alive. No generic avatar.
+    if not proxy then
+        local base = hum and ENV.__XERO_DEATH_PROXY.TemplateByHumanoid[hum] or nil
+        if base then
+            local ok, generated = pcall(function() return base:Clone() end)
+            if ok and generated then proxy = generated end
+        end
     end
 
     if not proxy then
-        return nil, base and "plantilla no clonable" or "plantilla aún no disponible"
+        return nil, reason or "plantilla visual exacta aún no disponible"
     end
 
     ENV.__XERO_DEATH_PROXY.Sanitize(proxy)
@@ -3410,8 +3483,7 @@ ENV.__XERO_DEATH_PROXY.Make = function(source, effectName, hum, player, deathPos
         end)
     end
 
-    -- Only the detached proxy is put into a death-like state. This gives the
-    -- native renderer the same kind of body it receives on a real elimination.
+    -- Only the detached proxy receives death state / effect physics.
     local proxyHumanoid = proxy:FindFirstChildOfClass("Humanoid")
     if proxyHumanoid then
         pcall(function()
@@ -4158,7 +4230,7 @@ local function triggerVictim(player, character, hum, proof)
         end
     else
         status.Text =
-            "Kill confirmado · proxy no listo: " ..
+            "Kill confirmado · proxy exacto no listo: " ..
             tostring(proxyErr)
     end
 
@@ -4718,8 +4790,8 @@ toggle.MouseButton1Click:Connect(function()
         end
         status.Text =
             "✓ Activo · " .. tostring(selectedEffect()) ..
-            "\nPlantillas externas: " .. tostring(readyTemplates) .. "/" .. tostring(trackedCount) ..
-            " · enemigo read-only"
+            "\nPlantillas visuales exactas: " .. tostring(readyTemplates) .. "/" .. tostring(trackedCount) ..
+            " · enemigo read-only · sin avatar genérico"
     else
         for _, entry in ipairs(pendingDeaths) do
             removePending(entry)
@@ -4768,7 +4840,7 @@ UserInputService.InputChanged:Connect(function(input)
 end)
 
 print(
-    "[Xero Death Effects R27 ExternalTemplate]",
+    "[Xero Death Effects R28 ExactVisualProxy]",
     #EFFECTS,
     "efectos ·",
     PRELOAD_STATS.loaded,

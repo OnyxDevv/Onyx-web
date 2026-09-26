@@ -1,5 +1,5 @@
 --[[
-XeroHub | DUELS Death Effects · CurrentCamera R36 · Fix duplicados · Base original ghsot xd
+XeroHub | DUELS Death Effects · CurrentCamera R36 · Fix duplicados · Base original
 Kev
 
 Objetivo:
@@ -3664,6 +3664,18 @@ ENV.__XERO_DEATH_PROXY.CopySourceMotion = function(proxy, source, effectName, in
 
     local lowerEffect = string.lower(tostring(effectName or ""))
 
+    if string.find(lowerEffect, "venom", 1, true) then
+        for _, part in ipairs(proxy:GetDescendants()) do
+            if part:IsA("BasePart") then
+                part.AssemblyLinearVelocity = Vector3.zero
+                part.AssemblyAngularVelocity = Vector3.zero
+                part.CanCollide = false
+                part.CanTouch = false
+            end
+        end
+        return
+    end
+
     -- Frostbite / hipotermia in DUELS leaves the victim frozen exactly at the
     -- final hit pose. It must NOT inherit the later corpse fall or bullet push.
     if string.find(lowerEffect, "frostbite", 1, true)
@@ -3898,9 +3910,18 @@ ENV.__XERO_DEATH_PROXY.Make = function(source, effectName, hum, player, deathPos
     local proxy
     local reason
 
+    -- Venom needs an intact rig; a melee death can already have removed joints.
+    if string.find(string.lower(tostring(effectName)), "venom", 1, true) then
+        local template = hum and ENV.__XERO_DEATH_PROXY.TemplateByHumanoid[hum]
+        if template then
+            local ok, clone = pcall(function() return template:Clone() end)
+            if ok then proxy = clone end
+        end
+    end
+
     -- Best path: take a fresh read-only visual snapshot in the kill frame so
     -- hair, accessories, package meshes and the current body pose are exact.
-    if source and source.Parent and source:IsA("Model") then
+    if not proxy and source and source.Parent and source:IsA("Model") then
         proxy, reason = ENV.__XERO_DEATH_PROXY.CopyExactCharacter(source)
     end
 
@@ -4107,6 +4128,42 @@ local function lockVenomDisappearance(victim, cleaner)
     end)
 end
 
+ENV.__XERO_DEATH_PROXY.WatchVenomCompletion = function(victim, cleaner)
+    local head = victim:FindFirstChild("Head")
+    local torso = victim:FindFirstChild("UpperTorso") or victim:FindFirstChild("Torso")
+    if not head or not torso then return end
+    local headSize, torsoSize = head.Size.Magnitude, torso.Size.Magnitude
+    local state = ENV.__XERO_DEATH_PROXY
+    local conn
+    local done = false
+    local function consumed(part, originalSize)
+        return not part.Parent or part.Transparency >= 0.99
+            or part.Size.Magnitude <= originalSize * 0.12
+    end
+    local function finish()
+        if done then return end
+        if not victim.Parent then
+            done = true
+            if conn then conn:Disconnect() end
+            return
+        end
+        if consumed(head, headSize) and consumed(torso, torsoSize) then
+            done = true
+            if conn then conn:Disconnect() end
+            -- Detach the entire consumed body before the preview can rebuild it.
+            victim.Parent = nil
+            task.defer(function()
+                if ENV.__XERO_DEATH_PROXY == state then state.DestroyProxy(victim) end
+            end)
+        end
+    end
+    conn = game:GetService("RunService").Heartbeat:Connect(finish)
+    cleaner:Add(function()
+        done = true
+        if conn then conn:Disconnect() end
+    end)
+end
+
 local function runNativeOnVictim(name, victim, statusLabel)
     if not victim or not victim.Parent then
         if statusLabel then statusLabel.Text = "✕ La víctima ya no existe." end
@@ -4168,6 +4225,9 @@ local function runNativeOnVictim(name, victim, statusLabel)
     victimCleaners[victim] = cleaner
     if name == "Ghosted" or string.find(string.lower(tostring(name)), "venom", 1, true) then
         lockVenomDisappearance(victim, cleaner)
+    end
+    if string.find(string.lower(tostring(name)), "venom", 1, true) then
+        ENV.__XERO_DEATH_PROXY.WatchVenomCompletion(victim, cleaner)
     end
 
     if statusLabel then
@@ -5258,6 +5318,9 @@ ENV.__XERO_DEATH_BRIDGE_RUNTIME.RecentMeleeAttackAt = 0
 
 ENV.__XERO_DEATH_BRIDGE_RUNTIME.ToolHasGunKill = function(tool)
     if not tool or not tool:IsA("Tool") then return false end
+    local name = normalized(tool.Name)
+    if name:find("knife", 1, true) or name:find("sword", 1, true)
+        or name:find("dagger", 1, true) or name:find("melee", 1, true) then return false end
     for _, obj in ipairs(tool:GetDescendants()) do
         if obj:IsA("Sound") then
             local n = normalized(obj.Name)
@@ -5272,7 +5335,13 @@ ENV.__XERO_DEATH_BRIDGE_RUNTIME.SetRecentMelee = function(character, source)
     if not character or not character:IsA("Model") then return false end
     local targetPlayer = Players:GetPlayerFromCharacter(character)
     local hum = character:FindFirstChildOfClass("Humanoid")
-    if not targetPlayer or targetPlayer == LP or not hum or hum.Health <= 0 then return false end
+    if not targetPlayer or targetPlayer == LP or not hum then return false end
+    local info = trackedHumanoids[hum]
+    local lateContact = source == "Touched" and info and info.deathAt
+        and not info.triggered and not info.expired
+        and os.clock() - info.deathAt <= 0.95
+        and os.clock() - (deathRuntime.RecentMeleeAttackAt or 0) <= 0.95
+    if hum.Health <= 0 and not lateContact then return false end
     if not isEnemyPlayer(targetPlayer) then return false end
     ENV.__XERO_DEATH_BRIDGE_RUNTIME.RecentMelee = {
         Character = character,
@@ -5281,6 +5350,10 @@ ENV.__XERO_DEATH_BRIDGE_RUNTIME.SetRecentMelee = function(character, source)
         At = os.clock(),
         Source = source,
     }
+    if lateContact then
+        deathRuntime.RecentMelee = nil
+        triggerVictim(targetPlayer, character, hum, "cuchillo local · contacto y muerte")
+    end
     return true
 end
 
@@ -5357,7 +5430,9 @@ end
 -- Death body watcher: only models CREATED after the script starts are remembered.
 -- This avoids repeatedly scanning the whole Workspace on every kill.
 killSignalConnections[#killSignalConnections + 1] = Workspace.DescendantAdded:Connect(function(obj)
-    if obj:IsA("Model") then
+    if obj:IsA("Tool") and LP.Character and obj:IsDescendantOf(LP.Character) then
+        ENV.__XERO_DEATH_BRIDGE_RUNTIME.HookMeleeTool(obj)
+    elseif obj:IsA("Model") then
         rememberDeathModel(obj)
     elseif obj:IsA("Humanoid") and obj.Parent and obj.Parent:IsA("Model") then
         rememberDeathModel(obj.Parent)

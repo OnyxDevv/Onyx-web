@@ -2980,11 +2980,86 @@ local function tintTreeColorOnly(root, color)
     end
 end
 
+local function isHairAccessory(accessory)
+    if not accessory or not accessory:IsA("Accessory") then return false end
+
+    local okType, accessoryType = pcall(function() return accessory.AccessoryType end)
+    if okType and accessoryType == Enum.AccessoryType.Hair then
+        return true
+    end
+
+    local lowerName = string.lower(tostring(accessory.Name or ""))
+    if string.find(lowerName, "hair", 1, true)
+        or string.find(lowerName, "cabello", 1, true)
+        or string.find(lowerName, "wig", 1, true) then
+        return true
+    end
+
+    local handle = accessory:FindFirstChild("Handle")
+    if handle and handle:FindFirstChild("HairAttachment", true) then
+        return true
+    end
+
+    return false
+end
+
+local function captureAccessoryAppearance(dummy)
+    local snapshot = setmetatable({}, {__mode = "k"})
+    if not dummy then return snapshot end
+
+    local function capture(obj)
+        local state = {}
+        if obj:IsA("BasePart") then
+            state.Color = obj.Color
+            state.Material = obj.Material
+            state.MaterialVariant = obj.MaterialVariant
+            state.Reflectance = obj.Reflectance
+            state.Transparency = obj.Transparency
+            if obj:IsA("MeshPart") then state.TextureID = obj.TextureID end
+        elseif obj:IsA("Decal") or obj:IsA("Texture") then
+            state.Color3 = obj.Color3
+            state.Transparency = obj.Transparency
+            state.Texture = obj.Texture
+        elseif obj:IsA("SpecialMesh") then
+            state.VertexColor = obj.VertexColor
+            state.TextureId = obj.TextureId
+        elseif obj:IsA("SurfaceAppearance") then
+            state.ColorMap = obj.ColorMap
+            state.MetalnessMap = obj.MetalnessMap
+            state.NormalMap = obj.NormalMap
+            state.RoughnessMap = obj.RoughnessMap
+        else
+            return
+        end
+        snapshot[obj] = state
+    end
+
+    for _, accessory in ipairs(dummy:GetChildren()) do
+        if accessory:IsA("Accessory") then
+            for _, obj in ipairs(accessory:GetDescendants()) do capture(obj) end
+        end
+    end
+    return snapshot
+end
+
+local function restoreAccessoryAppearance(accessory, snapshot)
+    if not accessory or not snapshot then return end
+    for _, obj in ipairs(accessory:GetDescendants()) do
+        local state = snapshot[obj]
+        if state then
+            for prop, value in pairs(state) do
+                pcall(function() obj[prop] = value end)
+            end
+        end
+    end
+end
+
 local function blackenAccessory(accessory)
     if not accessory or not accessory:IsA("Accessory") then return end
 
-    -- R15: Frostbite deja Material/MaterialVariant intactos.
-    -- Se limpian sólo overlays/texturas que impiden que el negro sea visible.
+    -- Frostbite/Hipotermia: TODOS los accesorios del clon se pintan de negro.
+    -- El fix de joints/Handles se mantiene separado para que cabello y accesorios
+    -- sigan correctamente pegados al cuerpo durante toda la vida del clon.
     tintTreeColorOnly(accessory, Color3.new(0,0,0))
 end
 
@@ -3021,7 +3096,7 @@ local function forceFrostbitePass(dummy)
     end
 end
 
-local function scheduleFrostbiteReal(dummy, cleaner)
+local function scheduleFrostbiteReal(dummy, cleaner, originalAccessoryAppearance)
     -- Frostbite/Hipotermia: el cuerpo queda congelado, pero el cabello y los
     -- accesorios NO deben congelarse como piezas independientes. Si un Handle
     -- queda Anchored, cualquier ajuste tardío de la pose mueve el cuerpo pero
@@ -3050,6 +3125,7 @@ local function scheduleFrostbiteReal(dummy, cleaner)
             pcall(state.RepairAccessoryJoints, dummy, nil)
         end
 
+        -- Hipotermia debe mantener negros TODOS los accesorios, no sólo el cabello.
         blackenAccessory(accessory)
 
         for _, obj in ipairs(accessory:GetDescendants()) do
@@ -3161,7 +3237,8 @@ local function scheduleFrostbiteReal(dummy, cleaner)
     end))
 
     -- El renderer puede aplicar su BodyStyle de forma asíncrona. El cuerpo sí
-    -- permanece azul; accesorios/cabello se fuerzan a negro durante TODO el clon.
+    -- permanece azul; sólo el cabello queda negro. Los demás accesorios se restauran
+    -- a su apariencia exacta previa al efecto durante toda la vida del clon.
     for _, delayTime in ipairs({0, .04, .12, .28, .52, .86, 1.25, 1.70, 2.15}) do
         task.delay(delayTime, function()
             if not alive or not dummy or not dummy.Parent then return end
@@ -4976,9 +5053,9 @@ ENV.__XERO_DEATH_PROXY.CopyExactCharacter = function(character)
     return proxy
 end
 
-ENV.__XERO_DEATH_PROXY.BuildTemplate = function(player, character, hum)
+ENV.__XERO_DEATH_PROXY.BuildTemplate = function(player, character, hum, forceRefresh)
     if not host.Alive() or not hum or ENV.__XERO_DEATH_PROXY.TemplateBuilding[hum] then return end
-    if ENV.__XERO_DEATH_PROXY.TemplateByHumanoid[hum] then return end
+    if ENV.__XERO_DEATH_PROXY.TemplateByHumanoid[hum] and not forceRefresh then return end
 
     ENV.__XERO_DEATH_PROXY.TemplateBuilding[hum] = true
 
@@ -5697,6 +5774,14 @@ local function runNativeOnVictim(name, victim, statusLabel)
 
     -- R32: DeathEffectPreview runs only on a CurrentCamera-local visual proxy.
     -- The real enemy/corpse is never passed to the renderer.
+    -- Frostbite/Hipotermia puede recolorear accesorios dentro de Preview.play().
+    -- Guardamos la apariencia ORIGINAL antes del renderer para poder mantener
+    -- únicamente el cabello negro sin destruir colores/texturas de los demás.
+    local frostbiteAccessoryAppearance = nil
+    if name == "Frostbite" then
+        frostbiteAccessoryAppearance = captureAccessoryAppearance(victim)
+    end
+
     local ok, result = pcall(function()
         return Preview.play(victim, name, cleaner)
     end)
@@ -5725,9 +5810,9 @@ local function runNativeOnVictim(name, victim, statusLabel)
         bodyPatchSource = "Freeze · TODO sólido"
 
     elseif name == "Frostbite" then
-        scheduleFrostbiteReal(victim, cleaner)
+        scheduleFrostbiteReal(victim, cleaner, frostbiteAccessoryAppearance)
         bodyPatched = true
-        bodyPatchSource = "Frostbite · sin cara/ropa + accesorios negros"
+        bodyPatchSource = "Frostbite · cuerpo azul + cabello negro + accesorios preservados"
 
     elseif name == "Ghosted" then
         -- Reconnect the existing captured fade / reconstructed rise to the proxy.
@@ -6524,14 +6609,28 @@ local function hookCharacter(player, character)
         -- Prebuild a detached visual body while the enemy is alive.
         -- This avoids touching/cloning the real Character after DUELS removes it.
         ENV.__XERO_DEATH_PROXY.BuildTemplate(player, character, hum)
-        task.delay(0.75, function()
-            if hum and hum.Parent and not ENV.__XERO_DEATH_PROXY.TemplateByHumanoid[hum] then
-                ENV.__XERO_DEATH_PROXY.BuildTemplate(player, character, hum)
+
+        -- Bundles/UGC pequeños pueden terminar de aplicar meshes, escalas y accesorios
+        -- después de que aparece el Humanoid. Antes guardábamos la primera plantilla y
+        -- nunca la refrescábamos, así que el fallback de muerte podía quedar incompleto.
+        -- Refrescamos una vez tras cargar apariencia y con dos snapshots tardíos baratos.
+        local appearanceLoaded = player.CharacterAppearanceLoaded:Connect(function(loadedCharacter)
+            if loadedCharacter == character and hum and hum.Parent then
+                task.defer(function()
+                    ENV.__XERO_DEATH_PROXY.BuildTemplate(player, character, hum, true)
+                end)
             end
         end)
-        task.delay(1.80, function()
-            if hum and hum.Parent and not ENV.__XERO_DEATH_PROXY.TemplateByHumanoid[hum] then
-                ENV.__XERO_DEATH_PROXY.BuildTemplate(player, character, hum)
+        info.connections[#info.connections + 1] = appearanceLoaded
+
+        task.delay(0.85, function()
+            if hum and hum.Parent then
+                ENV.__XERO_DEATH_PROXY.BuildTemplate(player, character, hum, true)
+            end
+        end)
+        task.delay(1.90, function()
+            if hum and hum.Parent then
+                ENV.__XERO_DEATH_PROXY.BuildTemplate(player, character, hum, true)
             end
         end)
 
@@ -7091,9 +7190,9 @@ local function selectEffect(value)
         state.Selecting = false
     end)
 end
-Tabs.Efectos:Paragraph({Title = "Efectos de muerte", Desc = "Elige un efecto de muerte. Algunos efectos pueden estar incompletos y se irán mejorando."})
+Tabs.Efectos:Paragraph({Title = "Efectos de muerte", Desc = "Elige un efecto de muerte. Algunos efectos pueden estar incompletos y se irán mejorando (Visuales)."})
 dropdown = Tabs.Efectos:Dropdown({Title = "Efecto", Values = choices, Value = state.Selected, Callback = selectEffect})
-toggle = Tabs.Efectos:Toggle({Title = "Cambiar efecto de muerte", Desc = "Aplica el efecto seleccionado.", Value = false, Callback = function(value)
+toggle = Tabs.Efectos:Toggle({Title = "Cambiar efecto de muerte", Desc = "Aplica el efecto seleccionado a tus eliminaciones.", Value = false, Callback = function(value)
     if not state.Syncing then setEnabled(value == true) end
 end})
 runtime.DeathEffectsArm = function(character, tool)
@@ -20235,7 +20334,6 @@ local killAllResting = false
 local killAllRestCharacter = nil
 
 local killAllWasSafe = false
-local killAllRejectingToggle = false
 
 KILL_RANGE = 600
 local KILL_RANGE_SQ = KILL_RANGE * KILL_RANGE
@@ -21935,556 +22033,11 @@ end
 
 
 -- ==========================================
--- TOGGLE
+-- KILL ALL · EN MANTENIMIENTO
 -- ==========================================
+-- No se crea ningún toggle mientras la función está en mantenimiento.
+-- La lógica se conserva arriba para poder reactivarla más adelante.
 
-UIElements.TogKillAll =
-    Tabs.KillAll:Toggle({
-
-    Title =
-        "Kill All · En mantenimiento",
-
-    Desc =
-        "Temporalmente desactivado mientras se mejora.",
-
-    Value =
-        false,
-
-    Callback =
-        function(Value)
-
-        -- Kill All queda visible para indicar su estado, pero no puede activarse
-        -- mientras esté en mantenimiento. Conservamos la lógica debajo para
-        -- reactivarla más adelante sin rehacer la función completa.
-        if Value then
-            killAllEnabled = false
-            showBottomMessage("Kill All está en mantenimiento.")
-            killAllRejectingToggle = true
-            task.defer(function()
-                pcall(function()
-                    if UIElements.TogKillAll then
-                        UIElements.TogKillAll:Set(false)
-                    end
-                end)
-                killAllRejectingToggle = false
-            end)
-            return
-        end
-
-
-        -- ==================================
-        -- ON
-        -- ==================================
-
-        if Value then
-
-            local char =
-                player.Character
-
-            local hum =
-                char
-                and char:
-                    FindFirstChildOfClass(
-                        "Humanoid"
-                    )
-
-            local hrp =
-                char
-                and char:
-                    FindFirstChild(
-                        "HumanoidRootPart"
-                    )
-
-
-            -- =================================
-            -- BLOQUEO TOTAL DE ZONA SEGURA
-            --
-            -- No se queda "armado".
-            -- Directamente NO permite ON.
-            -- =================================
-
-            if not char
-                or not hum
-                or not hrp
-                or hum.Health <= 0
-                or estaEnLobby()
-                or estaEnZonaSeguraKillAll(
-                    char,
-                    player
-                )
-            then
-
-                killAllEnabled =
-                    false
-
-                showBottomMessage(
-                    "Kill All no se puede activar en zona segura."
-                )
-
-
-                killAllRejectingToggle =
-                    true
-
-
-                task.defer(function()
-
-                    pcall(function()
-
-                        if UIElements.TogKillAll then
-
-                            UIElements.
-                                TogKillAll:
-                                Set(false)
-                        end
-                    end)
-
-
-                    killAllRejectingToggle =
-                        false
-                end)
-
-
-                return
-            end
-
-
-            killAllEnabled =
-                true
-
-
-            killAllBaseCFrame =
-                hrp.CFrame
-
-            killAllBaseCharacter =
-                char
-
-            killAllResting =
-                false
-
-            killAllRestCharacter =
-                nil
-
-            killAllWasSafe =
-                false
-
-
-            table.clear(
-                failedTargets
-            )
-
-
-            showBottomMessage(
-                "Kill All: ACTIVADO"
-            )
-
-
-            -- Al encenderlo ya nos ponemos
-            -- en posición de reposo.
-            reposarEnBaseKillAll(
-                char,
-                hum,
-                hrp
-            )
-
-
-            task.spawn(function()
-
-                while runtime.Alive
-                    and killAllEnabled
-                do
-
-                    -- =========================
-                    -- LOCAL
-                    -- =========================
-
-                    local myChar =
-                        player.Character
-
-                    local myHum =
-                        myChar
-                        and myChar:
-                            FindFirstChildOfClass(
-                                "Humanoid"
-                            )
-
-                    local myHrp =
-                        myChar
-                        and myChar:
-                            FindFirstChild(
-                                "HumanoidRootPart"
-                            )
-
-
-                    if not myChar
-                        or not myHum
-                        or not myHrp
-                        or myHum.Health <= 0
-                    then
-
-                        killAllResting =
-                            false
-
-                        killAllRestCharacter =
-                            nil
-
-                        task.wait(0.12)
-
-                        continue
-                    end
-
-
-                    -- =========================
-                    -- RESPAWN / CHARACTER NUEVO
-                    -- =========================
-
-                    if killAllBaseCharacter
-                        ~= myChar
-                    then
-
-                        killAllBaseCharacter =
-                            myChar
-
-                        killAllBaseCFrame =
-                            myHrp.CFrame
-
-                        killAllResting =
-                            false
-
-                        killAllRestCharacter =
-                            nil
-                    end
-
-
-                    -- =========================
-                    -- ZONA SEGURA
-                    --
-                    -- Si entramos DESPUÉS de
-                    -- activarlo, no forzamos
-                    -- ningún CFrame.
-                    --
-                    -- Se suspende hasta salir.
-                    -- =========================
-
-                    local localSafe =
-                        estaEnLobby()
-                        or
-                        estaEnZonaSeguraKillAll(
-                            myChar,
-                            player
-                        )
-
-
-                    if localSafe then
-
-                        -- Importante:
-                        -- liberar PlatformStand
-                        -- para que el juego pueda
-                        -- manejar lobby / spawn.
-                        if killAllResting then
-
-                            liberarReposoKillAll(
-                                myHum,
-                                myHrp
-                            )
-                        end
-
-
-                        -- La próxima vez que
-                        -- salgamos de zona segura,
-                        -- la posición actual será
-                        -- la nueva base de ronda.
-                        killAllBaseCFrame =
-                            nil
-
-                        killAllWasSafe =
-                            true
-
-
-                        task.wait(0.10)
-
-                        continue
-                    end
-
-
-                    -- =========================
-                    -- ENTRÓ NUEVA RONDA
-                    -- =========================
-
-                    if killAllWasSafe
-                        or not killAllBaseCFrame
-                    then
-
-                        killAllBaseCFrame =
-                            myHrp.CFrame
-
-                        killAllBaseCharacter =
-                            myChar
-
-                        killAllWasSafe =
-                            false
-
-                        killAllResting =
-                            false
-
-                        killAllRestCharacter =
-                            nil
-
-                        killAllIdleFree =
-                            false
-                    end
-
-
-                    -- =========================
-                    -- TARGETS
-                    -- =========================
-
-                    local encontroObjetivo =
-                        false
-
-                    local intentoAtaque =
-                        false
-
-
-                    for _, targetPlayer
-                        in ipairs(
-                            listaJugadores
-                        )
-                    do
-
-                        if not runtime.Alive
-                            or not killAllEnabled
-                        then
-                            break
-                        end
-
-
-                        if targetPlayer ~= player
-                            and isEnemy(
-                                targetPlayer
-                            )
-                            and targetPlayer.Character
-                        then
-
-                            local enemyChar =
-                                targetPlayer.Character
-
-                            local enemyHum =
-                                enemyChar:
-                                    FindFirstChildOfClass(
-                                        "Humanoid"
-                                    )
-
-                            local enemyHrp =
-                                enemyChar:
-                                    FindFirstChild(
-                                        "HumanoidRootPart"
-                                    )
-
-
-                            if enemyHum
-                                and enemyHrp
-                                and enemyHum.Health > 0
-                                and not estaEnZonaSeguraKillAll(
-                                    enemyChar,
-                                    targetPlayer
-                                )
-                            then
-
-                                local rangeDelta = killAllBaseCFrame.Position - enemyHrp.Position
-
-                                if rangeDelta:Dot(rangeDelta) <= KILL_RANGE_SQ then
-
-                                    encontroObjetivo =
-                                        true
-
-                                    -- Salir del modo libre porque
-                                    -- ya volvió a aparecer un enemigo.
-                                    if killAllIdleFree then
-                                        killAllIdleFree =
-                                            false
-                                    end
-
-                                    local retryAt =
-                                        failedTargets[
-                                            targetPlayer
-                                        ]
-
-
-                                    if not retryAt
-                                        or os.clock()
-                                            >= retryAt
-                                    then
-
-                                        intentoAtaque =
-                                            true
-
-
-                                        atacarUnaVezKillAll(
-                                            targetPlayer,
-                                            myChar,
-                                            myHum,
-                                            myHrp
-                                        )
-
-
-                                        -- Después de cada enemigo
-                                        -- atacarUnaVezKillAll YA
-                                        -- regresó y dejó reposando.
-                                        --
-                                        -- NO regresar otra vez.
-                                        task.wait(
-                                            0.035
-                                        )
-                                    end
-                                end
-                            end
-                        end
-                    end
-
-
-                    -- =========================
-                    -- FIN DE ATAQUES / MODO LIBRE
-                    -- =========================
-
-                    if not encontroObjetivo then
-
-                        -- Ya matamos a todos.
-                        -- Kill All sigue ON,
-                        -- pero devuelve movimiento normal.
-                        if not killAllIdleFree then
-
-                            liberarMovimientoKillAll(
-                                myHum,
-                                myHrp
-                            )
-                        end
-
-                        task.wait(0.12)
-
-                    elseif not intentoAtaque then
-
-                        -- Sí existe enemigo pero todavía
-                        -- no se puede atacar por protección,
-                        -- retry, vulnerabilidad, etc.
-                        reposarEnBaseKillAll(
-                            myChar,
-                            myHum,
-                            myHrp
-                        )
-
-                        task.wait(0.08)
-
-                    else
-
-                        task.wait(0.06)
-                    end
-                end
-            end)
-
-
-        -- ==================================
-        -- OFF
-        -- ==================================
-
-        else
-
-            killAllEnabled =
-                false
-
-
-            if not killAllRejectingToggle then
-
-                showBottomMessage(
-                    "Kill All: DESACTIVADO"
-                )
-            end
-
-
-            local char =
-                player.Character
-
-            local hum =
-                char
-                and char:
-                    FindFirstChildOfClass(
-                        "Humanoid"
-                    )
-
-            local hrp =
-                char
-                and char:
-                    FindFirstChild(
-                        "HumanoidRootPart"
-                    )
-
-
-            if hum then
-
-                pcall(function()
-
-                    hum.PlatformStand =
-                        false
-
-                    hum.AutoRotate =
-                        true
-
-                    hum:ChangeState(
-                        Enum.HumanoidStateType.GettingUp
-                    )
-                end)
-            end
-
-
-            if hrp then
-
-                freezeKillRoot(
-                    hrp
-                )
-
-
-                -- Dejar al personaje derecho
-                -- exactamente DONDE está.
-                local _, rotY, _ =
-                    hrp.CFrame:
-                        ToEulerAnglesXYZ()
-
-
-                hrp.CFrame =
-                    CFrame.new(
-                        hrp.Position
-                    )
-                    * CFrame.Angles(
-                        0,
-                        rotY,
-                        0
-                    )
-            end
-
-
-            killAllBaseCFrame =
-                nil
-
-            killAllBaseCharacter =
-                nil
-
-            killAllResting =
-                false
-
-            killAllRestCharacter =
-                nil
-
-            killAllWasSafe =
-                false
-
-            killAllIdleFree =
-                false
-
-            table.clear(
-                failedTargets
-            )
-        end
-    end
-})
 
 -- ====================
 -- HITBOX EXPANDER OPTIMIZADO (LAZY LOADING)

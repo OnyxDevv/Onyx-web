@@ -1,5 +1,5 @@
 --[[
-XeroHub | DUELS Death Effects · Native Dummy Bridge R2
+XeroHub | DUELS Death Effects · Native Dummy Bridge R3
 Kev
 
 Objetivo:
@@ -19,6 +19,7 @@ local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local HttpService = game:GetService("HttpService")
 local UserInputService = game:GetService("UserInputService")
+local TweenService = game:GetService("TweenService")
 local Workspace = game:GetService("Workspace")
 
 local LP = Players.LocalPlayer
@@ -63,7 +64,7 @@ end
 -- ============================================================
 -- Repo / cache
 -- ============================================================
-local CACHE_FOLDER = "XeroHub/DeathEffectsNativeDummyR2"
+local CACHE_FOLDER = "XeroHub/DeathEffectsNativeDummyR3"
 
 local function ensureFolder(path)
     if type(makefolder) ~= "function" then return end
@@ -337,8 +338,10 @@ end
 -- DeathEffectPreview itself is responsible for attaching/rendering it.
 -- ============================================================
 local injectedRoots = {}
+local previewInjected = {}
+local previewBackups = {}
 
-local function getEffectsFolder()
+local function ensureSkinsFolders()
     local skins = ReplicatedStorage:FindFirstChild("ReplicatedSkins")
     if not skins then
         skins = Instance.new("Folder")
@@ -353,25 +356,92 @@ local function getEffectsFolder()
         effects.Parent = skins
     end
 
-    return effects
+    local preview = skins:FindFirstChild("PreviewEffects")
+    if not preview then
+        preview = Instance.new("Folder")
+        preview.Name = "PreviewEffects"
+        preview.Parent = skins
+    end
+
+    return skins, effects, preview
 end
 
-local function ensureNativeAsset(name)
-    local effectsFolder = getEffectsFolder()
+local function cleanPreviousR3PreviewState()
+    local skins, _, preview = ensureSkinsFolders()
 
-    -- Prefer real game asset when it already exists.
-    local existing = effectsFolder:FindFirstChild(name)
-    if existing then
-        return existing, false, "asset nativo ya estaba cargado"
+    -- Restore backups from an earlier execution in the same session.
+    local oldBackups = skins:FindFirstChild("XeroNativePreviewBackups")
+    if oldBackups then
+        for _, child in ipairs(oldBackups:GetChildren()) do
+            local current = preview:FindFirstChild(child.Name)
+            if current and current:GetAttribute("XeroFullPreviewInjected") then
+                pcall(function() current:Destroy() end)
+                current = nil
+            end
+
+            if not current then
+                pcall(function() child.Parent = preview end)
+            end
+        end
+        pcall(function() oldBackups:Destroy() end)
     end
 
-    if injectedRoots[name] and injectedRoots[name].Parent then
-        return injectedRoots[name], true, "asset V2 ya reconstruido"
+    -- Remove stale mirrors that had no backup.
+    for _, child in ipairs(preview:GetChildren()) do
+        if child:GetAttribute("XeroFullPreviewInjected") then
+            pcall(function() child:Destroy() end)
+        end
+    end
+end
+
+cleanPreviousR3PreviewState()
+
+local function descendantCount(root)
+    if not root then return -1 end
+    local ok, descendants = pcall(function()
+        return root:GetDescendants()
+    end)
+    return ok and #descendants or -1
+end
+
+local function makeBackupFolder()
+    local skins = select(1, ensureSkinsFolders())
+    local folder = skins:FindFirstChild("XeroNativePreviewBackups")
+    if not folder then
+        folder = Instance.new("Folder")
+        folder.Name = "XeroNativePreviewBackups"
+        folder.Parent = skins
+    end
+    return folder
+end
+
+local function putIntoPreview(name, sourceRoot, statusText)
+    local _, _, preview = ensureSkinsFolders()
+    local current = preview:FindFirstChild(name)
+
+    if current and current ~= sourceRoot then
+        local backupFolder = makeBackupFolder()
+        current.Parent = backupFolder
+        previewBackups[name] = current
     end
 
-    local wrapper, err = fetchEffect(name)
-    if not wrapper then return nil, false, err end
+    local root = sourceRoot
+    if root.Parent then
+        local ok, clone = pcall(function() return root:Clone() end)
+        if ok and clone then root = clone end
+    end
 
+    root.Name = name
+    pcall(function()
+        root:SetAttribute("XeroFullPreviewInjected", true)
+    end)
+    root.Parent = preview
+
+    previewInjected[name] = root
+    return root, statusText
+end
+
+local function reconstructV2Root(name, wrapper)
     local snapshot = wrapper.snapshot
     local nodes = snapshot.nodes
     local anchor = sourceAnchor(nodes)
@@ -416,9 +486,12 @@ local function ensureNativeAsset(name)
 
                     if ok == true then
                         if obj:IsA("BasePart") then
-                            if prop == "Position" or prop == "Orientation" or prop == "Rotation" then
-                                -- CFrame below is the source of truth.
-                            elseif prop == "CFrame" and typeof(value) == "CFrame" then
+                            if prop == "Position"
+                                or prop == "Orientation"
+                                or prop == "Rotation" then
+                                -- CFrame below is source of truth.
+                            elseif prop == "CFrame"
+                                and typeof(value) == "CFrame" then
                                 value = normalize * value
                                 pcall(function() obj.CFrame = value end)
                             else
@@ -426,7 +499,7 @@ local function ensureNativeAsset(name)
                             end
                         elseif (obj:IsA("Attachment") or obj:IsA("Bone"))
                             and string.sub(prop, 1, 5) == "World" then
-                            -- local attachment transform wins
+                            -- Keep local attachment transform.
                         else
                             pcall(function() obj[prop] = value end)
                         end
@@ -457,15 +530,83 @@ local function ensureNativeAsset(name)
     end
 
     if not root then
-        return nil, false, "no pude reconstruir root"
+        return nil, "no pude reconstruir root V2"
     end
 
     root.Name = name
     pcall(function() root:SetAttribute("XeroV2Injected", true) end)
-    root.Parent = effectsFolder
-    injectedRoots[name] = root
+    return root
+end
 
-    return root, true, "asset V2 inyectado localmente"
+local function ensureNativeAsset(name)
+    local _, effectsFolder, previewFolder = ensureSkinsFolders()
+
+    local wrapper, err = fetchEffect(name)
+    if not wrapper then return nil, false, err end
+
+    local expectedDescendants =
+        math.max(0, #(wrapper.snapshot.nodes or {}) - 1)
+
+    local inPreview = previewFolder:FindFirstChild(name)
+    local inEffects = effectsFolder:FindFirstChild(name)
+
+    local previewCount = descendantCount(inPreview)
+    local effectsCount = descendantCount(inEffects)
+
+    -- DeathEffectPreview searches PreviewEffects before Effects.
+    -- If PreviewEffects already has an equally/richer asset, keep the real one.
+    if inPreview and previewCount >= expectedDescendants then
+        return inPreview, false,
+            string.format(
+                "preview nativo completo (%d/%d nodos)",
+                previewCount + 1,
+                expectedDescendants + 1
+            )
+    end
+
+    -- If Effects has the richer native copy, mirror THAT into PreviewEffects
+    -- so DeathEffectPreview cannot accidentally choose a poorer preview copy.
+    if inEffects
+        and effectsCount >= expectedDescendants
+        and effectsCount >= previewCount then
+
+        local mirror, why =
+            putIntoPreview(
+                name,
+                inEffects,
+                string.format(
+                    "mirror del asset nativo a PreviewEffects (%d nodos)",
+                    effectsCount + 1
+                )
+            )
+
+        injectedRoots[name] = mirror
+        return mirror, true, why
+    end
+
+    -- Neither folder has the complete asset: reconstruct V2 and put it
+    -- directly in PreviewEffects, which is what findEffectFolder checks first.
+    local rebuilt, rebuildErr = reconstructV2Root(name, wrapper)
+    if not rebuilt then
+        return nil, false, rebuildErr
+    end
+
+    local mirror, why =
+        putIntoPreview(
+            name,
+            rebuilt,
+            string.format(
+                "V2 completo inyectado en PreviewEffects (%d nodos)",
+                expectedDescendants + 1
+            )
+        )
+
+    if rebuilt ~= mirror and not rebuilt.Parent then
+        pcall(function() rebuilt:Destroy() end)
+    end
+
+    injectedRoots[name] = mirror
+    return mirror, true, why
 end
 
 -- ============================================================
@@ -661,6 +802,208 @@ local function findFunction(nameWanted, sourceNeedle)
     end
 end
 
+
+-- ============================================================
+-- Native body-style recovery
+-- ============================================================
+-- The preview module has its own config table and applyBodyStyle helper.
+-- V2 snapshots contain the visual assets, but not that Lua config.
+-- We recover the native config when possible and only patch BODY parts,
+-- never Accessory handles.
+
+local getConfigFunction = findFunction("getConfig", "DeathEffectPreview")
+
+local BODY_STYLE_FALLBACK = {
+    BlackvalkEffect = {
+        Color = Color3.fromRGB(255,190,60),
+        Material = Enum.Material.Neon,
+    },
+    Freeze = {
+        Color = Color3.fromRGB(4,175,236),
+        Material = Enum.Material.SmoothPlastic,
+    },
+    Frostbite = {
+        Color = Color3.fromRGB(53,124,133),
+        Material = Enum.Material.SmoothPlastic,
+    },
+    Heartache = {
+        Color = Color3.fromRGB(255,0,0),
+        Material = Enum.Material.Plastic,
+    },
+    Heartbeat = {
+        Color = Color3.fromRGB(255,102,204),
+        Material = Enum.Material.Neon,
+        Transparency = .2,
+    },
+    IcemanEffect = {
+        Color = Color3.fromRGB(152,219,255),
+        Material = Enum.Material.Ice,
+    },
+    LEffect = {
+        Color = Color3.fromRGB(255,43,44),
+        Material = Enum.Material.Neon,
+    },
+    LavaEffect = {
+        Color = Color3.fromRGB(255,60,0),
+        Material = Enum.Material.Neon,
+    },
+    PhoenixEffect = {
+        Color = Color3.fromRGB(255,80,35),
+        Material = Enum.Material.Neon,
+    },
+    SandEffect = {
+        Color = Color3.fromRGB(212,196,154),
+        Material = Enum.Material.Sand,
+    },
+    SlimeEffect = {
+        Color = Color3.fromRGB(85,255,127),
+        Material = Enum.Material.Plastic,
+    },
+    SpiritOverload = {
+        Color = Color3.fromRGB(0,48,8),
+        Material = Enum.Material.SmoothPlastic,
+    },
+}
+
+local function nativeConfigFor(name, asset)
+    if type(getConfigFunction) ~= "function" then return nil end
+
+    local attempts = {
+        {name, asset},
+        {name, nil},
+        {name, {}},
+        {asset, name},
+    }
+
+    for _, args in ipairs(attempts) do
+        local ok, result = pcall(function()
+            return getConfigFunction(table.unpack(args))
+        end)
+
+        if ok and type(result) == "table" then
+            return result
+        end
+    end
+end
+
+local function bodyStyleFromConfig(name, asset)
+    local cfg = nativeConfigFor(name, asset)
+    if type(cfg) == "table" and type(cfg.BodyStyle) == "table" then
+        return cfg.BodyStyle, "BodyStyle nativo"
+    end
+
+    local fallback = BODY_STYLE_FALLBACK[name]
+    if fallback then
+        return fallback, "BodyStyle fallback confirmado"
+    end
+end
+
+local function isRealBodyPart(dummy, obj)
+    if not obj:IsA("BasePart") then return false end
+    if obj.Name == "HumanoidRootPart" then return false end
+    if obj:FindFirstAncestorOfClass("Accessory") then return false end
+    if obj:FindFirstAncestorOfClass("Tool") then return false end
+    if not obj:IsDescendantOf(dummy) then return false end
+    return true
+end
+
+local function applyBodyStyleOnly(dummy, style, snap)
+    if not dummy or not dummy.Parent or type(style) ~= "table" then
+        return 0
+    end
+
+    local targetColor = style.Color
+    if typeof(targetColor) == "BrickColor" then
+        targetColor = targetColor.Color
+    end
+
+    local startColor = style.StartColor
+    if typeof(startColor) == "BrickColor" then
+        startColor = startColor.Color
+    end
+
+    local tweenInfo = style.TweenInfo
+    if typeof(tweenInfo) ~= "TweenInfo" then
+        tweenInfo = TweenInfo.new(
+            snap and 0 or 0.18,
+            Enum.EasingStyle.Quad,
+            Enum.EasingDirection.Out
+        )
+    end
+
+    local changed = 0
+
+    for _, obj in ipairs(dummy:GetDescendants()) do
+        if isRealBodyPart(dummy, obj) then
+            changed += 1
+
+            if typeof(startColor) == "Color3" and not snap then
+                pcall(function() obj.Color = startColor end)
+            end
+
+            local goals = {}
+
+            if typeof(targetColor) == "Color3" then
+                goals.Color = targetColor
+            end
+
+            if type(style.Transparency) == "number" then
+                goals.Transparency = style.Transparency
+            end
+
+            if type(style.Reflectance) == "number" then
+                goals.Reflectance = style.Reflectance
+            end
+
+            if typeof(style.Material) == "EnumItem"
+                and style.Material.EnumType == Enum.Material then
+                pcall(function() obj.Material = style.Material end)
+            end
+
+            if type(style.MaterialVariant) == "string" then
+                pcall(function() obj.MaterialVariant = style.MaterialVariant end)
+            end
+
+            if next(goals) then
+                if snap then
+                    for prop, value in pairs(goals) do
+                        pcall(function() obj[prop] = value end)
+                    end
+                else
+                    pcall(function()
+                        TweenService:Create(obj, tweenInfo, goals):Play()
+                    end)
+                end
+            end
+        end
+    end
+
+    return changed
+end
+
+local function scheduleBodyStylePatch(dummy, name, asset)
+    local style, source = bodyStyleFromConfig(name, asset)
+    if not style then
+        return false, "sin BodyStyle"
+    end
+
+    -- Preview.play spawns work asynchronously. First pass mimics the color tween,
+    -- second pass makes sure async native work did not restore the avatar colors.
+    task.delay(0.04, function()
+        if dummy and dummy.Parent then
+            applyBodyStyleOnly(dummy, style, false)
+        end
+    end)
+
+    task.delay(0.34, function()
+        if dummy and dummy.Parent then
+            applyBodyStyleOnly(dummy, style, true)
+        end
+    end)
+
+    return true, source
+end
+
 -- Simple before/after mutation counter for the dummy.
 local function snapshotDummyState(dummy)
     local state = {}
@@ -714,10 +1057,10 @@ local function countMutations(before, after)
 end
 
 local function runNative(name, statusLabel)
-    -- IMPORTANTE R2:
-    -- No aplicamos timeline V3 manual, no reescalamos partes a mano y no
-    -- reconstruimos el efecto encima del dummy. El juego recibe un dummy
-    -- normal y DeathEffectPreview modifica ese dummy como lo haría en preview.
+    -- IMPORTANTE R3:
+    -- Conservamos DeathEffectPreview como renderer principal. Sólo recuperamos
+    -- BodyStyle sobre partes reales del cuerpo (sin accesorios) y garantizamos
+    -- que PreviewEffects use la copia visual más completa disponible.
     local asset, injected, assetStatus = ensureNativeAsset(name)
     if not asset then
         statusLabel.Text = "✕ Asset: " .. tostring(assetStatus)
@@ -741,6 +1084,9 @@ local function runNative(name, statusLabel)
     local ok, result = pcall(function()
         return Preview.play(dummy, name, cleaner)
     end)
+
+    local bodyPatched, bodyPatchSource =
+        scheduleBodyStylePatch(dummy, name, asset)
 
     -- Jelly tiene una ruta distinta en DestroyBody.
     if not ok and string.find(name, "Jelly", 1, true) then
@@ -769,7 +1115,10 @@ local function runNative(name, statusLabel)
         local mutations = countMutations(before, snapshotDummyState(dummy))
         statusLabel.Text =
             "✓ " .. name ..
-            " · cambios del cuerpo detectados: " .. tostring(mutations) ..
+            " · cambios del cuerpo: " .. tostring(mutations) ..
+            (bodyPatched
+                and (" · " .. tostring(bodyPatchSource))
+                or "") ..
             "\n" .. tostring(assetStatus)
     end)
 end
@@ -802,7 +1151,7 @@ local title = Instance.new("TextLabel")
 title.BackgroundTransparency = 1
 title.Position = UDim2.fromOffset(16, 12)
 title.Size = UDim2.new(1,-32,0,22)
-title.Text = "XERO · DEATH EFFECT · NATIVE DUMMY R2"
+title.Text = "XERO · DEATH EFFECT · NATIVE DUMMY R3"
 title.TextColor3 = Color3.fromRGB(245,245,245)
 title.Font = Enum.Font.GothamBold
 title.TextSize = 14
@@ -929,4 +1278,4 @@ task.defer(function()
         or ("✕ dummy: " .. tostring(err))
 end)
 
-print("[Xero Death V2 Native Bridge]", #EFFECTS, "efectos ·", BASE)
+print("[Xero Death Native Dummy R3]", #EFFECTS, "efectos ·", BASE)

@@ -1,5 +1,5 @@
 --[[
-XeroHub | DUELS Death Effects · Native Enemy Bridge R21 · Signal First
+XeroHub | DUELS Death Effects · Native Enemy Bridge R22 · Signal First Fix
 Kev
 
 Objetivo:
@@ -32,6 +32,16 @@ local BASE = ENV.XERO_DEATH_FINAL_ROOT
     or "https://raw.githubusercontent.com/OnyxDevv/Onyx-web/main/death_effects_final"
 
 local requestFn = (syn and syn.request) or (http and http.request) or http_request or request
+
+-- Compatibility: Roblox Luau has table.clear, but some executor runtimes expose
+-- an incomplete table library. Do not let the OFF button crash for that reason.
+local function clearTable(t)
+    if type(table.clear) == "function" then
+        table.clear(t)
+        return
+    end
+    for k in pairs(t) do t[k] = nil end
+end
 
 local function httpGet(url)
     if requestFn then
@@ -1068,6 +1078,18 @@ local function bodyStyleFromConfig(name)
     if fallback then
         return fallback, "BodyStyle fallback"
     end
+end
+
+-- R22 FIX: R21 called isRealBodyPart() from BodyStyle patches but never
+-- defined it. Keep the filter identical to bodyPartsOnly(): avatar body parts
+-- only, excluding HumanoidRootPart, accessories and tools.
+local function isRealBodyPart(dummy, obj)
+    if not dummy or not obj or not obj:IsA("BasePart") then return false end
+    if obj.Name == "HumanoidRootPart" then return false end
+    if not obj:IsDescendantOf(dummy) then return false end
+    if obj:FindFirstAncestorOfClass("Accessory") then return false end
+    if obj:FindFirstAncestorOfClass("Tool") then return false end
+    return true
 end
 
 local function applyBodyStyleOnly(dummy, style, snap)
@@ -3354,7 +3376,7 @@ local title = Instance.new("TextLabel")
 title.BackgroundTransparency = 1
 title.Position = UDim2.fromOffset(16, 12)
 title.Size = UDim2.new(1,-32,0,22)
-title.Text = "XERO · DEATH EFFECTS · SIGNAL FIRST R21"
+title.Text = "XERO · DEATH EFFECTS · SIGNAL FIRST R22"
 title.TextColor3 = Color3.fromRGB(245,245,245)
 title.Font = Enum.Font.GothamBold
 title.TextSize = 14
@@ -4395,16 +4417,16 @@ toggle.MouseButton1Click:Connect(function()
         scanLocalKillSignals(LP.Character)
         scanLocalKillSignals(LP:FindFirstChildOfClass("Backpack"))
         status.Text =
-            "✓ R21 activo · " .. tostring(selectedEffect()) ..
+            "✓ R22 activo · " .. tostring(selectedEffect()) ..
             "\nGunKill armados: " .. tostring(debugStats.killSounds) ..
             " · esperando TU kill..."
     else
         for _, entry in ipairs(pendingDeaths) do
             removePending(entry)
         end
-        table.clear(pendingDeaths)
-        table.clear(recentKillCredits)
-        table.clear(recentDeathModels)
+        clearTable(pendingDeaths)
+        clearTable(recentKillCredits)
+        clearTable(recentDeathModels)
         status.Text = "Desactivado · no se aplicarán efectos nuevos."
     end
 end)
@@ -4439,7 +4461,7 @@ UserInputService.InputChanged:Connect(function(input)
 end)
 
 print(
-    "[Xero Death Dummy Kills R21]",
+    "[Xero Death Dummy Kills R22]",
     #EFFECTS,
     "efectos ·",
     PRELOAD_STATS.loaded,

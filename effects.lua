@@ -1,5 +1,5 @@
 --[[
-XeroHub | DUELS Death Effects · CurrentCamera R35 · Restored Native VFX
+XeroHub | DUELS Death Effects · CurrentCamera R36 · Instant Melee + Stable Physics
 Kev
 
 Objetivo:
@@ -1711,13 +1711,15 @@ local function forceMarkedEmitter(emitter)
     task.delay(math.max(0, emitDelay), function()
         if not emitter.Parent then return end
 
+        -- R36: EmitCount is the authoritative one-shot burst. R35 also enabled
+        -- the emitter for EmitDuration, so an asset carrying BOTH attributes could
+        -- visibly fire the same VFX 2-3 times. Only use Enabled as a fallback when
+        -- the capture has no explicit burst count.
         if emitCount and emitCount > 0 then
             pcall(function()
                 emitter:Emit(math.max(1, math.floor(emitCount + .5)))
             end)
-        end
-
-        if emitDuration > 0 then
+        elseif emitDuration > 0 then
             pcall(function() emitter.Enabled = true end)
             task.delay(emitDuration, function()
                 if emitter.Parent then
@@ -1728,30 +1730,39 @@ local function forceMarkedEmitter(emitter)
     end)
 end
 
-local function observeNativeParticles(dummy)
-    -- R35: restore the emitter bridge from the original dummy renderer, but
-    -- scope it to THIS CurrentCamera death visual. The old broad observer was
-    -- removed in R32 to chase duplicate effects, which also removed required
-    -- EmitCount/EmitDuration bursts from Freeze/Frostbite/HexaKill.
+local function observeNativeParticles(dummy, effectName)
+    -- R36: same emitter bridge the original dummy build required, but hard-bound
+    -- to ONE kill serial and deduped by a stable hierarchy key as well as Instance.
+    -- Re-created emitters at the same logical path cannot re-fire the same burst.
     if not dummy or not dummy.Parent then return end
 
     local active = true
     local seen = setmetatable({}, {__mode="k"})
+    local seenKeys = {}
     local connections = {}
-    local cameraRoot = ENV.__XERO_DEATH_PROXY and ENV.__XERO_DEATH_PROXY.Root or nil
+    local proxyState = ENV.__XERO_DEATH_PROXY
+    local killToken = proxyState and proxyState.KillSerial or 0
+    local cameraRoot = proxyState and proxyState.Root or nil
     local baselineTop = setmetatable({}, {__mode="k"})
 
     for _, child in ipairs(Workspace:GetChildren()) do
         baselineTop[child] = true
     end
 
+    local function tokenAlive()
+        return active
+            and ENV.__XERO_DEATH_PROXY == proxyState
+            and proxyState
+            and proxyState.KillSerial == killToken
+            and dummy
+            and dummy.Parent
+    end
+
     local function belongsToThisEffect(obj)
-        if not obj or not obj.Parent then return false end
+        if not tokenAlive() or not obj or not obj.Parent then return false end
         if obj:IsDescendantOf(dummy) then return true end
         if cameraRoot and obj:IsDescendantOf(cameraRoot) then return true end
 
-        -- Some native preview effects create a temporary Workspace root. Only
-        -- accept roots created AFTER this kill and still close to this proxy.
         local top = obj
         while top.Parent and top.Parent ~= Workspace do
             top = top.Parent
@@ -1761,8 +1772,31 @@ local function observeNativeParticles(dummy)
             and emitterIsNear(dummy, obj)
     end
 
+    local function relativeKey(obj)
+        local pieces = {}
+        local node = obj
+        while node and node ~= dummy and node ~= cameraRoot and node ~= Workspace do
+            local ordinal = 1
+            local parent = node.Parent
+            if parent then
+                for _, sibling in ipairs(parent:GetChildren()) do
+                    if sibling == node then break end
+                    if sibling.ClassName == node.ClassName and sibling.Name == node.Name then
+                        ordinal += 1
+                    end
+                end
+            end
+            table.insert(pieces, 1, node.ClassName .. ":" .. node.Name .. "#" .. tostring(ordinal))
+            node = node.Parent
+        end
+        return tostring(effectName or "") .. "|" .. table.concat(pieces, "/") .. "|" ..
+            tostring(obj:GetAttribute("EmitCount") or obj:GetAttribute("KillEffectEmitCount") or "") .. "|" ..
+            tostring(obj:GetAttribute("EmitDelay") or "") .. "|" ..
+            tostring(obj:GetAttribute("EmitDuration") or "")
+    end
+
     local function inspect(obj)
-        if not active or not obj or not obj.Parent or not obj:IsA("ParticleEmitter") then return end
+        if not tokenAlive() or not obj or not obj.Parent or not obj:IsA("ParticleEmitter") then return end
         if seen[obj] or not belongsToThisEffect(obj) then return end
         if obj:GetAttribute("EmitCount") == nil
             and obj:GetAttribute("EmitDuration") == nil
@@ -1770,12 +1804,25 @@ local function observeNativeParticles(dummy)
             return
         end
 
+        local key = relativeKey(obj)
+        if seenKeys[key] then
+            seen[obj] = true
+            return
+        end
         seen[obj] = true
-        forceMarkedEmitter(obj)
+        seenKeys[key] = true
+
+        -- Give Preview.play one scheduling slice to finish parenting the asset.
+        -- The bridge still fires only once for this logical emitter.
+        task.defer(function()
+            if tokenAlive() and obj.Parent then
+                forceMarkedEmitter(obj)
+            end
+        end)
     end
 
     local function scan(root)
-        if not root or not root.Parent then return end
+        if not tokenAlive() or not root or not root.Parent then return end
         inspect(root)
         for _, obj in ipairs(root:GetDescendants()) do inspect(obj) end
     end
@@ -1787,7 +1834,7 @@ local function observeNativeParticles(dummy)
     connections[#connections+1] = Workspace.DescendantAdded:Connect(inspect)
 
     local function rescan()
-        if not active then return end
+        if not tokenAlive() then return end
         scan(dummy)
         if cameraRoot then scan(cameraRoot) end
         for _, child in ipairs(Workspace:GetChildren()) do
@@ -1795,13 +1842,11 @@ local function observeNativeParticles(dummy)
         end
     end
 
-    -- Preview.play builds some emitters asynchronously. `seen` guarantees that
-    -- every marked emitter is bridged once even though we rescan a few times.
-    for _, delayTime in ipairs({0, .02, .06, .14, .30, .60, 1.00}) do
+    for _, delayTime in ipairs({.02, .07, .16, .34, .65}) do
         task.delay(delayTime, rescan)
     end
 
-    task.delay(1.35, function()
+    task.delay(.90, function()
         active = false
         for _, conn in ipairs(connections) do
             pcall(function() conn:Disconnect() end)
@@ -3585,7 +3630,7 @@ end
 ENV.__XERO_DEATH_PROXY.EffectKeepsRigidBody = function(effectName)
     local lower = string.lower(tostring(effectName or ""))
 
-    -- R35: the first dummy renderer kept the Motor6D rig intact while
+    -- R36: the first dummy renderer kept the Motor6D rig intact while
     -- DeathEffectPreview replayed body timelines. R34 ragdolled every unknown
     -- effect before Preview.play, which breaks V3 body-timeline effects such as
     -- HexaKill. Respect the manifest instead of guessing only by name.
@@ -3603,7 +3648,7 @@ ENV.__XERO_DEATH_PROXY.EffectKeepsRigidBody = function(effectName)
         or string.find(lower, "hexa", 1, true) ~= nil
 end
 
-ENV.__XERO_DEATH_PROXY.CopySourceMotion = function(proxy, source, effectName)
+ENV.__XERO_DEATH_PROXY.CopySourceMotion = function(proxy, source, effectName, info)
     if not proxy or not proxy.Parent then return end
 
     local proxyRoot = proxy:FindFirstChild("HumanoidRootPart")
@@ -3611,17 +3656,53 @@ ENV.__XERO_DEATH_PROXY.CopySourceMotion = function(proxy, source, effectName)
         or proxy:FindFirstChild("Torso")
     if not proxyRoot or not proxyRoot:IsA("BasePart") then return end
 
+    local lowerEffect = string.lower(tostring(effectName or ""))
+
+    -- Frostbite / hipotermia in DUELS leaves the victim frozen exactly at the
+    -- final hit pose. It must NOT inherit the later corpse fall or bullet push.
+    if string.find(lowerEffect, "frostbite", 1, true)
+        or string.find(lowerEffect, "hypo", 1, true) then
+        pcall(function() proxy:SetAttribute("XeroDeathFrostbitePivot", proxy:GetPivot()) end)
+        for _, part in ipairs(proxy:GetDescendants()) do
+            if part:IsA("BasePart") then
+                pcall(function()
+                    part.AssemblyLinearVelocity = Vector3.zero
+                    part.AssemblyAngularVelocity = Vector3.zero
+                    part.CanCollide = false
+                    part.CanTouch = false
+                    part.CanQuery = false
+                    part.Anchored = true
+                end)
+            end
+        end
+        local hum = proxy:FindFirstChildOfClass("Humanoid")
+        if hum then
+            pcall(function()
+                hum.AutoRotate = false
+                hum.PlatformStand = true
+            end)
+        end
+        return
+    end
+
     local sourceRoot = source and (
         source:FindFirstChild("HumanoidRootPart")
         or source:FindFirstChild("UpperTorso")
         or source:FindFirstChild("Torso")
     ) or nil
 
-    local inheritedLinear = Vector3.zero
-    local inheritedAngular = Vector3.zero
+    local inheritedLinear = info and info.lastHitLinear or nil
+    local inheritedAngular = info and info.lastHitAngular or nil
+    if typeof(inheritedLinear) ~= "Vector3" then inheritedLinear = Vector3.zero end
+    if typeof(inheritedAngular) ~= "Vector3" then inheritedAngular = Vector3.zero end
+
     if sourceRoot and sourceRoot:IsA("BasePart") then
-        pcall(function() inheritedLinear = sourceRoot.AssemblyLinearVelocity end)
-        pcall(function() inheritedAngular = sourceRoot.AssemblyAngularVelocity end)
+        if inheritedLinear.Magnitude < 0.001 then
+            pcall(function() inheritedLinear = sourceRoot.AssemblyLinearVelocity end)
+        end
+        if inheritedAngular.Magnitude < 0.001 then
+            pcall(function() inheritedAngular = sourceRoot.AssemblyAngularVelocity end)
+        end
     end
 
     local shooterOrigin
@@ -3648,13 +3729,9 @@ ENV.__XERO_DEATH_PROXY.CopySourceMotion = function(proxy, source, effectName)
         lateral = lateral.Unit
     end
 
-    -- Animated effects need their original Motor6D rig intact. They still inherit
-    -- the victim's real movement plus a short bullet impulse before the animation owns it.
     local keepRigid = ENV.__XERO_DEATH_PROXY.EffectKeepsRigidBody(effectName)
 
     if not keepRigid then
-        -- Local-only ragdoll. Everything is created INSIDE the CurrentCamera proxy.
-        -- Root/RootJoint stays enabled so the invisible root remains part of the body assembly.
         for _, motor in ipairs(proxy:GetDescendants()) do
             if motor:IsA("Motor6D")
                 and motor.Part0 and motor.Part1
@@ -3712,18 +3789,81 @@ ENV.__XERO_DEATH_PROXY.CopySourceMotion = function(proxy, source, effectName)
         end)
     end
 
-    -- Preserve actual victim momentum, then add a small local bullet reaction.
-    local push = shotDirection * (keepRigid and 12 or 20) + Vector3.new(0, keepRigid and 2.5 or 5, 0)
-    local spin = inheritedAngular + lateral * (keepRigid and 1.2 or 3.5)
+    -- R36: death state is already active before this function runs. The impulse
+    -- cannot be wiped by setting Health=0 afterwards anymore.
+    local push = shotDirection * (keepRigid and 15 or 23) + Vector3.new(0, keepRigid and 3 or 5.5, 0)
+    local spin = inheritedAngular + lateral * (keepRigid and 1.5 or 3.8)
+
+    pcall(function()
+        proxy:SetAttribute("XeroDeathInheritedLinear", inheritedLinear)
+        proxy:SetAttribute("XeroDeathInheritedAngular", inheritedAngular)
+        proxy:SetAttribute("XeroDeathShotDirection", shotDirection)
+        proxy:SetAttribute("XeroDeathKeepRigid", keepRigid == true)
+    end)
 
     for _, part in ipairs(proxy:GetDescendants()) do
-        if part:IsA("BasePart") then
+        if part:IsA("BasePart") and not part.Anchored then
             pcall(function()
                 part.AssemblyLinearVelocity = inheritedLinear + push
                 part.AssemblyAngularVelocity = spin
             end)
         end
     end
+
+    pcall(function()
+        proxyRoot:ApplyImpulse(shotDirection * proxyRoot.AssemblyMass * (keepRigid and 4.5 or 7.5))
+    end)
+end
+
+ENV.__XERO_DEATH_PROXY.ReapplyReaction = function(proxy, effectName)
+    if not proxy or not proxy.Parent then return end
+    local lower = string.lower(tostring(effectName or ""))
+    if string.find(lower, "frostbite", 1, true)
+        or string.find(lower, "hypo", 1, true) then
+        local lockedPivot = proxy:GetAttribute("XeroDeathFrostbitePivot")
+        if typeof(lockedPivot) == "CFrame" then
+            pcall(function() proxy:PivotTo(lockedPivot) end)
+        end
+        for _, part in ipairs(proxy:GetDescendants()) do
+            if part:IsA("BasePart") then
+                pcall(function()
+                    part.AssemblyLinearVelocity = Vector3.zero
+                    part.AssemblyAngularVelocity = Vector3.zero
+                    part.Anchored = true
+                    part.CanCollide = false
+                    part.CanTouch = false
+                    part.CanQuery = false
+                end)
+            end
+        end
+        return
+    end
+    if string.find(lower, "ufo", 1, true)
+        or string.find(lower, "venom", 1, true)
+        or string.find(lower, "ghost", 1, true)
+        or string.find(lower, "abduct", 1, true) then
+        return
+    end
+
+    local root = proxy:FindFirstChild("HumanoidRootPart")
+        or proxy:FindFirstChild("UpperTorso")
+        or proxy:FindFirstChild("Torso")
+    if not root or not root:IsA("BasePart") or root.Anchored then return end
+
+    local inherited = proxy:GetAttribute("XeroDeathInheritedLinear")
+    local direction = proxy:GetAttribute("XeroDeathShotDirection")
+    local angular = proxy:GetAttribute("XeroDeathInheritedAngular")
+    if typeof(inherited) ~= "Vector3" then inherited = Vector3.zero end
+    if typeof(direction) ~= "Vector3" or direction.Magnitude < .01 then return end
+    if typeof(angular) ~= "Vector3" then angular = Vector3.zero end
+
+    local rigid = proxy:GetAttribute("XeroDeathKeepRigid") == true
+    local push = direction.Unit * (rigid and 15 or 23) + Vector3.new(0, rigid and 3 or 5.5, 0)
+    pcall(function()
+        root.AssemblyLinearVelocity = inherited + push
+        root.AssemblyAngularVelocity = angular
+        root:ApplyImpulse(direction.Unit * root.AssemblyMass * (rigid and 3.5 or 6))
+    end)
 end
 
 ENV.__XERO_DEATH_PROXY.BeginKillSession = function()
@@ -3737,7 +3877,7 @@ ENV.__XERO_DEATH_PROXY.BeginKillSession = function()
     return state.KillSerial
 end
 
-ENV.__XERO_DEATH_PROXY.Make = function(source, effectName, hum, player, deathPosition)
+ENV.__XERO_DEATH_PROXY.Make = function(source, effectName, hum, player, deathPosition, info)
     -- Global one-death gate. This sits in ENV intentionally: if two local kill
     -- signals arrive for the same Humanoid, only the first caller gets a proxy.
     -- It also blocks duplicate R32-style listeners that call this shared Make().
@@ -3783,7 +3923,16 @@ ENV.__XERO_DEATH_PROXY.Make = function(source, effectName, hum, player, deathPos
     proxy.Parent = cameraRoot
 
     local positioned = false
-    if source and source.Parent then
+    local lowerEffect = string.lower(tostring(effectName or ""))
+    local freezeAtLastHit = string.find(lowerEffect, "frostbite", 1, true) ~= nil
+        or string.find(lowerEffect, "hypo", 1, true) ~= nil
+
+    -- Frostbite uses the exact pose/location captured on the FINAL damage tick,
+    -- not the later corpse position after DUELS starts falling/replacing it.
+    if freezeAtLastHit and info and typeof(info.lastHitPivot) == "CFrame" then
+        positioned = pcall(function() proxy:PivotTo(info.lastHitPivot) end)
+    end
+    if not positioned and source and source.Parent then
         positioned = pcall(function() proxy:PivotTo(source:GetPivot()) end)
     end
     if not positioned and deathPosition then
@@ -3804,10 +3953,6 @@ ENV.__XERO_DEATH_PROXY.Make = function(source, effectName, hum, player, deathPos
         pcall(ENV.__XERO_DEATH_BRIDGE_RUNTIME.HideCharacterLocal, source)
     end
 
-    -- R34: copy the victim's actual movement and add local bullet reaction BEFORE
-    -- the death effect takes control of the CurrentCamera proxy.
-    ENV.__XERO_DEATH_PROXY.CopySourceMotion(proxy, source, effectName)
-
     -- Only the detached proxy receives death state / effect physics.
     local proxyHumanoid = proxy:FindFirstChildOfClass("Humanoid")
     if proxyHumanoid then
@@ -3816,6 +3961,10 @@ ENV.__XERO_DEATH_PROXY.Make = function(source, effectName, hum, player, deathPos
             proxyHumanoid.Health = 0
         end)
     end
+
+    -- R36: apply victim momentum / bullet reaction AFTER death state is active;
+    -- setting Health=0 afterwards was wiping motion on some effects in R35.
+    ENV.__XERO_DEATH_PROXY.CopySourceMotion(proxy, source, effectName, info)
 
     proxy:SetAttribute("XeroDeathVisualProxy", true)
     proxy:SetAttribute("XeroDeathEffect", tostring(effectName or ""))
@@ -3971,10 +4120,10 @@ local function runNativeOnVictim(name, victim, statusLabel)
 
     local before = snapshotDummyState(victim)
 
-    -- R35: marked ParticleEmitters in the captured assets need the same bridge
+    -- R36: marked ParticleEmitters in the captured assets need the same bridge
     -- the original dummy version used. This observer is scoped to this proxy and
     -- dedupes each emitter, so VFX return without replaying effect sounds.
-    observeNativeParticles(victim)
+    observeNativeParticles(victim, name)
     enforceInvisibleCarriers(victim, asset, name)
 
     local clothesV2 = applyV2Clothing(victim, asset)
@@ -3994,6 +4143,16 @@ local function runNativeOnVictim(name, victim, statusLabel)
     local ok, result = pcall(function()
         return Preview.play(victim, name, cleaner)
     end)
+
+    -- Some body-timeline effects rewrite Humanoid/part state synchronously.
+    -- Re-apply only the shot reaction for effects that do NOT own a custom flight.
+    if ok and ENV.__XERO_DEATH_PROXY and ENV.__XERO_DEATH_PROXY.ReapplyReaction then
+        task.defer(function()
+            if victim and victim.Parent then
+                ENV.__XERO_DEATH_PROXY.ReapplyReaction(victim, name)
+            end
+        end)
+    end
 
     local bodyPatched = false
     local bodyPatchSource = nil
@@ -4121,7 +4280,7 @@ local title = Instance.new("TextLabel")
 title.BackgroundTransparency = 1
 title.Position = UDim2.fromOffset(16, 12)
 title.Size = UDim2.new(1,-32,0,22)
-title.Text = "XERO · DEATH EFFECTS · CURRENTCAMERA R35"
+title.Text = "XERO · DEATH EFFECTS · CURRENTCAMERA R36"
 title.TextColor3 = Color3.fromRGB(245,245,245)
 title.Font = Enum.Font.GothamBold
 title.TextSize = 14
@@ -4555,7 +4714,7 @@ local function triggerVictim(player, character, hum, proof)
     -- Character, then locally hides the original only via LocalTransparencyModifier.
     local proxy, proxyErr =
         ENV.__XERO_DEATH_PROXY.Make(
-            character, effectName, hum, player, deathPosition
+            character, effectName, hum, player, deathPosition, info
         )
 
     if not proxy or not proxy.Parent then
@@ -4739,6 +4898,17 @@ queueVictimDeath = function(player, character, hum)
         return
     end
 
+    -- R36 melee fast-path: Tool.Activated/Touched only PRE-ARMS a target. We still
+    -- wait for this Humanoid to actually die, so a non-lethal stab never fires an
+    -- effect. This removes the extra kill-counter delay for knives.
+    local rt = ENV.__XERO_DEATH_BRIDGE_RUNTIME
+    local melee = rt and rt.RecentMelee
+    if melee and melee.Humanoid == hum and os.clock() - (melee.At or 0) <= 1.05 then
+        rt.RecentMelee = nil
+        triggerVictim(player, character, hum, "cuchillo local confirmado por muerte")
+        return
+    end
+
     -- Some local kill-confirm signals arrive a fraction before Humanoid.Died.
     if consumeFreshCredit(player, character, hum) then
         return
@@ -4794,6 +4964,11 @@ local function hookCharacter(player, character)
             originalBreakJoints = hum.BreakJointsOnDeath,
             triggered = false,
             connections = {},
+            lastHealth = hum.Health,
+            lastHitAt = 0,
+            lastHitPivot = nil,
+            lastHitLinear = nil,
+            lastHitAngular = nil,
         }
         trackedHumanoids[hum] = info
 
@@ -4818,6 +4993,21 @@ local function hookCharacter(player, character)
         end)
 
         info.connections[#info.connections + 1] = hum.HealthChanged:Connect(function(health)
+            local previous = tonumber(info.lastHealth) or health
+            if health < previous then
+                info.lastHitAt = os.clock()
+                if character and character.Parent then
+                    pcall(function() info.lastHitPivot = character:GetPivot() end)
+                    local root = character:FindFirstChild("HumanoidRootPart")
+                        or character:FindFirstChild("UpperTorso")
+                        or character:FindFirstChild("Torso")
+                    if root and root:IsA("BasePart") then
+                        pcall(function() info.lastHitLinear = root.AssemblyLinearVelocity end)
+                        pcall(function() info.lastHitAngular = root.AssemblyAngularVelocity end)
+                    end
+                end
+            end
+            info.lastHealth = health
             if health <= 0 then
                 queueVictimDeath(player, character, hum)
             end
@@ -4991,6 +5181,111 @@ local function scanLocalKillSignals(root)
     end
 end
 
+-- R36 · knife pre-arm -------------------------------------------------------
+-- Purely observational: no property on the enemy is modified. Activated/Touched
+-- remembers the likely melee victim so Humanoid.Died can be attributed instantly.
+ENV.__XERO_DEATH_BRIDGE_RUNTIME.MeleeTools = setmetatable({}, {__mode = "k"})
+ENV.__XERO_DEATH_BRIDGE_RUNTIME.RecentMelee = nil
+ENV.__XERO_DEATH_BRIDGE_RUNTIME.RecentMeleeAttackAt = 0
+
+ENV.__XERO_DEATH_BRIDGE_RUNTIME.ToolHasGunKill = function(tool)
+    if not tool or not tool:IsA("Tool") then return false end
+    for _, obj in ipairs(tool:GetDescendants()) do
+        if obj:IsA("Sound") then
+            local n = normalized(obj.Name)
+            local digits = tostring(obj.SoundId or ""):match("(%d+)")
+            if n == "gunkill" or digits == "296102734" then return true end
+        end
+    end
+    return false
+end
+
+ENV.__XERO_DEATH_BRIDGE_RUNTIME.SetRecentMelee = function(character, source)
+    if not character or not character:IsA("Model") then return false end
+    local targetPlayer = Players:GetPlayerFromCharacter(character)
+    local hum = character:FindFirstChildOfClass("Humanoid")
+    if not targetPlayer or targetPlayer == LP or not hum or hum.Health <= 0 then return false end
+    if not isEnemyPlayer(targetPlayer) then return false end
+    ENV.__XERO_DEATH_BRIDGE_RUNTIME.RecentMelee = {
+        Character = character,
+        Humanoid = hum,
+        Player = targetPlayer,
+        At = os.clock(),
+        Source = source,
+    }
+    return true
+end
+
+ENV.__XERO_DEATH_BRIDGE_RUNTIME.FindMeleeTarget = function(tool)
+    local mouseTarget
+    pcall(function() mouseTarget = LP:GetMouse().Target end)
+    if mouseTarget then
+        local model = mouseTarget:FindFirstAncestorOfClass("Model")
+        if model and ENV.__XERO_DEATH_BRIDGE_RUNTIME.SetRecentMelee(model, "mouse") then
+            return model
+        end
+    end
+
+    local myCharacter = LP.Character
+    local myRoot = myCharacter and myCharacter:FindFirstChild("HumanoidRootPart")
+    if not myRoot then return nil end
+    local ref = tool and (tool:FindFirstChild("Handle", true) or tool:FindFirstChildWhichIsA("BasePart", true))
+    local pos = ref and ref.Position or myRoot.Position
+    local best, bestDistance = nil, 16
+    for _, targetPlayer in ipairs(Players:GetPlayers()) do
+        if targetPlayer ~= LP and isEnemyPlayer(targetPlayer) then
+            local character = targetPlayer.Character
+            local hum = character and character:FindFirstChildOfClass("Humanoid")
+            local root = character and character:FindFirstChild("HumanoidRootPart")
+            if hum and hum.Health > 0 and root then
+                local distance = (pos - root.Position).Magnitude
+                if distance <= bestDistance then
+                    best = character
+                    bestDistance = distance
+                end
+            end
+        end
+    end
+    if best then ENV.__XERO_DEATH_BRIDGE_RUNTIME.SetRecentMelee(best, "nearest") end
+    return best
+end
+
+ENV.__XERO_DEATH_BRIDGE_RUNTIME.HookMeleeTool = function(tool)
+    local rt = ENV.__XERO_DEATH_BRIDGE_RUNTIME
+    if not tool or not tool:IsA("Tool") or rt.MeleeTools[tool] then return end
+    rt.MeleeTools[tool] = true
+    if rt.ToolHasGunKill(tool) then return end
+
+    local function hookPart(part)
+        if not part or not part:IsA("BasePart") then return end
+        killSignalConnections[#killSignalConnections + 1] = part.Touched:Connect(function(hit)
+            if not enabled or os.clock() - (rt.RecentMeleeAttackAt or 0) > .95 then return end
+            local model = hit and hit:FindFirstAncestorOfClass("Model")
+            if model then rt.SetRecentMelee(model, "Touched") end
+        end)
+    end
+
+    for _, obj in ipairs(tool:GetDescendants()) do
+        if obj:IsA("BasePart") then hookPart(obj) end
+    end
+    killSignalConnections[#killSignalConnections + 1] = tool.DescendantAdded:Connect(function(obj)
+        if obj:IsA("BasePart") then hookPart(obj) end
+    end)
+    killSignalConnections[#killSignalConnections + 1] = tool.Activated:Connect(function()
+        if not enabled then return end
+        rt.RecentMeleeAttackAt = os.clock()
+        rt.FindMeleeTarget(tool)
+    end)
+end
+
+ENV.__XERO_DEATH_BRIDGE_RUNTIME.ScanMeleeTools = function(root)
+    if not root then return end
+    if root:IsA("Tool") then ENV.__XERO_DEATH_BRIDGE_RUNTIME.HookMeleeTool(root) end
+    for _, obj in ipairs(root:GetDescendants()) do
+        if obj:IsA("Tool") then ENV.__XERO_DEATH_BRIDGE_RUNTIME.HookMeleeTool(obj) end
+    end
+end
+
 -- Death body watcher: only models CREATED after the script starts are remembered.
 -- This avoids repeatedly scanning the whole Workspace on every kill.
 killSignalConnections[#killSignalConnections + 1] = Workspace.DescendantAdded:Connect(function(obj)
@@ -5014,15 +5309,19 @@ end)
 scanLocalKillSignals(LP)
 scanLocalKillSignals(LP.Character)
 scanLocalKillSignals(LP:FindFirstChildOfClass("Backpack"))
+ENV.__XERO_DEATH_BRIDGE_RUNTIME.ScanMeleeTools(LP.Character)
+ENV.__XERO_DEATH_BRIDGE_RUNTIME.ScanMeleeTools(LP:FindFirstChildOfClass("Backpack"))
 
 killSignalConnections[#killSignalConnections + 1] = LP.DescendantAdded:Connect(function(obj)
     hookKillCounter(obj)
     hookKillSound(obj)
+    if obj:IsA("Tool") then ENV.__XERO_DEATH_BRIDGE_RUNTIME.HookMeleeTool(obj) end
 end)
 
 killSignalConnections[#killSignalConnections + 1] = LP.CharacterAdded:Connect(function(character)
     task.defer(function()
         scanLocalKillSignals(character)
+        ENV.__XERO_DEATH_BRIDGE_RUNTIME.ScanMeleeTools(character)
     end)
 end)
 
@@ -5033,6 +5332,8 @@ for _, propertyName in ipairs({"Team", "TeamColor", "Neutral"}) do
             if ENV.__XERO_DEATH_PROXY and ENV.__XERO_DEATH_PROXY.Clear then
                 pcall(ENV.__XERO_DEATH_PROXY.Clear)
             end
+            ENV.__XERO_DEATH_BRIDGE_RUNTIME.RecentMelee = nil
+            ENV.__XERO_DEATH_BRIDGE_RUNTIME.RecentMeleeAttackAt = 0
             refreshAllTracked()
         end)
 end

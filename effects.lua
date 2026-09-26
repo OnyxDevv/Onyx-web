@@ -1,5 +1,5 @@
 --[[
-XeroHub | DUELS Death Effects · Native Dummy Bridge R3
+XeroHub | DUELS Death Effects · Native Dummy Bridge R4 Hybrid Completer
 Kev
 
 Objetivo:
@@ -64,7 +64,7 @@ end
 -- ============================================================
 -- Repo / cache
 -- ============================================================
-local CACHE_FOLDER = "XeroHub/DeathEffectsNativeDummyR3"
+local CACHE_FOLDER = "XeroHub/DeathEffectsNativeDummyR4"
 
 local function ensureFolder(path)
     if type(makefolder) ~= "function" then return end
@@ -165,6 +165,54 @@ local function fetchEffect(name)
 end
 
 -- ============================================================
+
+local decodedV3Cache = {}
+
+local function fetchBehavior(entry)
+    if not entry or type(entry.v3) ~= "string" or entry.v3 == "" then
+        return nil
+    end
+
+    local name = entry.name
+    if decodedV3Cache[name] then
+        return decodedV3Cache[name]
+    end
+
+    local path = entry.v3
+    local cacheKey = "v3_" .. path
+    local body = readCache(cacheKey)
+    local data
+
+    if body then
+        local ok, parsed = pcall(function()
+            return HttpService:JSONDecode(body)
+        end)
+        if ok then data = parsed end
+    end
+
+    if type(data) ~= "table" then
+        body = httpGet(BASE .. "/" .. path)
+        if body then
+            local ok, parsed = pcall(function()
+                return HttpService:JSONDecode(body)
+            end)
+            if ok then
+                data = parsed
+                writeCache(cacheKey, body)
+            end
+        end
+    end
+
+    if type(data) ~= "table"
+        or tonumber(data.schemaVersion) ~= 3
+        or type(data.behavior) ~= "table" then
+        return nil
+    end
+
+    decodedV3Cache[name] = data
+    return data
+end
+
 -- Typed V2 decoder
 -- ============================================================
 local function decodeTyped(value)
@@ -1056,11 +1104,367 @@ local function countMutations(before, after)
     return count
 end
 
+
+-- ============================================================
+-- R4 HYBRID COMPLETER
+-- Preview.play remains the renderer. We only fill missing body/clothes/hat/VFX.
+-- ============================================================
+
+local BODY_PART_NAMES = {
+    Head=true, UpperTorso=true, LowerTorso=true, Torso=true,
+    LeftUpperArm=true, LeftLowerArm=true, LeftHand=true,
+    RightUpperArm=true, RightLowerArm=true, RightHand=true,
+    LeftUpperLeg=true, LeftLowerLeg=true, LeftFoot=true,
+    RightUpperLeg=true, RightLowerLeg=true, RightFoot=true,
+    ["Left Arm"]=true, ["Right Arm"]=true,
+    ["Left Leg"]=true, ["Right Leg"]=true,
+}
+
+local SAFE_BODY_PROPS = {
+    Color=true, BrickColor=true,
+    Material=true, MaterialVariant=true,
+    Transparency=true, Reflectance=true,
+    Size=true, MeshId=true, TextureID=true, TextureId=true,
+    DoubleSided=true,
+}
+
+local SAFE_CLOTHING_PROPS = {
+    ShirtTemplate=true, PantsTemplate=true, Graphic=true, Color3=true,
+    HeadColor=true, TorsoColor=true,
+    LeftArmColor=true, RightArmColor=true,
+    LeftLegColor=true, RightLegColor=true,
+}
+
+local function splitBodyPath(path)
+    local out = {}
+    for segment in string.gmatch(tostring(path or ""), "[^/]+") do
+        out[#out+1] = segment
+    end
+    return out
+end
+
+local function decodedSegmentName(segment)
+    local raw = tostring(segment or ""):match("^(.-)<[^<>]+>#%d+$")
+        or tostring(segment or "")
+    raw = raw:gsub("%%2F", "/")
+    raw = raw:gsub("%%%%", "%%")
+    return raw
+end
+
+local function pathTouchesAccessory(path)
+    local s = tostring(path or "")
+    return string.find(s, "<Accessory>", 1, true) ~= nil
+        or string.find(s, "/Accessory ", 1, true) ~= nil
+        or string.find(s, "/Accessory(", 1, true) ~= nil
+end
+
+local function resolveBodyPath(dummy, path)
+    local segments = splitBodyPath(path)
+    if #segments == 0 or segments[1] ~= "$BODY" then return nil end
+
+    local current = dummy
+
+    for i = 2, #segments do
+        local segment = segments[i]
+        local _, className, index =
+            segment:match("^(.-)<([^<>]+)>#(%d+)$")
+        if not className then return nil end
+
+        local name = decodedSegmentName(segment)
+        index = tonumber(index) or 1
+
+        local count = 0
+        local found
+
+        for _, child in ipairs(current:GetChildren()) do
+            if child.Name == name and child.ClassName == className then
+                count += 1
+                if count == index then
+                    found = child
+                    break
+                end
+            end
+        end
+
+        if not found then return nil end
+        current = found
+    end
+
+    return current
+end
+
+local function applyAllowedProps(obj, props, allowed)
+    if not obj or type(props) ~= "table" then return 0 end
+    local n = 0
+
+    for prop, raw in pairs(props) do
+        if allowed[prop] then
+            local value, ok = decodeTyped(raw)
+            if ok == true then
+                local success = pcall(function()
+                    obj[prop] = value
+                end)
+                if success then n += 1 end
+            end
+        end
+    end
+
+    return n
+end
+
+local function ensureDirectClothing(dummy, path, entry)
+    local segments = splitBodyPath(path)
+    if #segments ~= 2 then return nil end
+
+    local className = tostring(entry.class or "")
+    if className ~= "Shirt"
+        and className ~= "Pants"
+        and className ~= "ShirtGraphic"
+        and className ~= "BodyColors" then
+        return nil
+    end
+
+    local name = decodedSegmentName(segments[2])
+
+    for _, child in ipairs(dummy:GetChildren()) do
+        if child.ClassName == className then
+            child.Name = name
+            return child
+        end
+    end
+
+    local ok, obj = pcall(Instance.new, className)
+    if not ok or not obj then return nil end
+
+    obj.Name = name
+    obj.Parent = dummy
+    return obj
+end
+
+local function applySelectiveV3Entry(dummy, path, entry)
+    if type(entry) ~= "table" or pathTouchesAccessory(path) then
+        return 0
+    end
+
+    local obj = resolveBodyPath(dummy, path)
+    if not obj then
+        obj = ensureDirectClothing(dummy, path, entry)
+    end
+    if not obj then return 0 end
+
+    if obj:IsA("BasePart") then
+        if not BODY_PART_NAMES[obj.Name] then return 0 end
+        return applyAllowedProps(obj, entry.props, SAFE_BODY_PROPS)
+    end
+
+    if obj:IsA("Shirt")
+        or obj:IsA("Pants")
+        or obj:IsA("ShirtGraphic")
+        or obj:IsA("BodyColors") then
+        return applyAllowedProps(obj, entry.props, SAFE_CLOTHING_PROPS)
+    end
+
+    return 0
+end
+
+local function startSelectiveV3Replay(dummy, entry)
+    local v3 = fetchBehavior(entry)
+    if not v3 then return false, 0 end
+
+    local timeline = v3.behavior and v3.behavior.timeline
+    if type(timeline) ~= "table" or #timeline == 0 then
+        return false, 0
+    end
+
+    local token = HttpService:GenerateGUID(false)
+    dummy:SetAttribute("XeroR4ReplayToken", token)
+
+    task.spawn(function()
+        local started = os.clock()
+
+        table.sort(timeline, function(a,b)
+            return (tonumber(a.t) or 0) < (tonumber(b.t) or 0)
+        end)
+
+        for _, frame in ipairs(timeline) do
+            if not dummy.Parent
+                or dummy:GetAttribute("XeroR4ReplayToken") ~= token then
+                return
+            end
+
+            local waitFor = (tonumber(frame.t) or 0) - (os.clock() - started)
+            if waitFor > 0 then task.wait(waitFor) end
+            if not dummy.Parent then return end
+
+            for path, bodyEntry in pairs(frame.changed or {}) do
+                applySelectiveV3Entry(dummy, path, bodyEntry)
+            end
+
+            for path, bodyEntry in pairs(frame.added or {}) do
+                applySelectiveV3Entry(dummy, path, bodyEntry)
+            end
+        end
+    end)
+
+    return true, #timeline
+end
+
+local function applyV2Clothing(dummy, asset)
+    local applied = 0
+
+    for _, child in ipairs(asset:GetChildren()) do
+        if child:IsA("Shirt")
+            or child:IsA("Pants")
+            or child:IsA("ShirtGraphic")
+            or child:IsA("BodyColors") then
+
+            local useful = true
+            if child:IsA("Shirt") then
+                useful = tostring(child.ShirtTemplate or "") ~= ""
+            elseif child:IsA("Pants") then
+                useful = tostring(child.PantsTemplate or "") ~= ""
+            elseif child:IsA("ShirtGraphic") then
+                useful = tostring(child.Graphic or "") ~= ""
+            end
+
+            if useful then
+                for _, old in ipairs(dummy:GetChildren()) do
+                    if old.ClassName == child.ClassName then
+                        pcall(function() old:Destroy() end)
+                    end
+                end
+
+                child:Clone().Parent = dummy
+                applied += 1
+            end
+        end
+    end
+
+    return applied
+end
+
+local function nilExternalWeld(root)
+    for _, obj in ipairs(root:GetDescendants()) do
+        if obj:IsA("Weld") then
+            if (obj.Part0 == nil and obj.Part1 ~= nil)
+                or (obj.Part1 == nil and obj.Part0 ~= nil) then
+                return obj
+            end
+        end
+    end
+end
+
+local function attachV2HatIfNeeded(dummy, asset)
+    local head = dummy:FindFirstChild("Head")
+    if not head or not head:IsA("BasePart") then return 0 end
+
+    local count = 0
+
+    for _, child in ipairs(asset:GetChildren()) do
+        if child:IsA("BasePart")
+            and string.find(string.lower(child.Name), "hat", 1, true)
+            and nilExternalWeld(child)
+            and not dummy:FindFirstChild(child.Name) then
+
+            local clone = child:Clone()
+            clone.Parent = dummy
+
+            local weld = nilExternalWeld(clone)
+            if weld then
+                if weld.Part0 == nil then
+                    weld.Part0 = head
+                elseif weld.Part1 == nil then
+                    weld.Part1 = head
+                end
+            end
+
+            local function safePart(obj)
+                if obj:IsA("BasePart") then
+                    obj.CanCollide = false
+                    obj.CanTouch = false
+                    obj.CanQuery = false
+                end
+            end
+
+            safePart(clone)
+            for _, d in ipairs(clone:GetDescendants()) do safePart(d) end
+
+            count += 1
+        end
+    end
+
+    return count
+end
+
+local function nearestPart(obj)
+    local x = obj
+    while x do
+        if x:IsA("BasePart") then return x end
+        x = x.Parent
+    end
+end
+
+local function emitterIsNear(dummy, emitter)
+    local p = nearestPart(emitter)
+    local root = dummy and dummy:FindFirstChild("HumanoidRootPart")
+    if not p or not root then return true end
+    return (p.Position - root.Position).Magnitude <= 35
+end
+
+local function forceMarkedEmitter(emitter)
+    local emitCount =
+        tonumber(emitter:GetAttribute("EmitCount"))
+        or tonumber(emitter:GetAttribute("KillEffectEmitCount"))
+
+    local emitDelay = tonumber(emitter:GetAttribute("EmitDelay")) or 0
+    local emitDuration = tonumber(emitter:GetAttribute("EmitDuration")) or 0
+
+    task.delay(math.max(0, emitDelay), function()
+        if not emitter.Parent then return end
+
+        if emitCount and emitCount > 0 then
+            pcall(function()
+                emitter:Emit(math.max(1, math.floor(emitCount + .5)))
+            end)
+        end
+
+        if emitDuration > 0 then
+            pcall(function() emitter.Enabled = true end)
+            task.delay(emitDuration, function()
+                if emitter.Parent then
+                    pcall(function() emitter.Enabled = false end)
+                end
+            end)
+        end
+    end)
+end
+
+local function observeNativeParticles(dummy)
+    local active = true
+    local seen = setmetatable({}, {__mode="k"})
+
+    local conn = Workspace.DescendantAdded:Connect(function(obj)
+        if not active or not obj:IsA("ParticleEmitter") then return end
+        if seen[obj] or not emitterIsNear(dummy, obj) then return end
+        seen[obj] = true
+
+        if obj:GetAttribute("EmitCount") ~= nil
+            or obj:GetAttribute("EmitDuration") ~= nil
+            or obj:GetAttribute("KillEffectEmitCount") ~= nil then
+            forceMarkedEmitter(obj)
+        end
+    end)
+
+    task.delay(1.5, function()
+        active = false
+        pcall(function() conn:Disconnect() end)
+    end)
+end
+
 local function runNative(name, statusLabel)
-    -- IMPORTANTE R3:
-    -- Conservamos DeathEffectPreview como renderer principal. Sólo recuperamos
-    -- BodyStyle sobre partes reales del cuerpo (sin accesorios) y garantizamos
-    -- que PreviewEffects use la copia visual más completa disponible.
+    -- IMPORTANTE R4:
+    -- Preview.play sigue siendo el renderer principal.
+    -- Sólo completamos body/ropa/hat y partículas marcadas.
     local asset, injected, assetStatus = ensureNativeAsset(name)
     if not asset then
         statusLabel.Text = "✕ Asset: " .. tostring(assetStatus)
@@ -1074,11 +1478,19 @@ local function runNative(name, statusLabel)
     end
 
     local before = snapshotDummyState(dummy)
+
+    -- Start before native renderer creates Workspace clones.
+    observeNativeParticles(dummy)
+
+    -- Only safe template complements.
+    local clothesV2 = applyV2Clothing(dummy, asset)
+    local hatsV2 = attachV2HatIfNeeded(dummy, asset)
+
     local cleaner = makeCleaner()
     activeCleaner = cleaner
 
     statusLabel.Text =
-        "Aplicando efecto NATIVO al dummy...\n" ..
+        "Aplicando NATIVO + completer...\n" ..
         tostring(assetStatus)
 
     local ok, result = pcall(function()
@@ -1088,7 +1500,11 @@ local function runNative(name, statusLabel)
     local bodyPatched, bodyPatchSource =
         scheduleBodyStylePatch(dummy, name, asset)
 
-    -- Jelly tiene una ruta distinta en DestroyBody.
+    local entry = BY_NAME[name]
+    local v3Replayed, v3Frames =
+        startSelectiveV3Replay(dummy, entry)
+
+    -- Jelly has a separate DestroyBody path.
     if not ok and string.find(name, "Jelly", 1, true) then
         local jellyFn = findFunction("spawnJellyCosmetic", "DestroyBody")
         if jellyFn then
@@ -1108,16 +1524,28 @@ local function runNative(name, statusLabel)
 
     statusLabel.Text =
         "✓ Nativo ejecutado · " .. name ..
-        "\nMidiendo cambios del dummy..."
+        "\nCompletando body/ropa/VFX..."
 
-    task.delay(.65, function()
+    task.delay(.72, function()
         if not dummy.Parent then return end
-        local mutations = countMutations(before, snapshotDummyState(dummy))
+
+        local mutations =
+            countMutations(before, snapshotDummyState(dummy))
+
         statusLabel.Text =
             "✓ " .. name ..
-            " · cambios del cuerpo: " .. tostring(mutations) ..
+            " · body " .. tostring(mutations) ..
             (bodyPatched
                 and (" · " .. tostring(bodyPatchSource))
+                or "") ..
+            (v3Replayed
+                and (" · V3 " .. tostring(v3Frames) .. "f")
+                or "") ..
+            (clothesV2 > 0
+                and (" · ropa " .. tostring(clothesV2))
+                or "") ..
+            (hatsV2 > 0
+                and (" · 3D " .. tostring(hatsV2))
                 or "") ..
             "\n" .. tostring(assetStatus)
     end)
@@ -1151,7 +1579,7 @@ local title = Instance.new("TextLabel")
 title.BackgroundTransparency = 1
 title.Position = UDim2.fromOffset(16, 12)
 title.Size = UDim2.new(1,-32,0,22)
-title.Text = "XERO · DEATH EFFECT · NATIVE DUMMY R3"
+title.Text = "XERO · DEATH EFFECT · NATIVE DUMMY R4"
 title.TextColor3 = Color3.fromRGB(245,245,245)
 title.Font = Enum.Font.GothamBold
 title.TextSize = 14

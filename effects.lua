@@ -1,5 +1,5 @@
 --[[
-XeroHub | DUELS Death Effects · Native Dummy Bridge R15 Clean Colors
+XeroHub | DUELS Death Effects · Native Dummy Bridge R16 1x1 Color
 Kev
 
 Objetivo:
@@ -64,7 +64,7 @@ end
 -- ============================================================
 -- Repo / cache
 -- ============================================================
-local CACHE_FOLDER = "XeroHub/DeathEffectsNativeDummyR15"
+local CACHE_FOLDER = "XeroHub/DeathEffectsNativeDummyR16"
 
 local function ensureFolder(path)
     if type(makefolder) ~= "function" then return end
@@ -125,7 +125,8 @@ for _, entry in ipairs(manifest.effects) do
         and entry.name ~= "Heartbeat"
         and entry.name ~= "SoulReaper"
         and entry.name ~= "BlackvalkEffect"
-        and entry.name ~= "GhostbringerEffect" then
+        and entry.name ~= "GhostbringerEffect"
+        and entry.name ~= "Decorated" then
         EFFECTS[#EFFECTS + 1] = entry.name
         BY_NAME[entry.name] = entry
     end
@@ -2844,6 +2845,54 @@ local function scheduleWholeVictimColorLockR14(
     end)
 end
 
+
+local function schedule1x1x1x1Color(dummy)
+    -- Native VFX green captured from 1x1x1x1Effect:
+    -- Color = 0.129291, 1, 0.137588
+    -- Material is intentionally preserved.
+    local green = Color3.new(
+        0.129291,
+        1,
+        0.137588
+    )
+
+    local alive = true
+
+    local function apply()
+        if not alive or not dummy or not dummy.Parent then return end
+
+        removeClassicClothes(dummy)
+
+        -- Strong tint across the whole victim so MeshPart/accessory textures
+        -- cannot hide the effect color. tintTreeColorOnly preserves Material
+        -- and MaterialVariant.
+        tintTreeColorOnly(dummy, green)
+    end
+
+    local conn = dummy.DescendantAdded:Connect(function()
+        task.defer(apply)
+    end)
+
+    task.spawn(function()
+        local deadline = os.clock() + 2.35
+
+        repeat
+            apply()
+            task.wait(.045)
+        until not alive
+            or not dummy
+            or not dummy.Parent
+            or os.clock() >= deadline
+
+        apply()
+    end)
+
+    task.delay(2.48, function()
+        alive = false
+        pcall(function() conn:Disconnect() end)
+    end)
+end
+
 local function scheduleHeartacheReal(dummy)
     -- Color only. Preserve every BasePart's original Material.
     scheduleWholeVictimColorLockR14(
@@ -3319,6 +3368,11 @@ local function runNative(name, statusLabel)
         return
     end
 
+    if name == "Decorated" then
+        statusLabel.Text = "Decorated eliminado del renderer."
+        return
+    end
+
     local asset, injected, assetStatus = ensureNativeAsset(name)
     if not asset then
         statusLabel.Text = "✕ Asset: " .. tostring(assetStatus)
@@ -3377,7 +3431,12 @@ local function runNative(name, statusLabel)
         end)
     end
 
-    if name == "Freeze" then
+    if name == "1x1x1x1Effect" then
+        schedule1x1x1x1Color(dummy)
+        bodyPatched = true
+        bodyPatchSource = "1x1x1x1 · verde nativo completo"
+
+    elseif name == "Freeze" then
         scheduleFreezeReal(dummy)
         bodyPatched = true
         bodyPatchSource = "Freeze · TODO sólido"
@@ -3420,6 +3479,7 @@ local function runNative(name, statusLabel)
     end
 
     if clothesV2 > 0
+        and name ~= "1x1x1x1Effect"
         and name ~= "Freeze"
         and name ~= "Frostbite"
         and name ~= "Ghosted"
@@ -3488,7 +3548,7 @@ local title = Instance.new("TextLabel")
 title.BackgroundTransparency = 1
 title.Position = UDim2.fromOffset(16, 12)
 title.Size = UDim2.new(1,-32,0,22)
-title.Text = "XERO · DEATH EFFECT · NATIVE DUMMY R15"
+title.Text = "XERO · DEATH EFFECT · NATIVE DUMMY R16"
 title.TextColor3 = Color3.fromRGB(245,245,245)
 title.Font = Enum.Font.GothamBold
 title.TextSize = 14
@@ -3625,4 +3685,4 @@ task.defer(function()
         or ("✕ dummy: " .. tostring(err))
 end)
 
-print("[Xero Death Native Dummy R15]", #EFFECTS, "efectos ·", PRELOAD_STATS.loaded, "precargados ·", BASE)
+print("[Xero Death Native Dummy R16]", #EFFECTS, "efectos ·", PRELOAD_STATS.loaded, "precargados ·", BASE)

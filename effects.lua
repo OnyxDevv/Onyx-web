@@ -1,5 +1,5 @@
 --[[
-XeroHub | DUELS Death Effects · Native Enemy Bridge R18 · Local Kills Only
+XeroHub | DUELS Death Effects · Native Enemy Bridge R21 · Signal First
 Kev
 
 Objetivo:
@@ -3339,8 +3339,8 @@ gui.IgnoreGuiInset = true
 gui.Parent = PlayerGui
 
 local frame = Instance.new("Frame")
-frame.Size = UDim2.fromOffset(430, 220)
-frame.Position = UDim2.new(.5, -215, .72, -110)
+frame.Size = UDim2.fromOffset(430, 252)
+frame.Position = UDim2.new(.5, -215, .72, -126)
 frame.BackgroundColor3 = Color3.fromRGB(12,12,12)
 frame.BorderSizePixel = 0
 frame.Parent = gui
@@ -3354,7 +3354,7 @@ local title = Instance.new("TextLabel")
 title.BackgroundTransparency = 1
 title.Position = UDim2.fromOffset(16, 12)
 title.Size = UDim2.new(1,-32,0,22)
-title.Text = "XERO · DEATH EFFECTS · ENEMIES R17"
+title.Text = "XERO · DEATH EFFECTS · SIGNAL FIRST R21"
 title.TextColor3 = Color3.fromRGB(245,245,245)
 title.Font = Enum.Font.GothamBold
 title.TextSize = 14
@@ -3375,7 +3375,7 @@ Instance.new("UICorner", effectLabel).CornerRadius = UDim.new(0,10)
 local status = Instance.new("TextLabel")
 status.BackgroundTransparency = 1
 status.Position = UDim2.fromOffset(16, 151)
-status.Size = UDim2.new(1,-32,0,54)
+status.Size = UDim2.new(1,-32,0,86)
 status.Text =
     string.format(
         "%d efectos · %d precargados · esperando activación",
@@ -3432,6 +3432,10 @@ local hookedKillValues = setmetatable({}, {__mode = "k"})
 local hookedKillSounds = setmetatable({}, {__mode = "k"})
 local recentKillCredits = {}
 local recentDeathModels = setmetatable({}, {__mode = "k"})
+local recentBodyEvents = {}
+local watchedWorldHumanoids = setmetatable({}, {__mode = "k"})
+local worldHumanoidConnections = setmetatable({}, {__mode = "k"})
+local debugStats = {killSounds = 0, killFires = 0, bodyEvents = 0, modelsSeen = 0}
 local lastAcceptedSignalAt = 0
 local lastAcceptedSignalSource = nil
 local lastAppliedAt = 0
@@ -3466,7 +3470,7 @@ local function isEnemyPlayer(player)
 end
 
 local function refreshHumanoidDeathMode(player, hum)
-    -- R20: do NOT alter BreakJointsOnDeath. DUELS can replace the live Character
+    -- R21: do NOT alter BreakJointsOnDeath. DUELS can replace the live Character
     -- with its own visible corpse/dummy and we need that native pipeline intact.
     local info = trackedHumanoids[hum]
     if not info or not hum.Parent then return end
@@ -3754,6 +3758,186 @@ local function waitForDeathTarget(player, originalCharacter, deathPosition, deat
     return nil, "sin cuerpo visual"
 end
 
+local function fullNameSafe(obj)
+    local ok, value = pcall(function() return obj:GetFullName() end)
+    return ok and tostring(value) or tostring(obj and obj.Name or "?")
+end
+
+local function pushBodyEvent(model, reason)
+    if not model or not model:IsA("Model") then return end
+    local pos = modelPosition(model)
+    if not pos then return end
+
+    local now = os.clock()
+    recentBodyEvents[#recentBodyEvents + 1] = {
+        model = model,
+        pos = pos,
+        at = now,
+        reason = tostring(reason or "evento"),
+        name = tostring(model.Name),
+    }
+    debugStats.bodyEvents += 1
+
+    while #recentBodyEvents > 24 do
+        table.remove(recentBodyEvents, 1)
+    end
+    for i = #recentBodyEvents, 1, -1 do
+        if now - (recentBodyEvents[i].at or 0) > 3.0 then
+            table.remove(recentBodyEvents, i)
+        end
+    end
+end
+
+local function latestBodyAnchor(signalAt)
+    local best = nil
+    for i = #recentBodyEvents, 1, -1 do
+        local e = recentBodyEvents[i]
+        local age = signalAt - (e.at or 0)
+        if age >= -0.25 and age <= 1.50 then
+            best = e
+            break
+        end
+    end
+    return best
+end
+
+local function genericBodyScore(model, anchorPos, signalAt)
+    if not model or not model.Parent or not model:IsA("Model") then return nil end
+    if isCurrentPlayerCharacter(model) then return nil end
+    if not looksLikeBody(model) then return nil end
+
+    local score = 0
+    local createdAt = recentDeathModels[model]
+    if createdAt then
+        local age = math.abs(createdAt - signalAt)
+        if age <= 1.50 then score += 80 - age * 25 end
+    end
+
+    local pos = modelPosition(model)
+    if anchorPos then
+        if not pos then return nil end
+        local distance = (pos - anchorPos).Magnitude
+        if distance > 45 then return nil end
+        score += math.max(0, 110 - distance * 3)
+    elseif not createdAt or math.abs(createdAt - signalAt) > 1.10 then
+        return nil
+    end
+
+    local n = normalized(model.Name)
+    if string.find(n, "dummy", 1, true)
+        or string.find(n, "corpse", 1, true)
+        or string.find(n, "ragdoll", 1, true)
+        or string.find(n, "dead", 1, true)
+        or string.find(n, "body", 1, true) then
+        score += 45
+    end
+    if model:FindFirstChildOfClass("Humanoid") then score += 25 end
+
+    return score
+end
+
+local function findSignalFirstBody(anchorPos, signalAt, includeWorldScan)
+    local best, bestScore = nil, -math.huge
+
+    for model in pairs(recentDeathModels) do
+        local score = genericBodyScore(model, anchorPos, signalAt)
+        if score and score > bestScore then
+            best, bestScore = model, score
+        end
+    end
+
+    if includeWorldScan then
+        for _, obj in ipairs(Workspace:GetDescendants()) do
+            if obj:IsA("Model") then
+                local score = genericBodyScore(obj, anchorPos, signalAt)
+                if score and score > bestScore then
+                    best, bestScore = obj, score
+                end
+            end
+        end
+    end
+
+    return best, bestScore
+end
+
+local signalFirstBusy = false
+local function resolveKillFromSignal(source)
+    if signalFirstBusy or not enabled then return false end
+    signalFirstBusy = true
+
+    local signalAt = os.clock()
+    local anchor = latestBodyAnchor(signalAt)
+    local anchorPos = anchor and anchor.pos or nil
+    local anchorText = anchor and (anchor.name .. " / " .. anchor.reason) or "sin evento previo"
+
+    status.Text =
+        "1/3 GUNKILL DETECTADO ✓\n" ..
+        tostring(source) .. " · " .. anchorText ..
+        "\nBuscando dummy/cadáver..."
+
+    task.spawn(function()
+        local deadline = os.clock() + 1.35
+        local target, score = nil, -math.huge
+        local didWorldScan = false
+
+        repeat
+            local scanWorld = false
+            if not didWorldScan and os.clock() - signalAt >= 0.18 then
+                scanWorld = true
+                didWorldScan = true
+            end
+
+            target, score = findSignalFirstBody(anchorPos, signalAt, scanWorld)
+            local threshold = anchorPos and 45 or 90
+            if target and score >= threshold then break end
+            target = nil
+            task.wait(0.035)
+        until os.clock() >= deadline
+
+        if not target then
+            -- One final complete scan catches a reused corpse model that existed
+            -- before the kill instead of being cloned at death time.
+            target, score = findSignalFirstBody(anchorPos, signalAt, true)
+            local threshold = anchorPos and 45 or 90
+            if not target or score < threshold then target = nil end
+        end
+
+        if not target or not target.Parent then
+            status.Text =
+                "1/3 GUNKILL DETECTADO ✓\n" ..
+                "2/3 CUERPO/DUMMY: NO ENCONTRADO\n" ..
+                string.format("eventos:%d · modelos:%d · killSounds:%d", debugStats.bodyEvents, debugStats.modelsSeen, debugStats.killSounds)
+            signalFirstBusy = false
+            return
+        end
+
+        local hasHumanoid = target:FindFirstChildOfClass("Humanoid") ~= nil
+        status.Text =
+            "1/3 GUNKILL DETECTADO ✓\n" ..
+            "2/3 CUERPO/DUMMY ✓ " .. tostring(target.Name) ..
+            " H:" .. (hasHumanoid and "sí" or "no") ..
+            "\nAplicando " .. tostring(selectedEffect()) .. "..."
+
+        local ok, result = pcall(function()
+            return runNativeOnVictim(selectedEffect(), target, status)
+        end)
+
+        if ok and result == true then
+            status.Text =
+                "1/3 GUNKILL ✓ · 2/3 DUMMY ✓\n" ..
+                "3/3 EFECTO APLICADO ✓\n" ..
+                tostring(selectedEffect()) .. " → " .. tostring(target.Name)
+        else
+            status.Text =
+                "1/3 GUNKILL ✓ · 2/3 DUMMY ✓\n" ..
+                "3/3 EFECTO FALLÓ ✕\n" .. tostring(result)
+        end
+        signalFirstBusy = false
+    end)
+
+    return true
+end
+
 local function triggerVictim(player, character, hum, proof)
     local info = trackedHumanoids[hum]
     if not info or info.triggered then return false end
@@ -3837,6 +4021,8 @@ local function recordLocalKillSignal(source, count)
     if not enabled then return end
     count = math.max(1, math.floor(tonumber(count) or 1))
     local now = os.clock()
+    debugStats.killFires += count
+    status.Text = "1/3 GUNKILL DETECTADO ✓\n" .. tostring(source) .. "\nBuscando muerte/dummy..."
 
     -- GunKill + Kills counter often fire for the same elimination. Do not
     -- convert the second native confirmation into a credit for the next death.
@@ -3858,6 +4044,9 @@ local function recordLocalKillSignal(source, count)
 
     for _ = 1, count do
         if not consumeOnePending(source) then
+            -- R21 does not require Humanoid.Died anymore. A native local kill
+            -- signal can directly start corpse/dummy discovery.
+            resolveKillFromSignal(source)
             pruneCredits()
             recentKillCredits[#recentKillCredits + 1] = {
                 at = now,
@@ -3948,14 +4137,16 @@ local function hookCharacter(player, character)
 
         info.connections[#info.connections + 1] = hum.HealthChanged:Connect(function(health)
             if health <= 0 then
+                pushBodyEvent(character, "Player Humanoid <= 0")
                 queueVictimDeath(player, character, hum)
             end
         end)
 
         info.connections[#info.connections + 1] = character.AncestryChanged:Connect(function(_, parent)
             if parent == nil then
-                -- Do not cancel the pending kill here: DUELS can remove the live
-                -- Character first and spawn the visible death dummy immediately after.
+                -- Even if DUELS deletes/replaces the live avatar without ever
+                -- reaching Humanoid.Died, keep its last body position as an anchor.
+                pushBodyEvent(character, "Player Character removido")
                 cleanVictim(character)
                 task.delay(PENDING_LIFETIME + 0.25, function()
                     if trackedHumanoids[hum] == info and not info.triggered then
@@ -4060,12 +4251,23 @@ end
 local function hookKillSound(sound)
     if not isKillConfirmSound(sound) or hookedKillSounds[sound] then return end
     hookedKillSounds[sound] = true
+    debugStats.killSounds += 1
 
     local wasLocal = localOwnsKillSound(sound)
+    local function pathLooksLocal()
+        local path = string.lower(fullNameSafe(sound))
+        return string.find(path, string.lower(tostring(LP.Name)), 1, true) ~= nil
+    end
     local function confirm()
-        wasLocal = wasLocal or localOwnsKillSound(sound)
-        if enabled and wasLocal then
-            recordLocalKillSignal("sonido " .. tostring(sound.Name), 1)
+        wasLocal = wasLocal or localOwnsKillSound(sound) or pathLooksLocal()
+        if enabled then
+            if wasLocal then
+                recordLocalKillSignal("sonido " .. tostring(sound.Name), 1)
+            else
+                status.Text =
+                    "GUNKILL candidato detectado, pero no parece local.\n" ..
+                    fullNameSafe(sound)
+            end
         end
     end
 
@@ -4092,11 +4294,45 @@ end
 
 -- Death body watcher: only models CREATED after the script starts are remembered.
 -- This avoids repeatedly scanning the whole Workspace on every kill.
+local function watchWorldHumanoid(hum)
+    if not hum or not hum:IsA("Humanoid") or watchedWorldHumanoids[hum] then return end
+    watchedWorldHumanoids[hum] = true
+
+    local model = hum.Parent
+    if not model or not model:IsA("Model") then return end
+    local conns = {}
+    worldHumanoidConnections[hum] = conns
+
+    conns[#conns + 1] = hum.HealthChanged:Connect(function(health)
+        if health <= 0 then
+            pushBodyEvent(model, "Workspace Humanoid <= 0")
+        end
+    end)
+    conns[#conns + 1] = hum.Died:Connect(function()
+        pushBodyEvent(model, "Workspace Humanoid.Died")
+    end)
+    conns[#conns + 1] = model.AncestryChanged:Connect(function(_, parent)
+        if parent == nil then
+            pushBodyEvent(model, "Workspace Model removido")
+        end
+    end)
+end
+
+-- Prime every humanoid once. This is intentionally broader than the final hub:
+-- R21 is a lab whose job is to discover DUELS' actual death body pipeline.
+for _, obj in ipairs(Workspace:GetDescendants()) do
+    if obj:IsA("Humanoid") then
+        watchWorldHumanoid(obj)
+    end
+end
+
 killSignalConnections[#killSignalConnections + 1] = Workspace.DescendantAdded:Connect(function(obj)
     if obj:IsA("Model") then
+        debugStats.modelsSeen += 1
         rememberDeathModel(obj)
     elseif obj:IsA("Humanoid") and obj.Parent and obj.Parent:IsA("Model") then
         rememberDeathModel(obj.Parent)
+        watchWorldHumanoid(obj)
     elseif obj:IsA("Sound") then
         -- DUELS can briefly clone GunKill outside the Character/Backpack tree.
         hookKillSound(obj)
@@ -4156,9 +4392,12 @@ toggle.MouseButton1Click:Connect(function()
     refreshAllTracked()
 
     if enabled then
+        scanLocalKillSignals(LP.Character)
+        scanLocalKillSignals(LP:FindFirstChildOfClass("Backpack"))
         status.Text =
-            "✓ Activo · " .. tostring(selectedEffect()) ..
-            "\nTU kill → dummy/cadáver de DUELS → efecto."
+            "✓ R21 activo · " .. tostring(selectedEffect()) ..
+            "\nGunKill armados: " .. tostring(debugStats.killSounds) ..
+            " · esperando TU kill..."
     else
         for _, entry in ipairs(pendingDeaths) do
             removePending(entry)
@@ -4200,7 +4439,7 @@ UserInputService.InputChanged:Connect(function(input)
 end)
 
 print(
-    "[Xero Death Dummy Kills R20]",
+    "[Xero Death Dummy Kills R21]",
     #EFFECTS,
     "efectos ·",
     PRELOAD_STATS.loaded,

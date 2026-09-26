@@ -1,5 +1,5 @@
 --[[
-XeroHub | DUELS Death Effects · CurrentCamera R36 · Fix duplicados · Base original knifeee
+XeroHub | DUELS Death Effects · CurrentCamera R36 · Fix duplicados · Base original
 Kev
 
 Objetivo:

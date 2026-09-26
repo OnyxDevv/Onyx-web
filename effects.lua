@@ -1,5 +1,5 @@
 --[[
-XeroHub | DUELS Death Effects · Native Enemy Bridge R22.1 · Nil Guard Fix
+XeroHub | DUELS Death Effects · Stable Base R23 · Local Kills + Dummy Bridge
 Kev
 
 Objetivo:
@@ -32,82 +32,6 @@ local BASE = ENV.XERO_DEATH_FINAL_ROOT
     or "https://raw.githubusercontent.com/OnyxDevv/Onyx-web/main/death_effects_final"
 
 local requestFn = (syn and syn.request) or (http and http.request) or http_request or request
-
--- ============================================================
--- Runtime compatibility / nil-call guards (R22.1)
--- ============================================================
-local _task = task
-local _legacyWait = (type(wait) == "function") and wait or nil
-
-local function taskWait(seconds)
-    if _task and type(_task.wait) == "function" then
-        return _task.wait(seconds)
-    end
-    if _legacyWait then
-        return _legacyWait(seconds)
-    end
-    local RunService = game:GetService("RunService")
-    local duration = tonumber(seconds) or 0
-    local started = os.clock()
-    repeat RunService.Heartbeat:Wait() until os.clock() - started >= duration
-    return os.clock() - started
-end
-
-local function taskSpawn(fn, ...)
-    if _task and type(_task.spawn) == "function" then
-        return _task.spawn(fn, ...)
-    end
-    local args = {...}
-    local co = coroutine.create(function()
-        fn(((type(table.unpack) == "function") and table.unpack or unpack)(args))
-    end)
-    local ok, err = coroutine.resume(co)
-    if not ok then error(err, 0) end
-    return co
-end
-
-local function taskDefer(fn, ...)
-    if _task and type(_task.defer) == "function" then
-        return _task.defer(fn, ...)
-    end
-    local args = {...}
-    return taskSpawn(function()
-        taskWait()
-        fn(((type(table.unpack) == "function") and table.unpack or unpack)(args))
-    end)
-end
-
-local function taskDelay(seconds, fn, ...)
-    if _task and type(_task.delay) == "function" then
-        return _task.delay(seconds, fn, ...)
-    end
-    local args = {...}
-    return taskSpawn(function()
-        taskWait(seconds)
-        fn(((type(table.unpack) == "function") and table.unpack or unpack)(args))
-    end)
-end
-
-local function taskCancel(thread)
-    if _task and type(_task.cancel) == "function" then
-        return _task.cancel(thread)
-    end
-    if type(coroutine.close) == "function" and type(thread) == "thread" then
-        pcall(coroutine.close, thread)
-    end
-end
-
-local unpackArgs = (type(table.unpack) == "function" and table.unpack) or unpack
-
--- Compatibility: Roblox Luau has table.clear, but some executor runtimes expose
--- an incomplete table library. Do not let the OFF button crash for that reason.
-local function clearTable(t)
-    if type(table.clear) == "function" then
-        table.clear(t)
-        return
-    end
-    for k in pairs(t) do t[k] = nil end
-end
 
 local function httpGet(url)
     if requestFn then
@@ -336,7 +260,7 @@ local function preloadAllEffectData()
     end
 
     for _ = 1, workerCount do
-        taskSpawn(function()
+        task.spawn(function()
             while true do
                 -- No yield between reading/incrementing nextIndex, so each
                 -- cooperative worker claims a unique slot.
@@ -352,7 +276,7 @@ local function preloadAllEffectData()
                 if not data then
                     -- One retry at startup. We prefer paying the pause here,
                     -- not later when the user selects the effect.
-                    taskWait(.08)
+                    task.wait(.08)
                     data, err = fetchEffect(name)
                 end
 
@@ -364,7 +288,7 @@ local function preloadAllEffectData()
                 end
 
                 updateStatus(name)
-                taskWait()
+                task.wait()
             end
 
             workersDone += 1
@@ -372,7 +296,7 @@ local function preloadAllEffectData()
     end
 
     repeat
-        taskWait(.03)
+        task.wait(.03)
     until workersDone >= workerCount
 
     if preloadStatus and preloadStatus.Parent then
@@ -387,7 +311,7 @@ local function preloadAllEffectData()
             )
     end
 
-    taskWait(.16)
+    task.wait(.16)
 
     if preloadGui and preloadGui.Parent then
         preloadGui:Destroy()
@@ -943,7 +867,7 @@ local function makeCleaner()
                 elseif type(object) == "function" then
                     object()
                 elseif type(object) == "thread" then
-                    taskCancel(object)
+                    task.cancel(object)
                 elseif type(object) == "table" then
                     if type(object.Destroy) == "function" then
                         object:Destroy()
@@ -991,27 +915,7 @@ local previewModule =
     :WaitForChild("BundlePreviewUI")
     :WaitForChild("DeathEffectPreview")
 
-local okPreviewRequire, Preview = pcall(require, previewModule)
-if not okPreviewRequire then
-    error(
-        "Xero Native Bridge: DeathEffectPreview require falló: " .. tostring(Preview),
-        0
-    )
-end
-
-local PreviewPlay
-if type(Preview) == "table" then
-    PreviewPlay = Preview.play or Preview.Play
-elseif type(Preview) == "function" then
-    PreviewPlay = Preview
-end
-
-if type(PreviewPlay) ~= "function" then
-    error(
-        "Xero Native Bridge: DeathEffectPreview cargó, pero no expone play/Play como función. Tipo: " .. type(Preview),
-        0
-    )
-end
+local Preview = require(previewModule)
 
 local function findFunction(nameWanted, sourceNeedle)
     if type(getgc) ~= "function" then return nil end
@@ -1166,16 +1070,30 @@ local function bodyStyleFromConfig(name)
     end
 end
 
--- R22 FIX: R21 called isRealBodyPart() from BodyStyle patches but never
--- defined it. Keep the filter identical to bodyPartsOnly(): avatar body parts
--- only, excluding HumanoidRootPart, accessories and tools.
+-- Stable helper kept local to this bridge. The renderer calls this from
+-- BodyStyle patches, so it must exist before any effect can reach that path.
+local REAL_BODY_PART_NAMES = {
+    Head=true, UpperTorso=true, LowerTorso=true, Torso=true,
+    LeftUpperArm=true, LeftLowerArm=true, LeftHand=true,
+    RightUpperArm=true, RightLowerArm=true, RightHand=true,
+    LeftUpperLeg=true, LeftLowerLeg=true, LeftFoot=true,
+    RightUpperLeg=true, RightLowerLeg=true, RightFoot=true,
+    ["Left Arm"]=true, ["Right Arm"]=true,
+    ["Left Leg"]=true, ["Right Leg"]=true,
+}
+
 local function isRealBodyPart(dummy, obj)
     if not dummy or not obj or not obj:IsA("BasePart") then return false end
     if obj.Name == "HumanoidRootPart" then return false end
-    if not obj:IsDescendantOf(dummy) then return false end
+    if not REAL_BODY_PART_NAMES[obj.Name] then return false end
     if obj:FindFirstAncestorOfClass("Accessory") then return false end
     if obj:FindFirstAncestorOfClass("Tool") then return false end
-    return true
+
+    local current = obj
+    while current and current ~= dummy do
+        current = current.Parent
+    end
+    return current == dummy
 end
 
 local function applyBodyStyleOnly(dummy, style, snap)
@@ -1260,13 +1178,13 @@ local function scheduleBodyStylePatch(dummy, name, asset)
 
     -- Preview.play spawns work asynchronously. First pass mimics the color tween,
     -- second pass makes sure async native work did not restore the avatar colors.
-    taskDelay(0.04, function()
+    task.delay(0.04, function()
         if dummy and dummy.Parent then
             applyBodyStyleOnly(dummy, style, false)
         end
     end)
 
-    taskDelay(0.34, function()
+    task.delay(0.34, function()
         if dummy and dummy.Parent then
             applyBodyStyleOnly(dummy, style, true)
         end
@@ -1660,7 +1578,7 @@ local function forceMarkedEmitter(emitter)
     local emitDelay = tonumber(emitter:GetAttribute("EmitDelay")) or 0
     local emitDuration = tonumber(emitter:GetAttribute("EmitDuration")) or 0
 
-    taskDelay(math.max(0, emitDelay), function()
+    task.delay(math.max(0, emitDelay), function()
         if not emitter.Parent then return end
 
         if emitCount and emitCount > 0 then
@@ -1671,7 +1589,7 @@ local function forceMarkedEmitter(emitter)
 
         if emitDuration > 0 then
             pcall(function() emitter.Enabled = true end)
-            taskDelay(emitDuration, function()
+            task.delay(emitDuration, function()
                 if emitter.Parent then
                     pcall(function() emitter.Enabled = false end)
                 end
@@ -1738,12 +1656,12 @@ local function observeNativeParticles(dummy)
         end
     end
 
-    taskDelay(.06, rescan)
-    taskDelay(.20, rescan)
-    taskDelay(.48, rescan)
-    taskDelay(.90, rescan)
+    task.delay(.06, rescan)
+    task.delay(.20, rescan)
+    task.delay(.48, rescan)
+    task.delay(.90, rescan)
 
-    taskDelay(1.65, function()
+    task.delay(1.65, function()
         active = false
         for _, conn in ipairs(connections) do
             pcall(function() conn:Disconnect() end)
@@ -1921,19 +1839,19 @@ local function scheduleFreezeReal(dummy)
     -- Re-apply because native preview can add/re-parent visual avatar pieces
     -- asynchronously after play() returns.
     for _, delayTime in ipairs({0, .05, .14, .30, .55, .90, 1.35, 1.80}) do
-        taskDelay(delayTime, function()
+        task.delay(delayTime, function()
             forceFreezePass(dummy)
         end)
     end
 
     local conn
     conn = dummy.DescendantAdded:Connect(function()
-        taskDefer(function()
+        task.defer(function()
             forceFreezePass(dummy)
         end)
     end)
 
-    taskDelay(2.0, function()
+    task.delay(2.0, function()
         pcall(function() conn:Disconnect() end)
     end)
 end
@@ -2027,14 +1945,14 @@ end
 
 local function scheduleFrostbiteReal(dummy)
     for _, delayTime in ipairs({0, .04, .12, .28, .52, .86, 1.25, 1.70, 2.15}) do
-        taskDelay(delayTime, function()
+        task.delay(delayTime, function()
             forceFrostbitePass(dummy)
         end)
     end
 
     local conn
     conn = dummy.DescendantAdded:Connect(function(obj)
-        taskDefer(function()
+        task.defer(function()
             if not dummy.Parent then return end
 
             if obj:IsA("Shirt")
@@ -2048,7 +1966,7 @@ local function scheduleFrostbiteReal(dummy)
         end)
     end)
 
-    taskDelay(2.35, function()
+    task.delay(2.35, function()
         pcall(function() conn:Disconnect() end)
     end)
 end
@@ -2164,7 +2082,7 @@ local function playGhostedCapturedNativeFade(dummy)
         local duration = math.max(0.01, current[1] - prev[1])
         local targetAlpha = current[2]
 
-        taskDelay(delayTime, function()
+        task.delay(delayTime, function()
             if not dummy or not dummy.Parent then return end
 
             for _, part in ipairs(allBaseParts(dummy)) do
@@ -2240,7 +2158,7 @@ local function applyExactNativeBodyStyle(dummy, effectName)
     local style = cfg.BodyStyle
     applyBodyStyleOnly(dummy, style, false)
 
-    taskDelay(.30, function()
+    task.delay(.30, function()
         if dummy and dummy.Parent then
             applyBodyStyleOnly(dummy, style, true)
         end
@@ -2267,7 +2185,7 @@ local function callNativeAdapter(effectName, dummy, asset, cleaner)
 
     for _, args in ipairs(attempts) do
         local ok = pcall(function()
-            adapter(unpackArgs(args))
+            adapter(table.unpack(args))
         end)
 
         if ok then
@@ -2488,7 +2406,7 @@ local function forceAllMarkedEmitters(root)
         if emitCount ~= nil or duration > 0 then
             count += 1
 
-            taskDelay(math.max(0, delayTime), function()
+            task.delay(math.max(0, delayTime), function()
                 if not obj.Parent then return end
 
                 if emitCount and emitCount > 0 then
@@ -2500,7 +2418,7 @@ local function forceAllMarkedEmitters(root)
                 if duration > 0 then
                     pcall(function() obj.Enabled = true end)
 
-                    taskDelay(duration, function()
+                    task.delay(duration, function()
                         if obj.Parent then
                             pcall(function() obj.Enabled = false end)
                         end
@@ -2554,10 +2472,10 @@ local function rescanMarkedEmittersNearDummy(dummy, duration)
     end
 
     for _, delayTime in ipairs({.03, .10, .22, .42, .70, 1.05, 1.45}) do
-        taskDelay(delayTime, scan)
+        task.delay(delayTime, scan)
     end
 
-    taskDelay(duration or 1.7, function()
+    task.delay(duration or 1.7, function()
         alive = false
     end)
 end
@@ -2651,7 +2569,7 @@ local function installGhostbringerAggressiveCarrierGuard(dummy)
 
     conns[#conns+1] =
         Workspace.DescendantAdded:Connect(function(obj)
-            taskDefer(function()
+            task.defer(function()
                 if obj:IsA("BasePart") then
                     inspect(obj)
                 else
@@ -2665,7 +2583,7 @@ local function installGhostbringerAggressiveCarrierGuard(dummy)
     if camera then
         conns[#conns+1] =
             camera.DescendantAdded:Connect(function(obj)
-                taskDefer(function()
+                task.defer(function()
                     if obj:IsA("BasePart") then
                         inspect(obj)
                     else
@@ -2705,10 +2623,10 @@ local function installGhostbringerAggressiveCarrierGuard(dummy)
         0, .01, .025, .05, .09, .15, .24, .36,
         .52, .74, 1.02, 1.36, 1.75, 2.20, 2.70
     }) do
-        taskDelay(t, rescan)
+        task.delay(t, rescan)
     end
 
-    taskDelay(3.0, function()
+    task.delay(3.0, function()
         for _, conn in ipairs(conns) do
             pcall(function() conn:Disconnect() end)
         end
@@ -2867,15 +2785,15 @@ local function scheduleWholeVictimColorLockR14(
     end
 
     local conn = dummy.DescendantAdded:Connect(function()
-        taskDefer(apply)
+        task.defer(apply)
     end)
 
-    taskSpawn(function()
+    task.spawn(function()
         local deadline = os.clock() + duration
 
         repeat
             apply()
-            taskWait(.045)
+            task.wait(.045)
         until not alive
             or not dummy
             or not dummy.Parent
@@ -2884,7 +2802,7 @@ local function scheduleWholeVictimColorLockR14(
         apply()
     end)
 
-    taskDelay(duration + .12, function()
+    task.delay(duration + .12, function()
         alive = false
         pcall(function() conn:Disconnect() end)
     end)
@@ -2915,15 +2833,15 @@ local function schedule1x1x1x1Color(dummy)
     end
 
     local conn = dummy.DescendantAdded:Connect(function()
-        taskDefer(apply)
+        task.defer(apply)
     end)
 
-    taskSpawn(function()
+    task.spawn(function()
         local deadline = os.clock() + 2.35
 
         repeat
             apply()
-            taskWait(.045)
+            task.wait(.045)
         until not alive
             or not dummy
             or not dummy.Parent
@@ -2932,7 +2850,7 @@ local function schedule1x1x1x1Color(dummy)
         apply()
     end)
 
-    taskDelay(2.48, function()
+    task.delay(2.48, function()
         alive = false
         pcall(function() conn:Disconnect() end)
     end)
@@ -2974,7 +2892,7 @@ local function scheduleSpiritOverloadReal(dummy)
     local spiritColor = Color3.fromRGB(36,75,26)
 
     for _, delayTime in ipairs({0, .05, .16, .34, .70, 1.15}) do
-        taskDelay(delayTime, function()
+        task.delay(delayTime, function()
             forceWholeAvatarSolid(
                 dummy,
                 spiritColor,
@@ -2986,7 +2904,7 @@ local function scheduleSpiritOverloadReal(dummy)
 
     local conn
     conn = dummy.DescendantAdded:Connect(function()
-        taskDefer(function()
+        task.defer(function()
             forceWholeAvatarSolid(
                 dummy,
                 spiritColor,
@@ -2996,7 +2914,7 @@ local function scheduleSpiritOverloadReal(dummy)
         end)
     end)
 
-    taskDelay(1.5, function()
+    task.delay(1.5, function()
         pcall(function() conn:Disconnect() end)
     end)
 end
@@ -3055,7 +2973,7 @@ local function playSoulReaperCapturedBody(dummy)
         local prev = points[i-1]
         local current = points[i]
 
-        taskDelay(prev[1], function()
+        task.delay(prev[1], function()
             if not dummy or not dummy.Parent then return end
 
             local duration = math.max(.01, current[1] - prev[1])
@@ -3243,10 +3161,10 @@ local function enforceInvisibleCarriers(dummy, asset, effectName)
     for _, delayTime in ipairs({
         0, .03, .08, .16, .28, .45, .70, 1.0, 1.35, 1.75, 2.20
     }) do
-        taskDelay(delayTime, rescan)
+        task.delay(delayTime, rescan)
     end
 
-    taskDelay(2.45, function()
+    task.delay(2.45, function()
         for _, conn in ipairs(conns) do
             pcall(function() conn:Disconnect() end)
         end
@@ -3262,7 +3180,7 @@ local function scheduleV2ClothingLock(dummy, asset)
     -- Reapply effect-owned clothing AFTER native async work.
     -- This prevents the scanned victim's clothing from winning later.
     for _, delayTime in ipairs({.08, .28, .62}) do
-        taskDelay(delayTime, function()
+        task.delay(delayTime, function()
             if dummy and dummy.Parent and asset and asset.Parent then
                 applyV2Clothing(dummy, asset)
             end
@@ -3335,7 +3253,7 @@ local function runNativeOnVictim(name, victim, statusLabel)
     -- This is the important part: the native preview is executed on the
     -- actual dead enemy character rather than on a disposable preview dummy.
     local ok, result = pcall(function()
-        return PreviewPlay(victim, name, cleaner)
+        return Preview.play(victim, name, cleaner)
     end)
 
     local bodyPatched = false
@@ -3405,10 +3323,11 @@ local function runNativeOnVictim(name, victim, statusLabel)
 
     if statusLabel then
         statusLabel.Text =
-            "✓ " .. tostring(name) .. " aplicado nativamente a " .. tostring(victim.Name)
+            "3/3 · EFECTO APLICADO\n" ..
+            tostring(name) .. " → " .. tostring(victim.Name)
     end
 
-    taskDelay(.90, function()
+    task.delay(.90, function()
         if not victim or not victim.Parent or not statusLabel or not statusLabel.Parent then
             return
         end
@@ -3425,7 +3344,7 @@ local function runNativeOnVictim(name, victim, statusLabel)
 
     -- Death effects are short-lived. Keep cleanup isolated per victim so one
     -- kill never cancels the visuals of another kill.
-    taskDelay(10, function()
+    task.delay(10, function()
         if victimCleaners[victim] == cleaner then
             cleanVictim(victim)
         end
@@ -3447,8 +3366,8 @@ gui.IgnoreGuiInset = true
 gui.Parent = PlayerGui
 
 local frame = Instance.new("Frame")
-frame.Size = UDim2.fromOffset(430, 252)
-frame.Position = UDim2.new(.5, -215, .72, -126)
+frame.Size = UDim2.fromOffset(430, 220)
+frame.Position = UDim2.new(.5, -215, .72, -110)
 frame.BackgroundColor3 = Color3.fromRGB(12,12,12)
 frame.BorderSizePixel = 0
 frame.Parent = gui
@@ -3462,7 +3381,7 @@ local title = Instance.new("TextLabel")
 title.BackgroundTransparency = 1
 title.Position = UDim2.fromOffset(16, 12)
 title.Size = UDim2.new(1,-32,0,22)
-title.Text = "XERO · DEATH EFFECTS · SIGNAL FIRST R22.1"
+title.Text = "XERO · DEATH EFFECTS · ENEMIES R17"
 title.TextColor3 = Color3.fromRGB(245,245,245)
 title.Font = Enum.Font.GothamBold
 title.TextSize = 14
@@ -3483,7 +3402,7 @@ Instance.new("UICorner", effectLabel).CornerRadius = UDim.new(0,10)
 local status = Instance.new("TextLabel")
 status.BackgroundTransparency = 1
 status.Position = UDim2.fromOffset(16, 151)
-status.Size = UDim2.new(1,-32,0,86)
+status.Size = UDim2.new(1,-32,0,54)
 status.Text =
     string.format(
         "%d efectos · %d precargados · esperando activación",
@@ -3540,10 +3459,6 @@ local hookedKillValues = setmetatable({}, {__mode = "k"})
 local hookedKillSounds = setmetatable({}, {__mode = "k"})
 local recentKillCredits = {}
 local recentDeathModels = setmetatable({}, {__mode = "k"})
-local recentBodyEvents = {}
-local watchedWorldHumanoids = setmetatable({}, {__mode = "k"})
-local worldHumanoidConnections = setmetatable({}, {__mode = "k"})
-local debugStats = {killSounds = 0, killFires = 0, bodyEvents = 0, modelsSeen = 0}
 local lastAcceptedSignalAt = 0
 local lastAcceptedSignalSource = nil
 local lastAppliedAt = 0
@@ -3578,7 +3493,7 @@ local function isEnemyPlayer(player)
 end
 
 local function refreshHumanoidDeathMode(player, hum)
-    -- R21: do NOT alter BreakJointsOnDeath. DUELS can replace the live Character
+    -- R20: do NOT alter BreakJointsOnDeath. DUELS can replace the live Character
     -- with its own visible corpse/dummy and we need that native pipeline intact.
     local info = trackedHumanoids[hum]
     if not info or not hum.Parent then return end
@@ -3757,7 +3672,12 @@ end
 
 local function scoreDeathModel(model, player, originalCharacter, deathPosition, deathAt)
     if not model or model == originalCharacter or not model.Parent then return nil end
-    if isCurrentPlayerCharacter(model) then return nil end
+    if isCurrentPlayerCharacter(model) then
+        -- Some games briefly promote the corpse/dummy to Player.Character.
+        -- Exclude only a LIVE character; a dead replacement is still a valid target.
+        local liveHum = model:FindFirstChildOfClass("Humanoid")
+        if liveHum and liveHum.Health > 0 then return nil end
+    end
 
     local createdAt = recentDeathModels[model]
     if deathAt and createdAt and createdAt < deathAt - 0.20 then return nil end
@@ -3852,10 +3772,10 @@ local function waitForDeathTarget(player, originalCharacter, deathPosition, deat
     repeat
         local best, score = findBestDeathModel(player, originalCharacter, deathPosition, deathAt)
         if best and score >= 55 then
-            taskWait(0.03)
+            task.wait(0.03)
             return best, "dummy/cadáver"
         end
-        taskWait(0.025)
+        task.wait(0.025)
     until os.clock() >= deadline
 
     if originalCharacter and originalCharacter.Parent
@@ -3864,186 +3784,6 @@ local function waitForDeathTarget(player, originalCharacter, deathPosition, deat
     end
 
     return nil, "sin cuerpo visual"
-end
-
-local function fullNameSafe(obj)
-    local ok, value = pcall(function() return obj:GetFullName() end)
-    return ok and tostring(value) or tostring(obj and obj.Name or "?")
-end
-
-local function pushBodyEvent(model, reason)
-    if not model or not model:IsA("Model") then return end
-    local pos = modelPosition(model)
-    if not pos then return end
-
-    local now = os.clock()
-    recentBodyEvents[#recentBodyEvents + 1] = {
-        model = model,
-        pos = pos,
-        at = now,
-        reason = tostring(reason or "evento"),
-        name = tostring(model.Name),
-    }
-    debugStats.bodyEvents += 1
-
-    while #recentBodyEvents > 24 do
-        table.remove(recentBodyEvents, 1)
-    end
-    for i = #recentBodyEvents, 1, -1 do
-        if now - (recentBodyEvents[i].at or 0) > 3.0 then
-            table.remove(recentBodyEvents, i)
-        end
-    end
-end
-
-local function latestBodyAnchor(signalAt)
-    local best = nil
-    for i = #recentBodyEvents, 1, -1 do
-        local e = recentBodyEvents[i]
-        local age = signalAt - (e.at or 0)
-        if age >= -0.25 and age <= 1.50 then
-            best = e
-            break
-        end
-    end
-    return best
-end
-
-local function genericBodyScore(model, anchorPos, signalAt)
-    if not model or not model.Parent or not model:IsA("Model") then return nil end
-    if isCurrentPlayerCharacter(model) then return nil end
-    if not looksLikeBody(model) then return nil end
-
-    local score = 0
-    local createdAt = recentDeathModels[model]
-    if createdAt then
-        local age = math.abs(createdAt - signalAt)
-        if age <= 1.50 then score += 80 - age * 25 end
-    end
-
-    local pos = modelPosition(model)
-    if anchorPos then
-        if not pos then return nil end
-        local distance = (pos - anchorPos).Magnitude
-        if distance > 45 then return nil end
-        score += math.max(0, 110 - distance * 3)
-    elseif not createdAt or math.abs(createdAt - signalAt) > 1.10 then
-        return nil
-    end
-
-    local n = normalized(model.Name)
-    if string.find(n, "dummy", 1, true)
-        or string.find(n, "corpse", 1, true)
-        or string.find(n, "ragdoll", 1, true)
-        or string.find(n, "dead", 1, true)
-        or string.find(n, "body", 1, true) then
-        score += 45
-    end
-    if model:FindFirstChildOfClass("Humanoid") then score += 25 end
-
-    return score
-end
-
-local function findSignalFirstBody(anchorPos, signalAt, includeWorldScan)
-    local best, bestScore = nil, -math.huge
-
-    for model in pairs(recentDeathModels) do
-        local score = genericBodyScore(model, anchorPos, signalAt)
-        if score and score > bestScore then
-            best, bestScore = model, score
-        end
-    end
-
-    if includeWorldScan then
-        for _, obj in ipairs(Workspace:GetDescendants()) do
-            if obj:IsA("Model") then
-                local score = genericBodyScore(obj, anchorPos, signalAt)
-                if score and score > bestScore then
-                    best, bestScore = obj, score
-                end
-            end
-        end
-    end
-
-    return best, bestScore
-end
-
-local signalFirstBusy = false
-local function resolveKillFromSignal(source)
-    if signalFirstBusy or not enabled then return false end
-    signalFirstBusy = true
-
-    local signalAt = os.clock()
-    local anchor = latestBodyAnchor(signalAt)
-    local anchorPos = anchor and anchor.pos or nil
-    local anchorText = anchor and (anchor.name .. " / " .. anchor.reason) or "sin evento previo"
-
-    status.Text =
-        "1/3 GUNKILL DETECTADO ✓\n" ..
-        tostring(source) .. " · " .. anchorText ..
-        "\nBuscando dummy/cadáver..."
-
-    taskSpawn(function()
-        local deadline = os.clock() + 1.35
-        local target, score = nil, -math.huge
-        local didWorldScan = false
-
-        repeat
-            local scanWorld = false
-            if not didWorldScan and os.clock() - signalAt >= 0.18 then
-                scanWorld = true
-                didWorldScan = true
-            end
-
-            target, score = findSignalFirstBody(anchorPos, signalAt, scanWorld)
-            local threshold = anchorPos and 45 or 90
-            if target and score >= threshold then break end
-            target = nil
-            taskWait(0.035)
-        until os.clock() >= deadline
-
-        if not target then
-            -- One final complete scan catches a reused corpse model that existed
-            -- before the kill instead of being cloned at death time.
-            target, score = findSignalFirstBody(anchorPos, signalAt, true)
-            local threshold = anchorPos and 45 or 90
-            if not target or score < threshold then target = nil end
-        end
-
-        if not target or not target.Parent then
-            status.Text =
-                "1/3 GUNKILL DETECTADO ✓\n" ..
-                "2/3 CUERPO/DUMMY: NO ENCONTRADO\n" ..
-                string.format("eventos:%d · modelos:%d · killSounds:%d", debugStats.bodyEvents, debugStats.modelsSeen, debugStats.killSounds)
-            signalFirstBusy = false
-            return
-        end
-
-        local hasHumanoid = target:FindFirstChildOfClass("Humanoid") ~= nil
-        status.Text =
-            "1/3 GUNKILL DETECTADO ✓\n" ..
-            "2/3 CUERPO/DUMMY ✓ " .. tostring(target.Name) ..
-            " H:" .. (hasHumanoid and "sí" or "no") ..
-            "\nAplicando " .. tostring(selectedEffect()) .. "..."
-
-        local ok, result = pcall(function()
-            return runNativeOnVictim(selectedEffect(), target, status)
-        end)
-
-        if ok and result == true then
-            status.Text =
-                "1/3 GUNKILL ✓ · 2/3 DUMMY ✓\n" ..
-                "3/3 EFECTO APLICADO ✓\n" ..
-                tostring(selectedEffect()) .. " → " .. tostring(target.Name)
-        else
-            status.Text =
-                "1/3 GUNKILL ✓ · 2/3 DUMMY ✓\n" ..
-                "3/3 EFECTO FALLÓ ✕\n" .. tostring(result)
-        end
-        signalFirstBusy = false
-    end)
-
-    return true
 end
 
 local function triggerVictim(player, character, hum, proof)
@@ -4067,7 +3807,7 @@ local function triggerVictim(player, character, hum, proof)
     local deathPosition = info.deathPosition or modelPosition(character)
     local deathAt = info.deathAt or os.clock()
 
-    taskSpawn(function()
+    task.spawn(function()
         local target, targetKind = waitForDeathTarget(player, character, deathPosition, deathAt)
         if not target or not target.Parent then
             status.Text =
@@ -4078,9 +3818,10 @@ local function triggerVictim(player, character, hum, proof)
 
         local hasHumanoid = target:FindFirstChildOfClass("Humanoid") ~= nil
         status.Text =
-            "✓ Objetivo: " .. tostring(targetKind) .. " · " .. tostring(target.Name) ..
-            "\nHumanoid: " .. (hasHumanoid and "sí" or "no") ..
-            " · aplicando " .. tostring(effectName)
+            "2/3 · CUERPO/DUMMY DETECTADO\n" ..
+            tostring(targetKind) .. " · " .. tostring(target.Name) ..
+            " · Humanoid: " .. (hasHumanoid and "sí" or "no") ..
+            "\nAplicando " .. tostring(effectName) .. "..."
 
         local ok, result = pcall(function()
             return runNativeOnVictim(effectName, target, status)
@@ -4109,6 +3850,60 @@ local function newestPending()
     return nil
 end
 
+local queueVictimDeath
+
+local function queueMostLikelyDeadEnemy()
+    local now = os.clock()
+    local bestPlayer, bestCharacter, bestHum, bestScore
+
+    for hum, info in pairs(trackedHumanoids) do
+        if hum and info and not info.triggered then
+            local p = info.player
+            local model = info.character or hum.Parent
+
+            if p and p ~= LP and model then
+                local score = 0
+                local health = math.huge
+                pcall(function() health = hum.Health end)
+
+                if health <= 0 then score += 100 end
+                if not model.Parent then score += 80 end
+
+                if info.deathAt and now - info.deathAt <= PENDING_LIFETIME then
+                    score += 70 - math.min(60, (now - info.deathAt) * 50)
+                end
+
+                if info.deathEligible == true then
+                    score += 45
+                elseif enabled and isEnemyPlayer(p) then
+                    score += 20
+                end
+
+                if score > (bestScore or -math.huge) then
+                    bestPlayer, bestCharacter, bestHum, bestScore =
+                        p, model, hum, score
+                end
+            end
+        end
+    end
+
+    if bestHum and bestScore and bestScore >= 70 then
+        local info = trackedHumanoids[bestHum]
+        if info then
+            info.deathAt = info.deathAt or now
+            info.deathPosition = info.deathPosition or modelPosition(bestCharacter)
+            info.deathEligible = true
+        end
+
+        if queueVictimDeath then
+            queueVictimDeath(bestPlayer, bestCharacter, bestHum)
+            return true
+        end
+    end
+
+    return false
+end
+
 local function consumeOnePending(proof)
     local entry = newestPending()
     if not entry then return false end
@@ -4129,8 +3924,10 @@ local function recordLocalKillSignal(source, count)
     if not enabled then return end
     count = math.max(1, math.floor(tonumber(count) or 1))
     local now = os.clock()
-    debugStats.killFires += count
-    status.Text = "1/3 GUNKILL DETECTADO ✓\n" .. tostring(source) .. "\nBuscando muerte/dummy..."
+
+    status.Text =
+        "1/3 · TU KILL CONFIRMADO\n" ..
+        tostring(source) .. " · buscando víctima/cuerpo..."
 
     -- GunKill + Kills counter often fire for the same elimination. Do not
     -- convert the second native confirmation into a credit for the next death.
@@ -4152,22 +3949,25 @@ local function recordLocalKillSignal(source, count)
 
     for _ = 1, count do
         if not consumeOnePending(source) then
-            -- R21 does not require Humanoid.Died anymore. A native local kill
-            -- signal can directly start corpse/dummy discovery.
-            resolveKillFromSignal(source)
-            pruneCredits()
-            recentKillCredits[#recentKillCredits + 1] = {
-                at = now,
-                source = source,
-            }
+            -- If Died was invisible client-side, CharacterRemoving/AncestryChanged
+            -- may have marked the enemy without creating a normal pending entry yet.
+            queueMostLikelyDeadEnemy()
+
+            if not consumeOnePending(source) then
+                pruneCredits()
+                recentKillCredits[#recentKillCredits + 1] = {
+                    at = now,
+                    source = source,
+                }
+            end
         end
     end
 end
 
-local function queueVictimDeath(player, character, hum)
+queueVictimDeath = function(player, character, hum)
     local info = trackedHumanoids[hum]
     if not info or info.triggered then return end
-    local eligibleNow = enabled and isEnemyPlayer(player)
+    local eligibleNow = enabled and (info.deathEligible == true or isEnemyPlayer(player))
     if not eligibleNow then return end
     if not character or pendingByHumanoid[hum] then return end
 
@@ -4201,9 +4001,9 @@ local function queueVictimDeath(player, character, hum)
     status.Text = "Muerte detectada: " .. tostring(player.Name) .. " · esperando confirmar TU kill..."
 
     -- Killer tags can be attached just after Died, so recheck briefly.
-    taskDefer(function()
+    task.defer(function()
         for _, delayTime in ipairs({0.03, 0.09, 0.18, 0.32}) do
-            taskWait(delayTime)
+            task.wait(delayTime)
             if info.triggered or entry.removed then return end
             if hasLocalKillerTag(character, hum) then
                 removePending(entry)
@@ -4213,7 +4013,7 @@ local function queueVictimDeath(player, character, hum)
         end
     end)
 
-    taskDelay(PENDING_LIFETIME + 0.05, function()
+    task.delay(PENDING_LIFETIME + 0.05, function()
         if entry.removed or info.triggered then return end
         removePending(entry)
         if enabled then
@@ -4225,12 +4025,14 @@ end
 local function hookCharacter(player, character)
     if player == LP or not character then return end
 
-    taskSpawn(function()
+    task.spawn(function()
         local hum = character:FindFirstChildOfClass("Humanoid")
             or character:WaitForChild("Humanoid", 10)
         if not hum or trackedHumanoids[hum] then return end
 
         local info = {
+            player = player,
+            character = character,
             originalBreakJoints = hum.BreakJointsOnDeath,
             triggered = false,
             connections = {},
@@ -4245,18 +4047,25 @@ local function hookCharacter(player, character)
 
         info.connections[#info.connections + 1] = hum.HealthChanged:Connect(function(health)
             if health <= 0 then
-                pushBodyEvent(character, "Player Humanoid <= 0")
                 queueVictimDeath(player, character, hum)
             end
         end)
 
         info.connections[#info.connections + 1] = character.AncestryChanged:Connect(function(_, parent)
             if parent == nil then
-                -- Even if DUELS deletes/replaces the live avatar without ever
-                -- reaching Humanoid.Died, keep its last body position as an anchor.
-                pushBodyEvent(character, "Player Character removido")
+                -- Fallback for games that replace the Character without exposing
+                -- Humanoid.Died locally. Queue it while we still have its last body data.
+                if not info.triggered and enabled and isEnemyPlayer(player) then
+                    info.deathAt = info.deathAt or os.clock()
+                    info.deathPosition = info.deathPosition or modelPosition(character)
+                    info.deathEligible = true
+                    queueVictimDeath(player, character, hum)
+                end
+
+                -- Do not cancel the pending kill here: DUELS can remove the live
+                -- Character first and spawn the visible death dummy immediately after.
                 cleanVictim(character)
-                taskDelay(PENDING_LIFETIME + 0.25, function()
+                task.delay(PENDING_LIFETIME + 0.25, function()
                     if trackedHumanoids[hum] == info and not info.triggered then
                         for _, conn in ipairs(info.connections) do
                             pcall(function() conn:Disconnect() end)
@@ -4277,6 +4086,22 @@ local function hookPlayer(player)
 
     conns[#conns + 1] = player.CharacterAdded:Connect(function(character)
         hookCharacter(player, character)
+    end)
+
+    -- DUELS can remove/replace the live Character without Humanoid.Died being
+    -- observable on the client. CharacterRemoving fires early enough to keep
+    -- the old position and pair it with GunKill / kill-counter confirmation.
+    conns[#conns + 1] = player.CharacterRemoving:Connect(function(character)
+        local hum = character and character:FindFirstChildOfClass("Humanoid")
+        local info = hum and trackedHumanoids[hum]
+        if hum and info and not info.triggered then
+            info.deathAt = info.deathAt or os.clock()
+            info.deathPosition = info.deathPosition or modelPosition(character)
+            info.deathEligible = enabled and isEnemyPlayer(player)
+            if info.deathEligible then
+                queueVictimDeath(player, character, hum)
+            end
+        end
     end)
 
     local function refreshPlayerHumanoid()
@@ -4359,44 +4184,22 @@ end
 local function hookKillSound(sound)
     if not isKillConfirmSound(sound) or hookedKillSounds[sound] then return end
     hookedKillSounds[sound] = true
-    debugStats.killSounds += 1
 
     local wasLocal = localOwnsKillSound(sound)
-    local function pathLooksLocal()
-        local path = string.lower(fullNameSafe(sound))
-        return string.find(path, string.lower(tostring(LP.Name)), 1, true) ~= nil
-    end
     local function confirm()
-        wasLocal = wasLocal or localOwnsKillSound(sound) or pathLooksLocal()
-        if enabled then
-            if wasLocal then
-                recordLocalKillSignal("sonido " .. tostring(sound.Name), 1)
-            else
-                status.Text =
-                    "GUNKILL candidato detectado, pero no parece local.\n" ..
-                    fullNameSafe(sound)
-            end
+        wasLocal = wasLocal or localOwnsKillSound(sound)
+        if enabled and wasLocal then
+            recordLocalKillSignal("sonido " .. tostring(sound.Name), 1)
         end
     end
 
     killSignalConnections[#killSignalConnections + 1] = sound.AncestryChanged:Connect(function()
         wasLocal = wasLocal or localOwnsKillSound(sound)
     end)
-    local okPlayed, playedConn = pcall(function()
-        return sound.Played:Connect(confirm)
+    killSignalConnections[#killSignalConnections + 1] = sound.Played:Connect(confirm)
+    killSignalConnections[#killSignalConnections + 1] = sound:GetPropertyChangedSignal("Playing"):Connect(function()
+        if sound.Playing then confirm() end
     end)
-    if okPlayed and playedConn then
-        killSignalConnections[#killSignalConnections + 1] = playedConn
-    end
-
-    local okPlaying, playingConn = pcall(function()
-        return sound:GetPropertyChangedSignal("Playing"):Connect(function()
-            if sound.Playing then confirm() end
-        end)
-    end)
-    if okPlaying and playingConn then
-        killSignalConnections[#killSignalConnections + 1] = playingConn
-    end
 
     if sound.Playing or sound.IsPlaying then confirm() end
 end
@@ -4413,45 +4216,18 @@ end
 
 -- Death body watcher: only models CREATED after the script starts are remembered.
 -- This avoids repeatedly scanning the whole Workspace on every kill.
-local function watchWorldHumanoid(hum)
-    if not hum or not hum:IsA("Humanoid") or watchedWorldHumanoids[hum] then return end
-    watchedWorldHumanoids[hum] = true
-
-    local model = hum.Parent
-    if not model or not model:IsA("Model") then return end
-    local conns = {}
-    worldHumanoidConnections[hum] = conns
-
-    conns[#conns + 1] = hum.HealthChanged:Connect(function(health)
-        if health <= 0 then
-            pushBodyEvent(model, "Workspace Humanoid <= 0")
-        end
-    end)
-    conns[#conns + 1] = hum.Died:Connect(function()
-        pushBodyEvent(model, "Workspace Humanoid.Died")
-    end)
-    conns[#conns + 1] = model.AncestryChanged:Connect(function(_, parent)
-        if parent == nil then
-            pushBodyEvent(model, "Workspace Model removido")
-        end
-    end)
-end
-
--- Prime every humanoid once. This is intentionally broader than the final hub:
--- R21 is a lab whose job is to discover DUELS' actual death body pipeline.
-for _, obj in ipairs(Workspace:GetDescendants()) do
-    if obj:IsA("Humanoid") then
-        watchWorldHumanoid(obj)
-    end
-end
-
 killSignalConnections[#killSignalConnections + 1] = Workspace.DescendantAdded:Connect(function(obj)
     if obj:IsA("Model") then
-        debugStats.modelsSeen += 1
         rememberDeathModel(obj)
     elseif obj:IsA("Humanoid") and obj.Parent and obj.Parent:IsA("Model") then
         rememberDeathModel(obj.Parent)
-        watchWorldHumanoid(obj)
+    elseif obj:IsA("BasePart") or obj:IsA("Accessory") or obj:IsA("Motor6D") then
+        -- If DUELS builds a corpse inside an existing container, the Model itself
+        -- may not be the descendant that triggered this event. Remember its ancestor.
+        local model = obj:FindFirstAncestorOfClass("Model")
+        if model and not isCurrentPlayerCharacter(model) then
+            rememberDeathModel(model)
+        end
     elseif obj:IsA("Sound") then
         -- DUELS can briefly clone GunKill outside the Character/Backpack tree.
         hookKillSound(obj)
@@ -4468,7 +4244,7 @@ killSignalConnections[#killSignalConnections + 1] = LP.DescendantAdded:Connect(f
 end)
 
 killSignalConnections[#killSignalConnections + 1] = LP.CharacterAdded:Connect(function(character)
-    taskDefer(function()
+    task.defer(function()
         scanLocalKillSignals(character)
     end)
 end)
@@ -4511,19 +4287,16 @@ toggle.MouseButton1Click:Connect(function()
     refreshAllTracked()
 
     if enabled then
-        scanLocalKillSignals(LP.Character)
-        scanLocalKillSignals(LP:FindFirstChildOfClass("Backpack"))
         status.Text =
-            "✓ R22 activo · " .. tostring(selectedEffect()) ..
-            "\nGunKill armados: " .. tostring(debugStats.killSounds) ..
-            " · esperando TU kill..."
+            "✓ Activo · " .. tostring(selectedEffect()) ..
+            "\nTU kill → dummy/cadáver de DUELS → efecto."
     else
         for _, entry in ipairs(pendingDeaths) do
             removePending(entry)
         end
-        clearTable(pendingDeaths)
-        clearTable(recentKillCredits)
-        clearTable(recentDeathModels)
+        table.clear(pendingDeaths)
+        table.clear(recentKillCredits)
+        table.clear(recentDeathModels)
         status.Text = "Desactivado · no se aplicarán efectos nuevos."
     end
 end)
@@ -4558,7 +4331,7 @@ UserInputService.InputChanged:Connect(function(input)
 end)
 
 print(
-    "[Xero Death Dummy Kills R22.1]",
+    "[Xero Death Dummy Kills R23 StableBase]",
     #EFFECTS,
     "efectos ·",
     PRELOAD_STATS.loaded,

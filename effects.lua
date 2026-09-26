@@ -138,6 +138,10 @@ ENV.__XERO_DEATH_BRIDGE_RUNTIME.Cleanup = function()
 
     disconnectList(rt.KillSignalConnections)
     disconnectList(rt.LocalTeamConnections)
+    for _, entry in ipairs(rt.PendingDeaths or {}) do
+        entry.removed = true
+        disconnectList(entry.connections)
+    end
     for _, info in pairs(rt.TrackedHumanoids or {}) do
         disconnectList(info.connections)
     end
@@ -257,6 +261,7 @@ for _, entry in ipairs(manifest.effects) do
         and type(entry.v2) == "string"
         and not isJellyEffect(entry.name)
         and not string.find(string.lower(entry.name), "ufo", 1, true)
+        and not string.find(string.lower(entry.name), "venom", 1, true)
         and entry.name ~= "Heartbeat"
         and entry.name ~= "SoulReaper"
         and entry.name ~= "BlackvalkEffect"
@@ -4170,6 +4175,10 @@ local function runNativeOnVictim(name, victim, statusLabel)
         return false
     end
 
+    if string.find(string.lower(tostring(name)), "venom", 1, true) then
+        if statusLabel then statusLabel.Text = "Venom eliminado del selector." end
+        return false
+    end
     if string.find(string.lower(tostring(name)), "ufo", 1, true) then
         if statusLabel then statusLabel.Text = "UFO eliminado del selector." end
         return false
@@ -4460,6 +4469,7 @@ ENV.__XERO_DEATH_BRIDGE_RUNTIME.LocalTeamConnections = localTeamConnections
 -- the elimination to LocalPlayer through a native killer tag, a local kill
 -- counter increment, or the local weapon's kill-confirm sound.
 local pendingDeaths = {}
+deathRuntime.PendingDeaths = pendingDeaths
 local pendingByHumanoid = setmetatable({}, {__mode = "k"})
 local killSignalConnections = {}
 ENV.__XERO_DEATH_BRIDGE_RUNTIME.KillSignalConnections = killSignalConnections
@@ -4598,6 +4608,8 @@ end
 local function removePending(entry)
     if not entry or entry.removed then return end
     entry.removed = true
+    for _, conn in ipairs(entry.connections or {}) do conn:Disconnect() end
+    entry.connections = nil
     if entry.hum then pendingByHumanoid[entry.hum] = nil end
 end
 
@@ -4998,6 +5010,43 @@ local function recordLocalKillSignal(source, count)
     end
 end
 
+deathRuntime.WatchPendingTags = function(entry)
+    entry.connections = {}
+    local watched = setmetatable({}, {__mode = "k"})
+    local function check()
+        if entry.removed or not deathRuntime.Alive
+            or ENV.__XERO_DEATH_BRIDGE_RUNTIME ~= deathRuntime then return end
+        if hasLocalKillerTag(entry.character, entry.hum) then
+            removePending(entry)
+            triggerVictim(entry.player, entry.character, entry.hum, "killer nativo · evento")
+        end
+    end
+    local function connect(signal, fn)
+        if not entry.removed then
+            entry.connections[#entry.connections + 1] = signal:Connect(fn)
+        end
+    end
+    local function watch(obj)
+        if entry.removed or watched[obj] then return end
+        watched[obj] = true
+        if isKillKey(obj.Name) and (obj:IsA("ObjectValue") or obj:IsA("IntValue")
+            or obj:IsA("NumberValue") or obj:IsA("StringValue")) then
+            connect(obj:GetPropertyChangedSignal("Value"), check)
+        end
+    end
+    for _, root in ipairs({entry.hum, entry.character}) do
+        connect(root.AttributeChanged, function(key)
+            if isKillKey(key) then check() end
+        end)
+        connect(root.DescendantAdded, function(obj)
+            watch(obj)
+            if isKillKey(obj.Name) then check() end
+        end)
+        for _, obj in ipairs(root:GetDescendants()) do watch(obj) end
+    end
+    check()
+end
+
 queueVictimDeath = function(player, character, hum)
     local info = trackedHumanoids[hum]
     if not deathRuntime.Alive or ENV.__XERO_DEATH_BRIDGE_RUNTIME ~= deathRuntime then return end
@@ -5046,18 +5095,8 @@ queueVictimDeath = function(player, character, hum)
 
     status.Text = "Muerte detectada: " .. tostring(player.Name) .. " · esperando confirmar TU kill..."
 
-    -- Killer tags can be attached just after Died, so recheck briefly.
-    task.defer(function()
-        for _, delayTime in ipairs({0.03, 0.09, 0.18, 0.32}) do
-            task.wait(delayTime)
-            if info.triggered or entry.removed then return end
-            if hasLocalKillerTag(character, hum) then
-                removePending(entry)
-                triggerVictim(player, character, hum, "killer/creator nativo")
-                return
-            end
-        end
-    end)
+    -- Subscribe to the actual confirmation; no polling waits after knife death.
+    deathRuntime.WatchPendingTags(entry)
 
     task.delay(PENDING_LIFETIME + 0.05, function()
         if entry.removed or info.triggered then return end
@@ -5343,6 +5382,13 @@ ENV.__XERO_DEATH_BRIDGE_RUNTIME.SetRecentMelee = function(character, source)
         and os.clock() - (deathRuntime.RecentMeleeAttackAt or 0) <= 0.95
     if hum.Health <= 0 and not lateContact then return false end
     if not isEnemyPlayer(targetPlayer) then return false end
+    if source == "mouse" then
+        local myRoot = LP.Character and LP.Character:FindFirstChild("HumanoidRootPart")
+        local root = character:FindFirstChild("HumanoidRootPart")
+        if not myRoot or not root or (myRoot.Position - root.Position).Magnitude > 16 then
+            return false
+        end
+    end
     ENV.__XERO_DEATH_BRIDGE_RUNTIME.RecentMelee = {
         Character = character,
         Humanoid = hum,

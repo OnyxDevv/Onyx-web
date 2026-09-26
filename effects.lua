@@ -1,5 +1,5 @@
 --[[
-XeroHub | DUELS Death Effects · Native Dummy Bridge R14 Preloaded Fidelity
+XeroHub | DUELS Death Effects · Native Dummy Bridge R15 Clean Colors
 Kev
 
 Objetivo:
@@ -64,7 +64,7 @@ end
 -- ============================================================
 -- Repo / cache
 -- ============================================================
-local CACHE_FOLDER = "XeroHub/DeathEffectsNativeDummyR14"
+local CACHE_FOLDER = "XeroHub/DeathEffectsNativeDummyR15"
 
 local function ensureFolder(path)
     if type(makefolder) ~= "function" then return end
@@ -124,7 +124,8 @@ for _, entry in ipairs(manifest.effects) do
         and not isJellyEffect(entry.name)
         and entry.name ~= "Heartbeat"
         and entry.name ~= "SoulReaper"
-        and entry.name ~= "BlackvalkEffect" then
+        and entry.name ~= "BlackvalkEffect"
+        and entry.name ~= "GhostbringerEffect" then
         EFFECTS[#EFFECTS + 1] = entry.name
         BY_NAME[entry.name] = entry
     end
@@ -1900,6 +1901,14 @@ local function tintTreeColorOnly(root, color)
                 obj.Color = color
             end)
 
+            -- Preserve Material/MaterialVariant, but remove texture overlays
+            -- that visually hide the requested color.
+            if obj:IsA("MeshPart") then
+                pcall(function()
+                    obj.TextureID = ""
+                end)
+            end
+
         elseif obj:IsA("Decal") or obj:IsA("Texture") then
             pcall(function()
                 obj.Color3 = color
@@ -1909,7 +1918,16 @@ local function tintTreeColorOnly(root, color)
             pcall(function()
                 obj.VertexColor =
                     Vector3.new(color.R, color.G, color.B)
+                obj.TextureId = ""
             end)
+
+        elseif obj:IsA("SurfaceAppearance") then
+            -- Keep the BasePart material intact; just stop the appearance maps
+            -- from covering the color underneath.
+            pcall(function() obj.ColorMap = "" end)
+            pcall(function() obj.MetalnessMap = "" end)
+            pcall(function() obj.NormalMap = "" end)
+            pcall(function() obj.RoughnessMap = "" end)
         end
     end
 
@@ -1923,8 +1941,8 @@ end
 local function blackenAccessory(accessory)
     if not accessory or not accessory:IsA("Accessory") then return end
 
-    -- R14: Frostbite sólo cambia COLOR del pelo/accesorio.
-    -- No tocamos Material, MaterialVariant, TextureID ni SurfaceAppearance.
+    -- R15: Frostbite deja Material/MaterialVariant intactos.
+    -- Se limpian sólo overlays/texturas que impiden que el negro sea visible.
     tintTreeColorOnly(accessory, Color3.new(0,0,0))
 end
 
@@ -2293,7 +2311,7 @@ local function installDecoratedFullModel(dummy, asset)
 end
 
 
-local function installDecoratedRigR14(dummy, asset)
+local function installDecoratedRigR15(dummy, asset)
     if not dummy or not dummy.Parent or not asset then
         return 0, "sin dummy/asset"
     end
@@ -2303,8 +2321,6 @@ local function installDecoratedRigR14(dummy, asset)
         return 0, "WeldToRoot ausente"
     end
 
-    -- The captured external Weld offset matches UpperTorso -> WeldToRoot.
-    -- R9 used HumanoidRootPart first, which displaced the whole ornament rig.
     local target =
         dummy:FindFirstChild("UpperTorso")
         or dummy:FindFirstChild("Torso")
@@ -2347,10 +2363,14 @@ local function installDecoratedRigR14(dummy, asset)
     local clone = source:Clone()
     clone.Name = "XeroDecoratedRig"
 
-    -- Move EVERY piece by the same delta before the external Weld is repaired.
-    -- This preserves the captured internal C0/C1 layout and keeps the star at
-    -- its real ~1.38-stud size instead of letting physics snap the assembly
-    -- from its old world coordinates.
+    -- R15: the reconstructed Star was the visual bug (giant star).
+    -- Remove only that piece; keep garlands + red/green balls.
+    for _, obj in ipairs(clone:GetDescendants()) do
+        if string.lower(obj.Name) == "star" then
+            pcall(function() obj:Destroy() end)
+        end
+    end
+
     local delta = desiredCF * source.CFrame:Inverse()
 
     local cloneParts = {clone}
@@ -2392,12 +2412,11 @@ local function installDecoratedRigR14(dummy, asset)
         fallbackWeld.Parent = clone
     end
 
-    -- One final deterministic placement after the weld references are valid.
     pcall(function()
         clone.CFrame = desiredCF
     end)
 
-    return 1, "Decorated rig completo"
+    return 1, "Decorated adornos sin estrella"
 end
 
 local function forceAllMarkedEmitters(root)
@@ -2743,19 +2762,31 @@ local function forceWholeAvatarColorOnly(
         removeClassicClothes(dummy)
     end
 
+    -- Body parts: color only, no Material changes.
     for _, part in ipairs(allBaseParts(dummy)) do
         pcall(function()
             part.Color = color
         end)
     end
 
+    -- Hair/accessories: their textures can completely hide BasePart.Color.
+    -- Tint them strongly while preserving Material/MaterialVariant.
+    for _, child in ipairs(dummy:GetChildren()) do
+        if child:IsA("Accessory") then
+            tintTreeColorOnly(child, color)
+        end
+    end
+
+    -- Face / visible textures on the body.
     for _, obj in ipairs(dummy:GetDescendants()) do
         if obj:IsA("Decal") or obj:IsA("Texture") then
             pcall(function()
                 obj.Color3 = color
             end)
 
-        elseif obj:IsA("SpecialMesh") then
+        elseif obj:IsA("SpecialMesh")
+            and not obj:FindFirstAncestorOfClass("Accessory") then
+
             pcall(function()
                 obj.VertexColor =
                     Vector3.new(color.R, color.G, color.B)
@@ -3283,6 +3314,11 @@ local function runNative(name, statusLabel)
         return
     end
 
+    if name == "GhostbringerEffect" then
+        statusLabel.Text = "Ghostbringer eliminado del renderer."
+        return
+    end
+
     local asset, injected, assetStatus = ensureNativeAsset(name)
     if not asset then
         statusLabel.Text = "✕ Asset: " .. tostring(assetStatus)
@@ -3299,11 +3335,7 @@ local function runNative(name, statusLabel)
 
     observeNativeParticles(dummy)
 
-    if name == "GhostbringerEffect" then
-        installGhostbringerAggressiveCarrierGuard(dummy)
-    else
-        enforceInvisibleCarriers(dummy, asset, name)
-    end
+    enforceInvisibleCarriers(dummy, asset, name)
 
     local clothesV2 = applyV2Clothing(dummy, asset)
     local hatsV2 = attachV2HatIfNeeded(dummy, asset)
@@ -3328,7 +3360,7 @@ local function runNative(name, statusLabel)
 
     if name == "Decorated" then
         decorated3D, decoratedStatus =
-            installDecoratedRigR14(dummy, asset)
+            installDecoratedRigR15(dummy, asset)
 
         rescanMarkedEmittersNearDummy(dummy, 2.2)
     end
@@ -3365,11 +3397,6 @@ local function runNative(name, statusLabel)
         bodyPatched = true
         bodyPatchSource = "SpiritOverload · TODO RGB 36,75,26"
 
-    elseif name == "GhostbringerEffect" then
-        scheduleGhostbringerGreen(dummy)
-        bodyPatched = true
-        bodyPatchSource = "Ghostbringer · TODO verde"
-
     elseif name == "Heartache" then
         scheduleHeartacheReal(dummy)
         bodyPatched = true
@@ -3400,8 +3427,7 @@ local function runNative(name, statusLabel)
         and name ~= "SoulReaper"
         and name ~= "Heartache"
         and name ~= "LightningStrike"
-        and name ~= "LightningEffect"
-        and name ~= "GhostbringerEffect" then
+        and name ~= "LightningEffect" then
 
         scheduleV2ClothingLock(dummy, asset)
     end
@@ -3462,7 +3488,7 @@ local title = Instance.new("TextLabel")
 title.BackgroundTransparency = 1
 title.Position = UDim2.fromOffset(16, 12)
 title.Size = UDim2.new(1,-32,0,22)
-title.Text = "XERO · DEATH EFFECT · NATIVE DUMMY R14"
+title.Text = "XERO · DEATH EFFECT · NATIVE DUMMY R15"
 title.TextColor3 = Color3.fromRGB(245,245,245)
 title.Font = Enum.Font.GothamBold
 title.TextSize = 14
@@ -3599,4 +3625,4 @@ task.defer(function()
         or ("✕ dummy: " .. tostring(err))
 end)
 
-print("[Xero Death Native Dummy R14]", #EFFECTS, "efectos ·", PRELOAD_STATS.loaded, "precargados ·", BASE)
+print("[Xero Death Native Dummy R15]", #EFFECTS, "efectos ·", PRELOAD_STATS.loaded, "precargados ·", BASE)

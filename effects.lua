@@ -1,5 +1,5 @@
 --[[
-XeroHub | DUELS Death Effects · Stable Base R26 · Local Kills + Dummy Bridge
+XeroHub | DUELS Death Effects · CurrentCamera R35 · Restored Native VFX
 Kev
 
 Objetivo:
@@ -1729,69 +1729,79 @@ local function forceMarkedEmitter(emitter)
 end
 
 local function observeNativeParticles(dummy)
+    -- R35: restore the emitter bridge from the original dummy renderer, but
+    -- scope it to THIS CurrentCamera death visual. The old broad observer was
+    -- removed in R32 to chase duplicate effects, which also removed required
+    -- EmitCount/EmitDuration bursts from Freeze/Frostbite/HexaKill.
+    if not dummy or not dummy.Parent then return end
+
     local active = true
     local seen = setmetatable({}, {__mode="k"})
-    local baselineTop = setmetatable({}, {__mode="k"})
     local connections = {}
+    local cameraRoot = ENV.__XERO_DEATH_PROXY and ENV.__XERO_DEATH_PROXY.Root or nil
+    local baselineTop = setmetatable({}, {__mode="k"})
 
     for _, child in ipairs(Workspace:GetChildren()) do
         baselineTop[child] = true
     end
 
+    local function belongsToThisEffect(obj)
+        if not obj or not obj.Parent then return false end
+        if obj:IsDescendantOf(dummy) then return true end
+        if cameraRoot and obj:IsDescendantOf(cameraRoot) then return true end
+
+        -- Some native preview effects create a temporary Workspace root. Only
+        -- accept roots created AFTER this kill and still close to this proxy.
+        local top = obj
+        while top.Parent and top.Parent ~= Workspace do
+            top = top.Parent
+        end
+        return top.Parent == Workspace
+            and not baselineTop[top]
+            and emitterIsNear(dummy, obj)
+    end
+
     local function inspect(obj)
-        if not active or not obj or not obj.Parent then return end
-        if not obj:IsA("ParticleEmitter") then return end
-        if seen[obj] or not emitterIsNear(dummy, obj) then return end
+        if not active or not obj or not obj.Parent or not obj:IsA("ParticleEmitter") then return end
+        if seen[obj] or not belongsToThisEffect(obj) then return end
+        if obj:GetAttribute("EmitCount") == nil
+            and obj:GetAttribute("EmitDuration") == nil
+            and obj:GetAttribute("KillEffectEmitCount") == nil then
+            return
+        end
 
         seen[obj] = true
-
-        if obj:GetAttribute("EmitCount") ~= nil
-            or obj:GetAttribute("EmitDuration") ~= nil
-            or obj:GetAttribute("KillEffectEmitCount") ~= nil then
-            forceMarkedEmitter(obj)
-        end
+        forceMarkedEmitter(obj)
     end
 
-    local function scanRoot(root)
+    local function scan(root)
         if not root or not root.Parent then return end
         inspect(root)
-        for _, obj in ipairs(root:GetDescendants()) do
-            inspect(obj)
-        end
+        for _, obj in ipairs(root:GetDescendants()) do inspect(obj) end
     end
 
-    connections[#connections+1] =
-        Workspace.DescendantAdded:Connect(inspect)
-
-    local camera = Workspace.CurrentCamera
-    if camera then
-        connections[#connections+1] =
-            camera.DescendantAdded:Connect(inspect)
+    connections[#connections+1] = dummy.DescendantAdded:Connect(inspect)
+    if cameraRoot then
+        connections[#connections+1] = cameraRoot.DescendantAdded:Connect(inspect)
     end
+    connections[#connections+1] = Workspace.DescendantAdded:Connect(inspect)
 
     local function rescan()
         if not active then return end
-
-        scanRoot(dummy)
-
-        local cam = Workspace.CurrentCamera
-        if cam then scanRoot(cam) end
-
-        -- Only scan Workspace roots that appeared AFTER the preview started.
-        -- This avoids walking the whole map repeatedly.
+        scan(dummy)
+        if cameraRoot then scan(cameraRoot) end
         for _, child in ipairs(Workspace:GetChildren()) do
-            if not baselineTop[child] and child ~= dummy then
-                scanRoot(child)
-            end
+            if not baselineTop[child] then scan(child) end
         end
     end
 
-    task.delay(.06, rescan)
-    task.delay(.20, rescan)
-    task.delay(.48, rescan)
-    task.delay(.90, rescan)
+    -- Preview.play builds some emitters asynchronously. `seen` guarantees that
+    -- every marked emitter is bridged once even though we rescan a few times.
+    for _, delayTime in ipairs({0, .02, .06, .14, .30, .60, 1.00}) do
+        task.delay(delayTime, rescan)
+    end
 
-    task.delay(1.65, function()
+    task.delay(1.35, function()
         active = false
         for _, conn in ipairs(connections) do
             pcall(function() conn:Disconnect() end)
@@ -3574,12 +3584,23 @@ end
 
 ENV.__XERO_DEATH_PROXY.EffectKeepsRigidBody = function(effectName)
     local lower = string.lower(tostring(effectName or ""))
+
+    -- R35: the first dummy renderer kept the Motor6D rig intact while
+    -- DeathEffectPreview replayed body timelines. R34 ragdolled every unknown
+    -- effect before Preview.play, which breaks V3 body-timeline effects such as
+    -- HexaKill. Respect the manifest instead of guessing only by name.
+    local entry = BY_NAME and BY_NAME[effectName] or nil
+    if entry and entry.behaviorMode == "v3_body_timeline" then
+        return true
+    end
+
     return string.find(lower, "ufo", 1, true) ~= nil
         or string.find(lower, "venom", 1, true) ~= nil
         or string.find(lower, "ghost", 1, true) ~= nil
         or string.find(lower, "freeze", 1, true) ~= nil
         or string.find(lower, "frost", 1, true) ~= nil
         or string.find(lower, "hypo", 1, true) ~= nil
+        or string.find(lower, "hexa", 1, true) ~= nil
 end
 
 ENV.__XERO_DEATH_PROXY.CopySourceMotion = function(proxy, source, effectName)
@@ -3950,7 +3971,10 @@ local function runNativeOnVictim(name, victim, statusLabel)
 
     local before = snapshotDummyState(victim)
 
-    -- R32: Preview.play owns VFX/audio emission. Never re-Emit particles manually.
+    -- R35: marked ParticleEmitters in the captured assets need the same bridge
+    -- the original dummy version used. This observer is scoped to this proxy and
+    -- dedupes each emitter, so VFX return without replaying effect sounds.
+    observeNativeParticles(victim)
     enforceInvisibleCarriers(victim, asset, name)
 
     local clothesV2 = applyV2Clothing(victim, asset)
@@ -4097,7 +4121,7 @@ local title = Instance.new("TextLabel")
 title.BackgroundTransparency = 1
 title.Position = UDim2.fromOffset(16, 12)
 title.Size = UDim2.new(1,-32,0,22)
-title.Text = "XERO · DEATH EFFECTS · CURRENTCAMERA R33"
+title.Text = "XERO · DEATH EFFECTS · CURRENTCAMERA R35"
 title.TextColor3 = Color3.fromRGB(245,245,245)
 title.Font = Enum.Font.GothamBold
 title.TextSize = 14

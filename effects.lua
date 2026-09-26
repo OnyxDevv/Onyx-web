@@ -1,5 +1,5 @@
 --[[
-XeroHub | DUELS Death Effects · Stable Base R26 · Local Kills + Dummy Bridge
+XeroHub | DUELS Death Effects · Stable Base R27 · Local Kills + Dummy Bridge
 Kev
 
 Objetivo:
@@ -3191,7 +3191,7 @@ end
 
 
 -- ============================================================
--- R26 · EXTERNAL VISUAL PROXY
+-- R27 · EXTERNAL PREBUILT VISUAL PROXY
 -- Same principle as XeroHub ESP: the real enemy is only a reference.
 -- We NEVER parent effect objects into the real Character and NEVER mutate
 -- its body properties. DeathEffectPreview runs on a local cloned proxy.
@@ -3205,6 +3205,8 @@ ENV.__XERO_DEATH_PROXY = {
     Root = nil,
     FollowConnections = setmetatable({}, {__mode = "k"}),
     SourceByProxy = setmetatable({}, {__mode = "k"}),
+    TemplateByHumanoid = setmetatable({}, {__mode = "k"}),
+    TemplateBuilding = setmetatable({}, {__mode = "k"}),
 }
 
 ENV.__XERO_DEATH_PROXY.EnsureRoot = function()
@@ -3258,6 +3260,14 @@ end
 
 ENV.__XERO_DEATH_PROXY.Cleanup = function()
     ENV.__XERO_DEATH_PROXY.Clear()
+
+    for hum, template in pairs(ENV.__XERO_DEATH_PROXY.TemplateByHumanoid) do
+        ENV.__XERO_DEATH_PROXY.TemplateByHumanoid[hum] = nil
+        if template then
+            pcall(function() template:Destroy() end)
+        end
+    end
+
     local root = ENV.__XERO_DEATH_PROXY.Root
     if root then
         pcall(function() root:Destroy() end)
@@ -3265,24 +3275,10 @@ ENV.__XERO_DEATH_PROXY.Cleanup = function()
     ENV.__XERO_DEATH_PROXY.Root = nil
 end
 
-ENV.__XERO_DEATH_PROXY.Make = function(source, effectName)
-    if not source or not source.Parent or not source:IsA("Model") then
-        return nil, "fuente inválida"
-    end
+ENV.__XERO_DEATH_PROXY.Sanitize = function(model)
+    if not model then return nil end
 
-    local ok, proxy = pcall(function()
-        return source:Clone()
-    end)
-
-    if not ok or not proxy then
-        return nil, "no se pudo clonar el cuerpo"
-    end
-
-    proxy.Name = "XeroDeathVisual_" .. tostring(source.Name)
-
-    -- The proxy is visual-only. Scripts/tools are stripped so the clone cannot
-    -- execute character logic or duplicate weapon behavior.
-    for _, obj in ipairs(proxy:GetDescendants()) do
+    for _, obj in ipairs(model:GetDescendants()) do
         if obj:IsA("Script")
             or obj:IsA("LocalScript")
             or obj:IsA("ModuleScript")
@@ -3306,18 +3302,128 @@ ENV.__XERO_DEATH_PROXY.Make = function(source, effectName)
         end
     end
 
+    return model
+end
+
+-- Build a detached visual template while the enemy is ALIVE.
+-- This is read-only with respect to the real Character: no Archivable toggle,
+-- no reparenting, no property writes. HumanoidDescription is used first so the
+-- template does not depend on Character:Clone() being possible at death time.
+ENV.__XERO_DEATH_PROXY.BuildTemplate = function(player, character, hum)
+    if not hum or ENV.__XERO_DEATH_PROXY.TemplateBuilding[hum] then return end
+    if ENV.__XERO_DEATH_PROXY.TemplateByHumanoid[hum] then return end
+
+    ENV.__XERO_DEATH_PROXY.TemplateBuilding[hum] = true
+
+    task.spawn(function()
+        local template
+
+        -- Exact read-only snapshot when Roblox allows cloning this Character.
+        -- We never toggle Archivable or write anything to the source.
+        if character and character.Parent then
+            local okClone, generated = pcall(function()
+                return character:Clone()
+            end)
+            if okClone and generated then
+                template = generated
+            end
+        end
+
+        -- Reliable fallback: reconstruct the CURRENT avatar from a read-only
+        -- HumanoidDescription, so Character removal can no longer race the kill.
+        if not template then
+            local okDesc, description = pcall(function()
+                return hum:GetAppliedDescription()
+            end)
+
+            if okDesc and description then
+                local okModel, generated = pcall(function()
+                    return Players:CreateHumanoidModelFromDescription(
+                        description,
+                        hum.RigType
+                    )
+                end)
+                if okModel and generated then
+                    template = generated
+                end
+            end
+        end
+
+        -- Final fallback: account avatar. Still completely separate from target.
+        if not template and player then
+            local okUser, generated = pcall(function()
+                return Players:CreateHumanoidModelFromUserId(player.UserId)
+            end)
+            if okUser and generated then
+                template = generated
+            end
+        end
+
+        if template then
+            ENV.__XERO_DEATH_PROXY.Sanitize(template)
+            template.Name = "XeroDeathTemplate_" .. tostring(player and player.Name or "Enemy")
+            template.Parent = nil
+
+            local old = ENV.__XERO_DEATH_PROXY.TemplateByHumanoid[hum]
+            if old and old ~= template then
+                pcall(function() old:Destroy() end)
+            end
+            ENV.__XERO_DEATH_PROXY.TemplateByHumanoid[hum] = template
+        end
+
+        ENV.__XERO_DEATH_PROXY.TemplateBuilding[hum] = nil
+    end)
+end
+
+ENV.__XERO_DEATH_PROXY.Make = function(source, effectName, hum, player, deathPosition)
+    local base = hum and ENV.__XERO_DEATH_PROXY.TemplateByHumanoid[hum] or nil
+    local proxy
+
+    if base then
+        local ok, generated = pcall(function() return base:Clone() end)
+        if ok and generated then proxy = generated end
+    end
+
+    -- If the live Character still exists, a direct clone is a harmless read and
+    -- preserves game-specific appearance that HumanoidDescription may omit.
+    if not proxy and source and source.Parent and source:IsA("Model") then
+        local ok, generated = pcall(function() return source:Clone() end)
+        if ok and generated then proxy = generated end
+    end
+
+    if not proxy then
+        return nil, base and "plantilla no clonable" or "plantilla aún no disponible"
+    end
+
+    ENV.__XERO_DEATH_PROXY.Sanitize(proxy)
+    proxy.Name = "XeroDeathVisual_" .. tostring(player and player.Name or (source and source.Name) or "Enemy")
     proxy.Parent = ENV.__XERO_DEATH_PROXY.EnsureRoot()
 
-    pcall(function()
-        proxy:PivotTo(source:GetPivot())
-    end)
+    local positioned = false
+    if source and source.Parent then
+        positioned = pcall(function() proxy:PivotTo(source:GetPivot()) end)
+    end
+    if not positioned and deathPosition then
+        pcall(function()
+            local pivot = proxy:GetPivot()
+            proxy:PivotTo(CFrame.new(deathPosition) * (pivot - pivot.Position))
+        end)
+    end
+
+    -- Only the detached proxy is put into a death-like state. This gives the
+    -- native renderer the same kind of body it receives on a real elimination.
+    local proxyHumanoid = proxy:FindFirstChildOfClass("Humanoid")
+    if proxyHumanoid then
+        pcall(function()
+            proxyHumanoid.BreakJointsOnDeath = false
+            proxyHumanoid.Health = 0
+        end)
+    end
 
     proxy:SetAttribute("XeroDeathVisualProxy", true)
     proxy:SetAttribute("XeroDeathEffect", tostring(effectName or ""))
     ENV.__XERO_DEATH_PROXY.SourceByProxy[proxy] = source
 
-    -- Effect cleanup in runNativeOnVictim occurs at 10s; destroy the visual
-    -- shell just after that so proxies never accumulate.
     task.delay(10.35, function()
         if proxy and proxy.Parent then
             ENV.__XERO_DEATH_PROXY.DestroyProxy(proxy)
@@ -3718,13 +3824,9 @@ local function isEnemyPlayer(player)
 end
 
 local function refreshHumanoidDeathMode(player, hum)
-    -- R20: do NOT alter BreakJointsOnDeath. DUELS can replace the live Character
-    -- with its own visible corpse/dummy and we need that native pipeline intact.
-    local info = trackedHumanoids[hum]
-    if not info or not hum.Parent then return end
-    if info.originalBreakJoints ~= nil and hum.BreakJointsOnDeath ~= info.originalBreakJoints then
-        pcall(function() hum.BreakJointsOnDeath = info.originalBreakJoints end)
-    end
+    -- R27: strict read-only target policy. Do not write BreakJointsOnDeath or
+    -- any other property on the enemy Humanoid/Character.
+    return
 end
 
 local function normalized(s)
@@ -4033,7 +4135,9 @@ local function triggerVictim(player, character, hum, proof)
     -- IMPORTANT: the enemy Character is now READ-ONLY. We clone it and run
     -- every mutation/physics operation on the external local proxy instead.
     local proxy, proxyErr =
-        ENV.__XERO_DEATH_PROXY.Make(character, effectName)
+        ENV.__XERO_DEATH_PROXY.Make(
+            character, effectName, hum, player, deathPosition
+        )
 
     local appliedToProxy = false
 
@@ -4054,7 +4158,7 @@ local function triggerVictim(player, character, hum, proof)
         end
     else
         status.Text =
-            "Kill confirmado · no se pudo crear proxy: " ..
+            "Kill confirmado · proxy no listo: " ..
             tostring(proxyErr)
     end
 
@@ -4089,7 +4193,9 @@ local function triggerVictim(player, character, hum, proof)
             -- be cloned, clone the DUELS corpse and still keep the real corpse
             -- untouched.
             local fallbackProxy, fallbackErr =
-                ENV.__XERO_DEATH_PROXY.Make(target, effectName)
+                ENV.__XERO_DEATH_PROXY.Make(
+                    target, effectName, nil, player, deathPosition
+                )
 
             if fallbackProxy then
                 local ok, result = pcall(function()
@@ -4336,6 +4442,20 @@ local function hookCharacter(player, character)
         }
         trackedHumanoids[hum] = info
 
+        -- Prebuild a detached visual body while the enemy is alive.
+        -- This avoids touching/cloning the real Character after DUELS removes it.
+        ENV.__XERO_DEATH_PROXY.BuildTemplate(player, character, hum)
+        task.delay(0.75, function()
+            if hum and hum.Parent and not ENV.__XERO_DEATH_PROXY.TemplateByHumanoid[hum] then
+                ENV.__XERO_DEATH_PROXY.BuildTemplate(player, character, hum)
+            end
+        end)
+        task.delay(1.80, function()
+            if hum and hum.Parent and not ENV.__XERO_DEATH_PROXY.TemplateByHumanoid[hum] then
+                ENV.__XERO_DEATH_PROXY.BuildTemplate(player, character, hum)
+            end
+        end)
+
         refreshHumanoidDeathMode(player, hum)
 
         info.connections[#info.connections + 1] = hum.Died:Connect(function()
@@ -4422,7 +4542,12 @@ local function refreshAllTracked()
             hookPlayer(player)
             local character = player.Character
             local hum = character and character:FindFirstChildOfClass("Humanoid")
-            if hum then refreshHumanoidDeathMode(player, hum) end
+            if hum then
+                if not ENV.__XERO_DEATH_PROXY.TemplateByHumanoid[hum] then
+                    ENV.__XERO_DEATH_PROXY.BuildTemplate(player, character, hum)
+                end
+                refreshHumanoidDeathMode(player, hum)
+            end
         end
     end
 end
@@ -4584,9 +4709,17 @@ toggle.MouseButton1Click:Connect(function()
     refreshAllTracked()
 
     if enabled then
+        local readyTemplates, trackedCount = 0, 0
+        for hum in pairs(trackedHumanoids) do
+            trackedCount += 1
+            if ENV.__XERO_DEATH_PROXY.TemplateByHumanoid[hum] then
+                readyTemplates += 1
+            end
+        end
         status.Text =
             "✓ Activo · " .. tostring(selectedEffect()) ..
-            "\nTU kill → proxy local externo → efecto · enemigo intacto."
+            "\nPlantillas externas: " .. tostring(readyTemplates) .. "/" .. tostring(trackedCount) ..
+            " · enemigo read-only"
     else
         for _, entry in ipairs(pendingDeaths) do
             removePending(entry)
@@ -4635,7 +4768,7 @@ UserInputService.InputChanged:Connect(function(input)
 end)
 
 print(
-    "[Xero Death Effects R26 ProxyPhysics]",
+    "[Xero Death Effects R27 ExternalTemplate]",
     #EFFECTS,
     "efectos ·",
     PRELOAD_STATS.loaded,

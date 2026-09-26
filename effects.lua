@@ -1,5 +1,5 @@
 --[[
-XeroHub | DUELS Death Effects · Native Dummy Bridge R13 Clean
+XeroHub | DUELS Death Effects · Native Dummy Bridge R14 Preloaded Fidelity
 Kev
 
 Objetivo:
@@ -64,7 +64,7 @@ end
 -- ============================================================
 -- Repo / cache
 -- ============================================================
-local CACHE_FOLDER = "XeroHub/DeathEffectsNativeDummyR13"
+local CACHE_FOLDER = "XeroHub/DeathEffectsNativeDummyR14"
 
 local function ensureFolder(path)
     if type(makefolder) ~= "function" then return end
@@ -123,7 +123,8 @@ for _, entry in ipairs(manifest.effects) do
         and type(entry.v2) == "string"
         and not isJellyEffect(entry.name)
         and entry.name ~= "Heartbeat"
-        and entry.name ~= "SoulReaper" then
+        and entry.name ~= "SoulReaper"
+        and entry.name ~= "BlackvalkEffect" then
         EFFECTS[#EFFECTS + 1] = entry.name
         BY_NAME[entry.name] = entry
     end
@@ -172,6 +173,147 @@ local function fetchEffect(name)
     decodedCache[name] = data
     return data
 end
+
+
+-- ============================================================
+-- R14 STARTUP PRELOAD
+-- Descarga todos los V2 seleccionables al ejecutar el script.
+-- Así fetchEffect() al seleccionar ya sale de decodedCache.
+-- ============================================================
+
+local PRELOAD_STATS = {
+    total = #EFFECTS,
+    loaded = 0,
+    failed = 0,
+    errors = {},
+}
+
+local function makePreloadGui()
+    local old = PlayerGui:FindFirstChild("XeroDeathPreload")
+    if old then old:Destroy() end
+
+    local gui = Instance.new("ScreenGui")
+    gui.Name = "XeroDeathPreload"
+    gui.ResetOnSpawn = false
+    gui.IgnoreGuiInset = true
+    gui.Parent = PlayerGui
+
+    local frame = Instance.new("Frame")
+    frame.Size = UDim2.fromOffset(360, 96)
+    frame.Position = UDim2.new(.5, -180, .5, -48)
+    frame.BackgroundColor3 = Color3.fromRGB(12,12,12)
+    frame.BorderSizePixel = 0
+    frame.Parent = gui
+    Instance.new("UICorner", frame).CornerRadius = UDim.new(0, 12)
+
+    local title = Instance.new("TextLabel")
+    title.BackgroundTransparency = 1
+    title.Position = UDim2.fromOffset(14, 12)
+    title.Size = UDim2.new(1, -28, 0, 22)
+    title.Text = "XERO · PRECARGANDO DEATH EFFECTS"
+    title.TextColor3 = Color3.fromRGB(245,245,245)
+    title.Font = Enum.Font.GothamBold
+    title.TextSize = 13
+    title.TextXAlignment = Enum.TextXAlignment.Left
+    title.Parent = frame
+
+    local status = Instance.new("TextLabel")
+    status.BackgroundTransparency = 1
+    status.Position = UDim2.fromOffset(14, 41)
+    status.Size = UDim2.new(1, -28, 0, 40)
+    status.Text = "Preparando..."
+    status.TextColor3 = Color3.fromRGB(155,155,155)
+    status.Font = Enum.Font.Gotham
+    status.TextSize = 11
+    status.TextWrapped = true
+    status.TextXAlignment = Enum.TextXAlignment.Left
+    status.Parent = frame
+
+    return gui, status
+end
+
+local function preloadAllEffectData()
+    if #EFFECTS == 0 then return end
+
+    local preloadGui, preloadStatus = makePreloadGui()
+
+    local nextIndex = 1
+    local workersDone = 0
+    local workerCount = math.min(5, #EFFECTS)
+
+    local function updateStatus(currentName)
+        if not preloadStatus or not preloadStatus.Parent then return end
+
+        preloadStatus.Text =
+            string.format(
+                "%d/%d cargados · %d fallos\n%s",
+                PRELOAD_STATS.loaded,
+                PRELOAD_STATS.total,
+                PRELOAD_STATS.failed,
+                tostring(currentName or "")
+            )
+    end
+
+    for _ = 1, workerCount do
+        task.spawn(function()
+            while true do
+                -- No yield between reading/incrementing nextIndex, so each
+                -- cooperative worker claims a unique slot.
+                local i = nextIndex
+                if i > #EFFECTS then break end
+                nextIndex += 1
+
+                local name = EFFECTS[i]
+                updateStatus("Descargando " .. tostring(name) .. "...")
+
+                local data, err = fetchEffect(name)
+
+                if not data then
+                    -- One retry at startup. We prefer paying the pause here,
+                    -- not later when the user selects the effect.
+                    task.wait(.08)
+                    data, err = fetchEffect(name)
+                end
+
+                if data then
+                    PRELOAD_STATS.loaded += 1
+                else
+                    PRELOAD_STATS.failed += 1
+                    PRELOAD_STATS.errors[name] = tostring(err)
+                end
+
+                updateStatus(name)
+                task.wait()
+            end
+
+            workersDone += 1
+        end)
+    end
+
+    repeat
+        task.wait(.03)
+    until workersDone >= workerCount
+
+    if preloadStatus and preloadStatus.Parent then
+        preloadStatus.Text =
+            string.format(
+                "Listo · %d/%d precargados%s",
+                PRELOAD_STATS.loaded,
+                PRELOAD_STATS.total,
+                PRELOAD_STATS.failed > 0
+                    and (" · " .. PRELOAD_STATS.failed .. " fallos")
+                    or ""
+            )
+    end
+
+    task.wait(.16)
+
+    if preloadGui and preloadGui.Parent then
+        preloadGui:Destroy()
+    end
+end
+
+preloadAllEffectData()
 
 -- ============================================================
 
@@ -1749,24 +1891,41 @@ local function scheduleFreezeReal(dummy)
     end)
 end
 
-local function blackenAccessory(accessory)
-    if not accessory or not accessory:IsA("Accessory") then return end
+local function tintTreeColorOnly(root, color)
+    if not root then return end
 
-    for _, obj in ipairs(accessory:GetDescendants()) do
+    local function tint(obj)
         if obj:IsA("BasePart") then
-            forceSolidPart(
-                obj,
-                Color3.new(0,0,0),
-                Enum.Material.SmoothPlastic,
-                0
-            )
+            pcall(function()
+                obj.Color = color
+            end)
 
         elseif obj:IsA("Decal") or obj:IsA("Texture") then
             pcall(function()
-                obj.Color3 = Color3.new(0,0,0)
+                obj.Color3 = color
+            end)
+
+        elseif obj:IsA("SpecialMesh") then
+            pcall(function()
+                obj.VertexColor =
+                    Vector3.new(color.R, color.G, color.B)
             end)
         end
     end
+
+    tint(root)
+
+    for _, obj in ipairs(root:GetDescendants()) do
+        tint(obj)
+    end
+end
+
+local function blackenAccessory(accessory)
+    if not accessory or not accessory:IsA("Accessory") then return end
+
+    -- R14: Frostbite sólo cambia COLOR del pelo/accesorio.
+    -- No tocamos Material, MaterialVariant, TextureID ni SurfaceAppearance.
+    tintTreeColorOnly(accessory, Color3.new(0,0,0))
 end
 
 local function forceFrostbitePass(dummy)
@@ -2133,6 +2292,114 @@ local function installDecoratedFullModel(dummy, asset)
     return attachExternalWeldPiece(dummy, decoratedRoot, root) and 1 or 0
 end
 
+
+local function installDecoratedRigR14(dummy, asset)
+    if not dummy or not dummy.Parent or not asset then
+        return 0, "sin dummy/asset"
+    end
+
+    local source = asset:FindFirstChild("WeldToRoot")
+    if not source or not source:IsA("BasePart") then
+        return 0, "WeldToRoot ausente"
+    end
+
+    -- The captured external Weld offset matches UpperTorso -> WeldToRoot.
+    -- R9 used HumanoidRootPart first, which displaced the whole ornament rig.
+    local target =
+        dummy:FindFirstChild("UpperTorso")
+        or dummy:FindFirstChild("Torso")
+        or dummy:FindFirstChild("HumanoidRootPart")
+
+    if not target or not target:IsA("BasePart") then
+        return 0, "torso/root ausente"
+    end
+
+    local old = dummy:FindFirstChild("XeroDecoratedRig")
+    if old then
+        pcall(function() old:Destroy() end)
+    end
+
+    local sourceWeld, sourceMissing = findExternalWeld(source)
+
+    local desiredCF =
+        target.CFrame
+        * CFrame.new(0, -1.5475876331329346, 0)
+
+    if sourceWeld then
+        if sourceMissing == "Part0"
+            and sourceWeld.Part1 == source then
+
+            desiredCF =
+                target.CFrame
+                * sourceWeld.C0
+                * sourceWeld.C1:Inverse()
+
+        elseif sourceMissing == "Part1"
+            and sourceWeld.Part0 == source then
+
+            desiredCF =
+                target.CFrame
+                * sourceWeld.C1
+                * sourceWeld.C0:Inverse()
+        end
+    end
+
+    local clone = source:Clone()
+    clone.Name = "XeroDecoratedRig"
+
+    -- Move EVERY piece by the same delta before the external Weld is repaired.
+    -- This preserves the captured internal C0/C1 layout and keeps the star at
+    -- its real ~1.38-stud size instead of letting physics snap the assembly
+    -- from its old world coordinates.
+    local delta = desiredCF * source.CFrame:Inverse()
+
+    local cloneParts = {clone}
+    for _, obj in ipairs(clone:GetDescendants()) do
+        if obj:IsA("BasePart") then
+            cloneParts[#cloneParts + 1] = obj
+        end
+    end
+
+    for _, part in ipairs(cloneParts) do
+        pcall(function()
+            part.CFrame = delta * part.CFrame
+            part.Anchored = false
+            part.CanCollide = false
+            part.CanTouch = false
+            part.CanQuery = false
+            part.Massless = true
+        end)
+    end
+
+    clone.Parent = dummy
+
+    local weld, missingSide = findExternalWeld(clone)
+
+    if weld then
+        if missingSide == "Part0" then
+            weld.Part0 = target
+        elseif missingSide == "Part1" then
+            weld.Part1 = target
+        end
+    else
+        local fallbackWeld = Instance.new("Weld")
+        fallbackWeld.Name = "XeroDecoratedWeld"
+        fallbackWeld.Part0 = target
+        fallbackWeld.Part1 = clone
+        fallbackWeld.C0 =
+            target.CFrame:ToObjectSpace(desiredCF)
+        fallbackWeld.C1 = CFrame.new()
+        fallbackWeld.Parent = clone
+    end
+
+    -- One final deterministic placement after the weld references are valid.
+    pcall(function()
+        clone.CFrame = desiredCF
+    end)
+
+    return 1, "Decorated rig completo"
+end
+
 local function forceAllMarkedEmitters(root)
     if not root then return 0 end
 
@@ -2235,33 +2502,37 @@ local function installGhostbringerAggressiveCarrierGuard(dummy)
     if not root then return end
 
     local baselineParts = setmetatable({}, {__mode="k"})
-    for _, obj in ipairs(Workspace:GetDescendants()) do
-        if obj:IsA("BasePart") then
-            baselineParts[obj] = true
-        end
-    end
-
     local watched = setmetatable({}, {__mode="k"})
     local propConnections = setmetatable({}, {__mode="k"})
     local conns = {}
 
-    local function hasVfx(part)
-        for _, d in ipairs(part:GetDescendants()) do
-            if d:IsA("ParticleEmitter")
-                or d:IsA("Beam")
-                or d:IsA("Trail") then
-                return true
+    local function rememberTree(tree)
+        if not tree then return end
+        if tree:IsA("BasePart") then
+            baselineParts[tree] = true
+        end
+        for _, obj in ipairs(tree:GetDescendants()) do
+            if obj:IsA("BasePart") then
+                baselineParts[obj] = true
             end
         end
-        return false
+    end
+
+    -- Real body, accessories, equipped weapon and map geometry that already
+    -- exist before Ghostbringer starts must stay visible.
+    rememberTree(Workspace)
+    rememberTree(Workspace.CurrentCamera)
+
+    local function closeEnough(part)
+        if not part or not part.Parent then return false end
+        return (part.Position - root.Position).Magnitude <= 70
     end
 
     local function shouldHide(part)
-        if not part or not part.Parent or not part:IsA("BasePart") then
-            return false
-        end
-
-        if (part.Position - root.Position).Magnitude > 55 then
+        if not part
+            or not part.Parent
+            or not part:IsA("BasePart")
+            or not closeEnough(part) then
             return false
         end
 
@@ -2269,9 +2540,11 @@ local function installGhostbringerAggressiveCarrierGuard(dummy)
             return true
         end
 
-        -- Newly-created VFX carrier, including carriers parented inside
-        -- the dummy, weapon or accessory.
-        return not baselineParts[part] and hasVfx(part)
+        -- R14: Ghostbringer V2 contains no legitimate visible 3D model.
+        -- Therefore every NEW nearby BasePart produced by this render pass is
+        -- a carrier/square and can safely be hidden while keeping descendants
+        -- (ParticleEmitter/Beam/Trail) alive.
+        return not baselineParts[part]
     end
 
     local function forceHidden(part)
@@ -2306,39 +2579,44 @@ local function installGhostbringerAggressiveCarrierGuard(dummy)
     end
 
     local function inspect(obj)
-        if not obj then return end
-
-        if obj:IsA("BasePart") then
-            if shouldHide(obj) then
-                forceHidden(obj)
-            end
-        elseif obj:IsA("ParticleEmitter")
-            or obj:IsA("Beam")
-            or obj:IsA("Trail") then
-
-            local carrier = nearestPart(obj)
-            if carrier and shouldHide(carrier) then
-                forceHidden(carrier)
-            end
+        if obj and obj:IsA("BasePart") and shouldHide(obj) then
+            forceHidden(obj)
         end
     end
 
-    conns[#conns+1] = Workspace.DescendantAdded:Connect(function(obj)
-        task.defer(function() inspect(obj) end)
-    end)
+    conns[#conns+1] =
+        Workspace.DescendantAdded:Connect(function(obj)
+            task.defer(function()
+                if obj:IsA("BasePart") then
+                    inspect(obj)
+                else
+                    local carrier = nearestPart(obj)
+                    if carrier then inspect(carrier) end
+                end
+            end)
+        end)
 
     local camera = Workspace.CurrentCamera
     if camera then
-        conns[#conns+1] = camera.DescendantAdded:Connect(function(obj)
-            task.defer(function() inspect(obj) end)
-        end)
+        conns[#conns+1] =
+            camera.DescendantAdded:Connect(function(obj)
+                task.defer(function()
+                    if obj:IsA("BasePart") then
+                        inspect(obj)
+                    else
+                        local carrier = nearestPart(obj)
+                        if carrier then inspect(carrier) end
+                    end
+                end)
+            end)
     end
 
     local function rescan()
         if not dummy or not dummy.Parent then return end
 
         for _, obj in ipairs(Workspace:GetDescendants()) do
-            if obj:IsA("BasePart") and (watched[obj] or shouldHide(obj)) then
+            if obj:IsA("BasePart")
+                and (watched[obj] or shouldHide(obj)) then
                 forceHidden(obj)
             end
         end
@@ -2346,7 +2624,10 @@ local function installGhostbringerAggressiveCarrierGuard(dummy)
         local cam = Workspace.CurrentCamera
         if cam then
             for _, obj in ipairs(cam:GetDescendants()) do
-                inspect(obj)
+                if obj:IsA("BasePart")
+                    and (watched[obj] or shouldHide(obj)) then
+                    forceHidden(obj)
+                end
             end
         end
 
@@ -2356,16 +2637,17 @@ local function installGhostbringerAggressiveCarrierGuard(dummy)
     end
 
     for _, t in ipairs({
-        0, .015, .035, .07, .12, .20, .32, .48,
-        .70, .98, 1.30, 1.70, 2.15, 2.65
+        0, .01, .025, .05, .09, .15, .24, .36,
+        .52, .74, 1.02, 1.36, 1.75, 2.20, 2.70
     }) do
         task.delay(t, rescan)
     end
 
-    task.delay(2.9, function()
+    task.delay(3.0, function()
         for _, conn in ipairs(conns) do
             pcall(function() conn:Disconnect() end)
         end
+
         for _, conn in pairs(propConnections) do
             pcall(function() conn:Disconnect() end)
         end
@@ -2450,14 +2732,60 @@ local function forceWholeAvatarSolid(dummy, color, material, transparency)
 end
 
 
-local function scheduleWholeVictimColorLockR11(dummy, color, material, duration)
+local function forceWholeAvatarColorOnly(
+    dummy,
+    color,
+    removeClothes
+)
+    if not dummy or not dummy.Parent then return end
+
+    if removeClothes then
+        removeClassicClothes(dummy)
+    end
+
+    for _, part in ipairs(allBaseParts(dummy)) do
+        pcall(function()
+            part.Color = color
+        end)
+    end
+
+    for _, obj in ipairs(dummy:GetDescendants()) do
+        if obj:IsA("Decal") or obj:IsA("Texture") then
+            pcall(function()
+                obj.Color3 = color
+            end)
+
+        elseif obj:IsA("SpecialMesh") then
+            pcall(function()
+                obj.VertexColor =
+                    Vector3.new(color.R, color.G, color.B)
+            end)
+        end
+    end
+end
+
+local function ghostbringerColor()
+    -- R14: force Ghostbringer's green palette explicitly.
+    -- Do not trust unrelated/mixed BodyStyle snapshots here.
+    return Color3.fromRGB(50, 255, 148)
+end
+
+local function scheduleWholeVictimColorLockR14(
+    dummy,
+    color,
+    duration,
+    removeClothes
+)
     duration = duration or 2.25
-    material = material or Enum.Material.SmoothPlastic
     local alive = true
 
     local function apply()
         if alive and dummy and dummy.Parent then
-            forceWholeAvatarSolid(dummy, color, material, 0)
+            forceWholeAvatarColorOnly(
+                dummy,
+                color,
+                removeClothes
+            )
         end
     end
 
@@ -2467,6 +2795,7 @@ local function scheduleWholeVictimColorLockR11(dummy, color, material, duration)
 
     task.spawn(function()
         local deadline = os.clock() + duration
+
         repeat
             apply()
             task.wait(.045)
@@ -2474,6 +2803,7 @@ local function scheduleWholeVictimColorLockR11(dummy, color, material, duration)
             or not dummy
             or not dummy.Parent
             or os.clock() >= deadline
+
         apply()
     end)
 
@@ -2484,20 +2814,33 @@ local function scheduleWholeVictimColorLockR11(dummy, color, material, duration)
 end
 
 local function scheduleHeartacheReal(dummy)
-    scheduleWholeVictimColorLockR11(
+    -- Color only. Preserve every BasePart's original Material.
+    scheduleWholeVictimColorLockR14(
         dummy,
         Color3.fromRGB(255, 0, 0),
-        Enum.Material.SmoothPlastic,
-        2.20
+        2.20,
+        true
     )
 end
 
 local function scheduleLightningBlack(dummy)
-    scheduleWholeVictimColorLockR11(
+    -- Color only. Preserve every BasePart's original Material.
+    scheduleWholeVictimColorLockR14(
         dummy,
         Color3.new(0, 0, 0),
-        Enum.Material.SmoothPlastic,
-        2.40
+        2.40,
+        true
+    )
+end
+
+local function scheduleGhostbringerGreen(dummy)
+    -- Paint the entire victim with Ghostbringer's green while preserving
+    -- the avatar's Materials. The carrier guard handles the visible squares.
+    scheduleWholeVictimColorLockR14(
+        dummy,
+        ghostbringerColor(),
+        2.65,
+        true
     )
 end
 
@@ -2935,6 +3278,11 @@ local function runNative(name, statusLabel)
         return
     end
 
+    if name == "BlackvalkEffect" then
+        statusLabel.Text = "Blackvalk eliminado del renderer."
+        return
+    end
+
     local asset, injected, assetStatus = ensureNativeAsset(name)
     if not asset then
         statusLabel.Text = "✕ Asset: " .. tostring(assetStatus)
@@ -2961,9 +3309,10 @@ local function runNative(name, statusLabel)
     local hatsV2 = attachV2HatIfNeeded(dummy, asset)
 
     local decorated3D = 0
+    local decoratedStatus = nil
+
     if name == "Decorated" then
         cleanupLegacyDecoratedArtifacts()
-        rescanMarkedEmittersNearDummy(dummy, 2.2)
     end
 
     local cleaner = makeCleaner()
@@ -2976,6 +3325,13 @@ local function runNative(name, statusLabel)
     local ok, result = pcall(function()
         return Preview.play(dummy, name, cleaner)
     end)
+
+    if name == "Decorated" then
+        decorated3D, decoratedStatus =
+            installDecoratedRigR14(dummy, asset)
+
+        rescanMarkedEmittersNearDummy(dummy, 2.2)
+    end
 
     local bodyPatched = false
     local bodyPatchSource = nil
@@ -3009,20 +3365,21 @@ local function runNative(name, statusLabel)
         bodyPatched = true
         bodyPatchSource = "SpiritOverload · TODO RGB 36,75,26"
 
+    elseif name == "GhostbringerEffect" then
+        scheduleGhostbringerGreen(dummy)
+        bodyPatched = true
+        bodyPatchSource = "Ghostbringer · TODO verde"
+
     elseif name == "Heartache" then
         scheduleHeartacheReal(dummy)
         bodyPatched = true
-        bodyPatchSource = "Heartache · TODO rojo"
+        bodyPatchSource = "Heartache · TODO rojo · material intacto"
 
     elseif name == "LightningStrike"
         or name == "LightningEffect" then
         scheduleLightningBlack(dummy)
         bodyPatched = true
-        bodyPatchSource = "Lightning · TODO negro + accesorios"
-
-    elseif name == "BlackvalkEffect" then
-        bodyPatched, bodyPatchSource =
-            prepareBlackvalkVictim(dummy, asset, cleaner)
+        bodyPatchSource = "Lightning · TODO negro · material intacto"
 
     else
         bodyPatched, bodyPatchSource =
@@ -3043,7 +3400,8 @@ local function runNative(name, statusLabel)
         and name ~= "SoulReaper"
         and name ~= "Heartache"
         and name ~= "LightningStrike"
-        and name ~= "LightningEffect" then
+        and name ~= "LightningEffect"
+        and name ~= "GhostbringerEffect" then
 
         scheduleV2ClothingLock(dummy, asset)
     end
@@ -3057,7 +3415,7 @@ local function runNative(name, statusLabel)
 
     statusLabel.Text =
         "✓ Nativo ejecutado · " .. name ..
-        "\nR13 · víctima completa."
+        "\nR14 · precargado · víctima completa."
 
     task.delay(.90, function()
         if not dummy.Parent then return end
@@ -3069,7 +3427,7 @@ local function runNative(name, statusLabel)
             "✓ " .. name ..
             " · body " .. tostring(mutations) ..
             (bodyPatched and (" · " .. tostring(bodyPatchSource)) or "") ..
-            (name == "Decorated" and " · Decorated nativo/VFX" or "") ..
+            (decorated3D > 0 and " · Decorated rig completo" or "") ..
             (clothesV2 > 0 and (" · ropa V2 " .. tostring(clothesV2)) or "") ..
             (hatsV2 > 0 and (" · 3D " .. tostring(hatsV2)) or "") ..
             "\n" .. tostring(assetStatus)
@@ -3104,7 +3462,7 @@ local title = Instance.new("TextLabel")
 title.BackgroundTransparency = 1
 title.Position = UDim2.fromOffset(16, 12)
 title.Size = UDim2.new(1,-32,0,22)
-title.Text = "XERO · DEATH EFFECT · NATIVE DUMMY R13"
+title.Text = "XERO · DEATH EFFECT · NATIVE DUMMY R14"
 title.TextColor3 = Color3.fromRGB(245,245,245)
 title.Font = Enum.Font.GothamBold
 title.TextSize = 14
@@ -3126,7 +3484,12 @@ local status = Instance.new("TextLabel")
 status.BackgroundTransparency = 1
 status.Position = UDim2.fromOffset(16, 157)
 status.Size = UDim2.new(1,-32,0,54)
-status.Text = tostring(#EFFECTS) .. " efectos · dummy tratado por lógica NATIVA"
+status.Text =
+    string.format(
+        "%d efectos · %d precargados · lógica NATIVA",
+        #EFFECTS,
+        PRELOAD_STATS.loaded
+    )
 status.TextColor3 = Color3.fromRGB(150,150,150)
 status.Font = Enum.Font.Gotham
 status.TextSize = 11
@@ -3227,8 +3590,13 @@ end)
 task.defer(function()
     local dummy, err = makeDummy()
     status.Text = dummy
-        and (tostring(#EFFECTS) .. " efectos · ✓ dummy listo")
+        and (
+            tostring(#EFFECTS) ..
+            " efectos · " ..
+            tostring(PRELOAD_STATS.loaded) ..
+            " precargados · ✓ dummy listo"
+        )
         or ("✕ dummy: " .. tostring(err))
 end)
 
-print("[Xero Death Native Dummy R3]", #EFFECTS, "efectos ·", BASE)
+print("[Xero Death Native Dummy R14]", #EFFECTS, "efectos ·", PRELOAD_STATS.loaded, "precargados ·", BASE)

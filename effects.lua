@@ -1,5 +1,5 @@
 --[[
-XeroHub | DUELS Death Effects · CurrentCamera R37 · One Effect Per Kill
+XeroHub | DUELS Death Effects · CurrentCamera R38 · Confirmed Removal + One Effect Per Kill
 Kev
 
 Objetivo:
@@ -4740,7 +4740,7 @@ local function triggerVictim(player, character, hum, proof)
     if not deathRuntime.Alive or ENV.__XERO_DEATH_BRIDGE_RUNTIME ~= deathRuntime then return false end
     if not info or info.triggered or info.expired then return false end
     if not enabled or LP.Neutral or info.deathEligible ~= true
-        or not info.deathObserved or not info.deathAt
+        or not (info.deathObserved or info.removedAt) or not info.deathAt
         or os.clock() - info.deathAt > PENDING_LIFETIME then return false end
 
     info.triggered = true
@@ -4827,7 +4827,7 @@ local function queueMostLikelyDeadEnemy()
 
     for hum, info in pairs(trackedHumanoids) do
         if hum and info and not info.triggered and not info.expired
-            and info.deathObserved and info.deathEligible == true
+            and (info.deathObserved or info.removedAt) and info.deathEligible == true
             and info.deathAt and now - info.deathAt <= PENDING_LIFETIME then
             local p = info.player
             local model = info.character or hum.Parent
@@ -4943,12 +4943,12 @@ queueVictimDeath = function(player, character, hum)
     if not info or info.triggered or info.expired then return end
     -- CharacterRemoving/AncestryChanged also fire for respawns and round resets.
     -- They are not death evidence on their own.
-    if not info.deathObserved and hum.Health > 0 then return end
+    if not info.deathObserved and hum.Health > 0 and not info.removedAt then return end
     if info.deathAt and os.clock() - info.deathAt > PENDING_LIFETIME then
         info.expired = true
         return
     end
-    info.deathObserved = true
+    info.deathObserved = info.deathObserved or hum.Health <= 0
     local eligibleNow = enabled and (info.deathEligible == true or isEnemyPlayer(player))
     if not eligibleNow then return end
     if not character or pendingByHumanoid[hum] then return end
@@ -4961,7 +4961,7 @@ queueVictimDeath = function(player, character, hum)
     info.deathEligible = true
 
     -- Best case: the game already stamped the killer/creator on the Humanoid.
-    if hasLocalKillerTag(character, hum) then
+    if info.deathObserved and hasLocalKillerTag(character, hum) then
         triggerVictim(player, character, hum, "killer/creator nativo")
         return
     end
@@ -4971,7 +4971,7 @@ queueVictimDeath = function(player, character, hum)
     -- effect. This removes the extra kill-counter delay for knives.
     local rt = ENV.__XERO_DEATH_BRIDGE_RUNTIME
     local melee = rt and rt.RecentMelee
-    if melee and melee.Humanoid == hum and os.clock() - (melee.At or 0) <= 1.05 then
+    if info.deathObserved and melee and melee.Humanoid == hum and os.clock() - (melee.At or 0) <= 1.05 then
         rt.RecentMelee = nil
         triggerVictim(player, character, hum, "cuchillo local confirmado por muerte")
         return
@@ -5001,7 +5001,7 @@ queueVictimDeath = function(player, character, hum)
         for _, delayTime in ipairs({0.03, 0.09, 0.18, 0.32}) do
             task.wait(delayTime)
             if info.triggered or entry.removed then return end
-            if hasLocalKillerTag(character, hum) then
+            if info.deathObserved and hasLocalKillerTag(character, hum) then
                 removePending(entry)
                 triggerVictim(player, character, hum, "killer/creator nativo")
                 return
@@ -5091,8 +5091,8 @@ local function hookCharacter(player, character)
             if parent == nil then
                 -- Fallback for games that replace the Character without exposing
                 -- Humanoid.Died locally. Queue it while we still have its last body data.
-                if not info.triggered and (info.deathObserved or hum.Health <= 0)
-                    and enabled and isEnemyPlayer(player) then
+                if not info.triggered and enabled and isEnemyPlayer(player) then
+                    info.removedAt = info.removedAt or os.clock()
                     info.deathAt = info.deathAt or os.clock()
                     info.deathPosition = info.deathPosition or modelPosition(character)
                     info.deathEligible = true
@@ -5131,8 +5131,8 @@ local function hookPlayer(player)
     conns[#conns + 1] = player.CharacterRemoving:Connect(function(character)
         local hum = character and character:FindFirstChildOfClass("Humanoid")
         local info = hum and trackedHumanoids[hum]
-        if hum and info and not info.triggered
-            and (info.deathObserved or hum.Health <= 0) then
+        if hum and info and not info.triggered then
+            info.removedAt = info.removedAt or os.clock()
             info.deathAt = info.deathAt or os.clock()
             info.deathPosition = info.deathPosition or modelPosition(character)
             info.deathEligible = enabled and isEnemyPlayer(player)
@@ -5228,7 +5228,9 @@ local function hookKillSound(sound)
     if not isKillConfirmSound(sound) or hookedKillSounds[sound] then return end
     hookedKillSounds[sound] = true
 
-    local playing = sound.Playing or sound.IsPlaying
+    local playing = false
+    local ownerCharacter = LP.Character
+    local wasLocal = localOwnsKillSound(sound)
     local function confirm()
         local active = sound.Playing or sound.IsPlaying
         if not active then playing = false; return end
@@ -5236,15 +5238,22 @@ local function hookKillSound(sound)
         playing = true
         local camera = Workspace.CurrentCamera
         if camera and sound:IsDescendantOf(camera) then return end
-        if enabled and localOwnsKillSound(sound) then
+        wasLocal = wasLocal or localOwnsKillSound(sound)
+        if enabled and wasLocal and LP.Character == ownerCharacter then
             recordLocalKillSignal("sonido " .. tostring(sound.Name), 1)
         end
     end
+    killSignalConnections[#killSignalConnections + 1] = sound.AncestryChanged:Connect(function()
+        if LP.Character == ownerCharacter then
+            wasLocal = wasLocal or localOwnsKillSound(sound)
+        end
+    end)
     killSignalConnections[#killSignalConnections + 1] = sound.Played:Connect(confirm)
     killSignalConnections[#killSignalConnections + 1] = sound:GetPropertyChangedSignal("Playing"):Connect(confirm)
     killSignalConnections[#killSignalConnections + 1] = sound.Ended:Connect(function() playing = false end)
     killSignalConnections[#killSignalConnections + 1] = sound.Stopped:Connect(function() playing = false end)
-    -- A sound found already playing is not a new elimination.
+    -- Native GunKill may be inserted after playback has already started.
+    if sound.Playing or sound.IsPlaying then confirm() end
 
 end
 

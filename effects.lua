@@ -1,844 +1,1023 @@
--- XeroHub | Remote Death Effect Test Hub | Kev
--- Compact / draggable / remote catalog.
--- Loads effect dumps from GitHub on demand and ALWAYS uses FORCE VFX.
--- No ReplicatedSkins root required.
+-- Xero | AIM COMPARE LAB
+-- Creator: Kev
+-- Objetivo: comparar de forma pasiva el comportamiento observable de distintos sistemas de aim.
+-- Genera reportes separados para Xero y Yisus y los guarda tras cada disparo.
+-- No instala hooks de __namecall/__index ni modifica raycasts/remotes.
 
 local Players = game:GetService("Players")
-local HttpService = game:GetService("HttpService")
-local Workspace = game:GetService("Workspace")
-local CoreGui = game:GetService("CoreGui")
+local RunService = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
-local Debris = game:GetService("Debris")
+local HttpService = game:GetService("HttpService")
+local CoreGui = game:GetService("CoreGui")
+local Workspace = game:GetService("Workspace")
 
-local LP = Players.LocalPlayer
-if not LP then return end
+local player = Players.LocalPlayer
+local camera = Workspace.CurrentCamera
+local mouse = player:GetMouse()
 
-local BASE_URL = "https://raw.githubusercontent.com/OnyxDevv/Onyx-web/main/death_effects"
-local MANIFEST_URL = BASE_URL .. "/manifest.json"
+local SAVE_FOLDER = "XeroHub"
+local SAVE_FILE = SAVE_FOLDER .. "/AimCompareLab.json"
+local REPORT_FOLDER = SAVE_FOLDER .. "/AimReports"
+local XERO_REPORT_FILE = REPORT_FOLDER .. "/Xero_Report.txt"
+local YISUS_REPORT_FILE = REPORT_FOLDER .. "/Yisus_Report.txt"
+local SESSION_VERSION = 2
 
-local ENV = (getgenv and getgenv()) or _G
-if ENV.__XERO_REMOTE_DEATH_EFFECT_HUB and ENV.__XERO_REMOTE_DEATH_EFFECT_HUB.Destroy then
-    pcall(ENV.__XERO_REMOTE_DEATH_EFFECT_HUB.Destroy)
-end
-
-local App = {
-    Alive = true,
-    Connections = {},
-    Spawned = {},
-    Cache = {},
-    Manifest = nil,
-    Selected = nil,
-    Search = "",
+local state = {
+    alive = true,
+    mode = nil,
+    modes = {
+        BASELINE = {shots = {}, started = nil, fingerprint = nil},
+        XERO = {shots = {}, started = nil, fingerprint = nil},
+        YISUS = {shots = {}, started = nil, fingerprint = nil},
+    },
+    connections = {},
+    humanoids = setmetatable({}, {__mode = "k"}),
+    lastShot = nil,
+    lastShotAt = 0,
+    status = "Listo",
 }
-ENV.__XERO_REMOTE_DEATH_EFFECT_HUB = App
+
+-- Forward declarations: se usan desde markMode/recordShot antes de que
+-- aparezca su implementación más abajo en el archivo.
+local writeModeReport
+local flushActiveReport
 
 local function track(c)
-    if c then App.Connections[#App.Connections + 1] = c end
+    if c then table.insert(state.connections, c) end
     return c
 end
 
-local function requestText(url)
-    local req = (syn and syn.request) or (http and http.request) or http_request or request
-    if req then
-        local ok, response = pcall(function()
-            return req({
-                Url = url,
-                Method = "GET",
-                Headers = {
-                    ["User-Agent"] = "Roblox/XeroHub-DeathEffects"
+local function safe(fn, default)
+    local ok, value = pcall(fn)
+    if ok then return value end
+    return default
+end
+
+local function round(n, p)
+    if type(n) ~= "number" then return n end
+    local m = 10 ^ (p or 2)
+    return math.floor(n * m + 0.5) / m
+end
+
+local function vec(v)
+    if typeof(v) ~= "Vector3" then return nil end
+    return {x = round(v.X, 3), y = round(v.Y, 3), z = round(v.Z, 3)}
+end
+
+local function angleDeg(a, b)
+    if typeof(a) ~= "Vector3" or typeof(b) ~= "Vector3" then return nil end
+    if a.Magnitude < 1e-6 or b.Magnitude < 1e-6 then return nil end
+    local dot = math.clamp(a.Unit:Dot(b.Unit), -1, 1)
+    return math.deg(math.acos(dot))
+end
+
+local function shortPath(obj)
+    if not obj then return "nil" end
+    local parts = {}
+    local cur = obj
+    for _ = 1, 6 do
+        if not cur then break end
+        table.insert(parts, 1, cur.Name)
+        cur = cur.Parent
+    end
+    return table.concat(parts, ".")
+end
+
+local function fnFingerprint(fn)
+    local out = {kind = type(fn), tostring = tostring(fn)}
+    if type(fn) ~= "function" then return out end
+
+    if type(iscclosure) == "function" then
+        out.cclosure = safe(function() return iscclosure(fn) end, nil)
+    end
+    if type(islclosure) == "function" then
+        out.lclosure = safe(function() return islclosure(fn) end, nil)
+    end
+    if debug and type(debug.info) == "function" then
+        out.source = safe(function() return debug.info(fn, "s") end, nil)
+        out.name = safe(function() return debug.info(fn, "n") end, nil)
+    end
+    return out
+end
+
+local function metamethodFingerprint()
+    local result = {available = false}
+    if type(getrawmetatable) ~= "function" then
+        result.reason = "getrawmetatable no disponible"
+        return result
+    end
+
+    local mt = safe(function() return getrawmetatable(game) end, nil)
+    if type(mt) ~= "table" then
+        result.reason = "No se pudo leer el metatable"
+        return result
+    end
+
+    result.available = true
+    result.namecall = fnFingerprint(rawget(mt, "__namecall"))
+    result.index = fnFingerprint(rawget(mt, "__index"))
+    return result
+end
+
+local function fingerprintKey(fp, field)
+    if type(fp) ~= "table" or not fp.available then return "N/A" end
+    local v = fp[field]
+    if type(v) ~= "table" then return "N/A" end
+    return table.concat({
+        tostring(v.tostring or "?"),
+        tostring(v.cclosure),
+        tostring(v.lclosure),
+        tostring(v.source or "?"),
+        tostring(v.name or "?")
+    }, "|")
+end
+
+local function getEquippedTool()
+    local char = player.Character
+    return char and char:FindFirstChildOfClass("Tool") or nil
+end
+
+local function snapshotTool(tool)
+    if not tool then return nil end
+    local snap = {
+        name = tool.Name,
+        path = shortPath(tool),
+        attrs = {},
+        values = {},
+    }
+
+    for k, v in pairs(safe(function() return tool:GetAttributes() end, {}) or {}) do
+        local tv = typeof(v)
+        if tv == "Vector3" then
+            snap.attrs[k] = vec(v)
+        elseif tv == "CFrame" then
+            snap.attrs[k] = {pos = vec(v.Position), look = vec(v.LookVector)}
+        elseif tv == "Instance" then
+            snap.attrs[k] = shortPath(v)
+        else
+            snap.attrs[k] = tostring(v)
+        end
+    end
+
+    local descendants = safe(function() return tool:GetDescendants() end, {}) or {}
+    for _, obj in ipairs(descendants) do
+        if obj:IsA("ValueBase") then
+            local value = safe(function() return obj.Value end, nil)
+            local tv = typeof(value)
+            if tv == "Vector3" then
+                value = vec(value)
+            elseif tv == "CFrame" then
+                value = {pos = vec(value.Position), look = vec(value.LookVector)}
+            elseif tv == "Instance" then
+                value = shortPath(value)
+            else
+                value = tostring(value)
+            end
+            snap.values[shortPath(obj)] = value
+        end
+    end
+    return snap
+end
+
+local function serializeValue(v)
+    if type(v) == "table" then
+        return safe(function() return HttpService:JSONEncode(v) end, tostring(v))
+    end
+    return tostring(v)
+end
+
+local function diffTool(before, after)
+    local diffs = {}
+    if not before and not after then return diffs end
+    if not before or not after then
+        table.insert(diffs, "Tool apareció/desapareció")
+        return diffs
+    end
+
+    local function compareMaps(prefix, a, b)
+        local seen = {}
+        for k, v in pairs(a or {}) do
+            seen[k] = true
+            local av, bv = serializeValue(v), serializeValue((b or {})[k])
+            if av ~= bv then
+                table.insert(diffs, prefix .. " " .. k .. ": " .. av .. " -> " .. bv)
+            end
+        end
+        for k, v in pairs(b or {}) do
+            if not seen[k] then
+                table.insert(diffs, prefix .. " " .. k .. ": <nil> -> " .. serializeValue(v))
+            end
+        end
+    end
+
+    compareMaps("Attr", before.attrs, after.attrs)
+    compareMaps("Value", before.values, after.values)
+    return diffs
+end
+
+local function snapshotPlayers()
+    local out = {}
+    for _, p in ipairs(Players:GetPlayers()) do
+        if p ~= player and p.Character then
+            local hrp = p.Character:FindFirstChild("HumanoidRootPart")
+            local hum = p.Character:FindFirstChildOfClass("Humanoid")
+            if hrp and hum then
+                out[tostring(p.UserId)] = {
+                    name = p.Name,
+                    pos = vec(hrp.Position),
+                    rawPos = hrp.Position,
+                    health = round(hum.Health, 2),
                 }
-            })
-        end)
-        if ok and response then
-            local status = tonumber(response.StatusCode or response.Status) or (response.Success and 200)
-            local body = response.Body or response.body
-            if status and status >= 200 and status < 300 and type(body) == "string" then
-                return body
             end
         end
-    end
-
-    local ok, body = pcall(function()
-        return game:HttpGet(url)
-    end)
-    if ok and type(body) == "string" then
-        return body
-    end
-
-    return nil, "HTTP failed: " .. tostring(url)
-end
-
-local function fetchJson(url)
-    local body, err = requestText(url)
-    if not body then return nil, err end
-
-    local ok, decoded = pcall(function()
-        return HttpService:JSONDecode(body)
-    end)
-    if not ok then
-        return nil, "JSON inválido: " .. tostring(decoded)
-    end
-    return decoded
-end
-
-local function loadManifest()
-    if App.Manifest then return App.Manifest end
-    local data, err = fetchJson(MANIFEST_URL)
-    if not data then return nil, err end
-    if type(data.effects) ~= "table" then
-        return nil, "manifest.json no trae effects[]"
-    end
-    App.Manifest = data
-    return data
-end
-
-local function loadEffect(meta)
-    if App.Cache[meta.name] then
-        return App.Cache[meta.name]
-    end
-
-    local url = BASE_URL .. "/effects/" .. tostring(meta.file or (meta.name .. ".json"))
-    local data, err = fetchJson(url)
-    if not data then return nil, err end
-
-    App.Cache[meta.name] = data
-    return data
-end
-
-local function trim(s)
-    return tostring(s or ""):match("^%s*(.-)%s*$")
-end
-
-local function numberTokens(s)
-    local out = {}
-    for token in tostring(s or ""):gmatch("[^,%s]+") do
-        local n = tonumber(token)
-        if n then out[#out + 1] = n end
     end
     return out
 end
 
-local function parseEnum(raw)
-    local enumType, enumItem = tostring(raw):match("^Enum%.([^.]+)%.(.+)$")
-    if not enumType then return nil end
-    local ok, value = pcall(function() return Enum[enumType][enumItem] end)
-    return ok and value or nil
-end
-
-local function parseColor3(raw)
-    local r,g,b = tostring(raw):match("^Color3%(([-%d%.eE]+),([-%d%.eE]+),([-%d%.eE]+)%)$")
-    if r then return Color3.fromRGB(tonumber(r) or 0, tonumber(g) or 0, tonumber(b) or 0) end
-end
-
-local function parseVector3(raw)
-    local n = numberTokens(raw)
-    if #n >= 3 then return Vector3.new(n[1],n[2],n[3]) end
-end
-
-local function parseVector2(raw)
-    local n = numberTokens(raw)
-    if #n >= 2 then return Vector2.new(n[1],n[2]) end
-end
-
-local function parseNumberRange(raw)
-    local n = numberTokens(raw)
-    if #n >= 2 then return NumberRange.new(n[1],n[2]) end
-    if #n == 1 then return NumberRange.new(n[1]) end
-end
-
-local function parseNumberSequence(raw)
-    local n = numberTokens(raw)
-    if #n < 3 then return nil end
-    local kp = {}
-    for i = 1, #n - 2, 3 do
-        kp[#kp+1] = NumberSequenceKeypoint.new(n[i],n[i+1],n[i+2])
+local function readMouse()
+    local data = {}
+    local hit = safe(function() return mouse.Hit end, nil)
+    local target = safe(function() return mouse.Target end, nil)
+    if typeof(hit) == "CFrame" then
+        data.hitPos = vec(hit.Position)
+        data.rawHitPos = hit.Position
     end
-    local ok, seq = pcall(NumberSequence.new, kp)
-    return ok and seq or nil
-end
-
-local function parseColorSequence(raw)
-    local n = numberTokens(raw)
-    if #n < 5 then return nil end
-    local kp = {}
-    for i = 1, #n - 4, 5 do
-        kp[#kp+1] = ColorSequenceKeypoint.new(
-            n[i],
-            Color3.new(n[i+1],n[i+2],n[i+3])
-        )
+    if typeof(target) == "Instance" then
+        data.target = shortPath(target)
     end
-    local ok, seq = pcall(ColorSequence.new, kp)
-    return ok and seq or nil
+    return data
 end
 
-local vector3Props = {
-    Size=true, Position=true, Orientation=true, Axis=true, SecondaryAxis=true,
-    Acceleration=true, Scale=true, Offset=true, VertexColor=true,
-}
-local vector2Props = {SpreadAngle=true}
-local numberRangeProps = {Lifetime=true,Speed=true,Rotation=true,RotSpeed=true}
-local numberSequenceProps = {Transparency=true,Size=true,Squash=true,WidthScale=true}
-local color3Props = {FillColor=true,OutlineColor=true,SparkleColor=true}
-
-local function parseGeneric(raw)
-    raw = trim(raw)
-    if raw == "true" then return true end
-    if raw == "false" then return false end
-    if raw == "nil" then return nil end
-
-    local quoted = raw:match('^"(.*)"$')
-    if quoted ~= nil then return quoted end
-
-    local enum = parseEnum(raw)
-    if enum ~= nil then return enum end
-
-    local color = parseColor3(raw)
-    if color ~= nil then return color end
-
-    local n = tonumber(raw)
-    if n ~= nil then return n end
-
-    return raw
+local function activeModeData()
+    return state.mode and state.modes[state.mode] or nil
 end
 
-local function parseProperty(className, property, raw)
-    if property == "Color" then
-        local c3 = parseColor3(raw)
-        if c3 then return c3 end
-        if className == "ParticleEmitter" or className == "Trail" or className == "Beam" then
-            return parseColorSequence(raw)
-        end
-    end
-
-    if color3Props[property] then return parseColor3(raw) end
-    if vector3Props[property] then return parseVector3(raw) end
-    if vector2Props[property] then return parseVector2(raw) end
-    if numberRangeProps[property] then return parseNumberRange(raw) end
-    if numberSequenceProps[property] then return parseNumberSequence(raw) end
-    if className == "Vector3Value" and property == "Value" then return parseVector3(raw) end
-    return parseGeneric(raw)
-end
-
-local function safeSet(obj, prop, value)
-    if value == nil then return end
-    pcall(function() obj[prop] = value end)
-end
-
-local supported = {
-    Folder=true,Model=true,Part=true,MeshPart=true,UnionOperation=true,
-    Attachment=true,Bone=true,ParticleEmitter=true,Sound=true,Trail=true,
-    Beam=true,Highlight=true,SpecialMesh=true,Vector3Value=true,CFrameValue=true,
-    BoolValue=true,NumberValue=true,StringValue=true,IntValue=true,
-    Fire=true,Smoke=true,Sparkles=true,PointLight=true,SpotLight=true,SurfaceLight=true,
-}
-
-local function leaf(path)
-    return tostring(path):match("([^.]+)$") or tostring(path)
-end
-
-local function parentPath(path)
-    return tostring(path):match("^(.*)%.[^.]+$")
-end
-
-local function addPath(map, path, obj)
-    map[path] = map[path] or {}
-    table.insert(map[path], obj)
-end
-
-local function latestPath(map, path)
-    local list = map[path]
-    return list and list[#list] or nil
-end
-
-local function instantiate(className)
-    if not supported[className] then return nil end
-    local ok, obj = pcall(Instance.new, className)
-    return ok and obj or nil
-end
-
-local function applyProps(obj, entry)
-    if type(entry.r) == "table" then
-        for prop, raw in pairs(entry.r) do
-            safeSet(obj, prop, parseProperty(entry.c, prop, raw))
-        end
-    end
-    if type(entry.a) == "table" then
-        for key, raw in pairs(entry.a) do
-            local value = parseGeneric(raw)
-            if value ~= nil then
-                pcall(function() obj:SetAttribute(key, value) end)
-            end
-        end
+local function setStatus(text)
+    state.status = text
+    if state.statusLabel then
+        state.statusLabel.Text = text
     end
 end
 
-local function buildEffect(def)
-    if type(def) ~= "table" or type(def.entries) ~= "table" or #def.entries == 0 then
-        return nil, "Effect sin entries reconstruibles."
+local function sanitizeForJson(value, seen)
+    local tv = typeof(value)
+    if tv == "nil" or tv == "boolean" or tv == "number" or tv == "string" then
+        return value
     end
+    if tv == "Vector3" then return vec(value) end
+    if tv == "CFrame" then return {pos = vec(value.Position), look = vec(value.LookVector)} end
+    if tv == "Instance" then return shortPath(value) end
+    if tv ~= "table" then return tostring(value) end
 
-    local first = def.entries[1]
-    local root = instantiate(first.c) or Instance.new("Folder")
-    root.Name = def.name or leaf(first.p)
-    applyProps(root, first)
+    seen = seen or {}
+    if seen[value] then return "<cycle>" end
+    seen[value] = true
 
-    local pathMap = {}
-    addPath(pathMap, first.p, root)
-
-    for i = 2, #def.entries do
-        local entry = def.entries[i]
-        local obj = instantiate(entry.c)
-        if obj then
-            obj.Name = leaf(entry.p)
-            obj.Parent = latestPath(pathMap, parentPath(entry.p)) or root
-            addPath(pathMap, entry.p, obj)
-            applyProps(obj, entry)
-
-            if obj:IsA("BasePart") then
-                obj.CanCollide = false
-                obj.CanTouch = false
-                obj.CanQuery = false
-            end
-        end
-    end
-
-    return root
-end
-
-local BODY_STYLE = {
-    BlackvalkEffect={Color=Color3.fromRGB(255,190,60),Material=Enum.Material.Neon},
-    Freeze={Color=Color3.fromRGB(4,175,236),Material=Enum.Material.SmoothPlastic},
-    Frostbite={Color=Color3.fromRGB(53,124,133),Material=Enum.Material.SmoothPlastic},
-    Heartache={Color=Color3.fromRGB(255,0,0),Material=Enum.Material.Plastic},
-    Heartbeat={Color=Color3.fromRGB(255,102,204),Material=Enum.Material.Neon,Transparency=.2},
-    IcemanEffect={Color=Color3.fromRGB(152,219,255),Material=Enum.Material.Ice},
-    LEffect={Color=Color3.fromRGB(255,43,44),Material=Enum.Material.Neon},
-    LavaEffect={Color=Color3.fromRGB(255,60,0),Material=Enum.Material.Neon},
-    PhoenixEffect={Color=Color3.fromRGB(255,80,35),Material=Enum.Material.Neon},
-    SandEffect={Color=Color3.fromRGB(212,196,154),Material=Enum.Material.Sand},
-    SlimeEffect={Color=Color3.fromRGB(85,255,127),Material=Enum.Material.Plastic},
-    SpiritOverload={Color=Color3.fromRGB(0,48,8),Material=Enum.Material.SmoothPlastic},
-}
-
-local function getChar()
-    local c = LP.Character
-    if c and c.Parent then return c end
-    return LP.CharacterAdded:Wait()
-end
-
-local function anchorOf(model)
-    return model:FindFirstChild("HumanoidRootPart")
-        or model:FindFirstChild("LowerTorso")
-        or model:FindFirstChild("UpperTorso")
-        or model:FindFirstChild("Torso")
-        or model:FindFirstChild("Head")
-end
-
-local function makeDummy()
-    local char = getChar()
-    if not char then return nil,"No character." end
-
-    local old = char.Archivable
-    char.Archivable = true
-    local ok,dummy = pcall(function() return char:Clone() end)
-    char.Archivable = old
-    if not ok or not dummy then return nil,"No pude clonar character." end
-
-    dummy.Name = "Xero_RemoteDeathEffectDummy"
-    for _,obj in ipairs(dummy:GetDescendants()) do
-        if obj:IsA("Script") or obj:IsA("LocalScript") or obj:IsA("Tool") then
-            obj:Destroy()
-        elseif obj:IsA("BasePart") then
-            obj.Anchored = true
-            obj.CanCollide = false
-            obj.CanTouch = false
-            obj.CanQuery = false
-        elseif obj:IsA("Humanoid") then
-            obj.DisplayDistanceType = Enum.HumanoidDisplayDistanceType.None
-            obj.HealthDisplayType = Enum.HumanoidHealthDisplayType.AlwaysOff
-        end
-    end
-    dummy.Parent = Workspace
-
-    local anchor = anchorOf(char)
-    if anchor then
-        pcall(function() dummy:PivotTo(anchor.CFrame * CFrame.new(0,0,-7)) end)
-    end
-
-    table.insert(App.Spawned,dummy)
-    Debris:AddItem(dummy,18)
-    return dummy
-end
-
-local function applyBodyStyle(dummy,name)
-    local style = BODY_STYLE[name]
-    if not style then return end
-    for _,obj in ipairs(dummy:GetDescendants()) do
-        if obj:IsA("BasePart") and obj.Name ~= "HumanoidRootPart" then
-            if style.Color then obj.Color = style.Color end
-            if style.Material then obj.Material = style.Material end
-            if style.Transparency ~= nil then obj.Transparency = style.Transparency end
-        end
-    end
-end
-
-local function baseParts(root)
     local out = {}
-    if root:IsA("BasePart") then out[#out+1] = root end
-    for _,o in ipairs(root:GetDescendants()) do
-        if o:IsA("BasePart") then out[#out+1] = o end
+    for k, v in pairs(value) do
+        if type(k) == "string" and string.sub(k, 1, 1) == "_" then
+            -- Campos runtime: no se guardan, pero tampoco se modifican en memoria.
+        else
+            out[k] = sanitizeForJson(v, seen)
+        end
     end
+    seen[value] = nil
     return out
 end
 
-local function referencePart(root)
-    if root:IsA("BasePart") then return root end
-    local first,preferred
-    for _,part in ipairs(baseParts(root)) do
-        first = first or part
-        local n = string.lower(part.Name)
-        if n == "effect" then return part end
-        if string.find(n,"effect",1,true) or string.find(n,"vfx",1,true) then
-            preferred = preferred or part
+local function saveState()
+    if type(writefile) ~= "function" then return false end
+    if type(makefolder) == "function" then
+        if type(isfolder) ~= "function" or not safe(function() return isfolder(SAVE_FOLDER) end, false) then
+            pcall(makefolder, SAVE_FOLDER)
+        end
+        if type(isfolder) ~= "function" or not safe(function() return isfolder(REPORT_FOLDER) end, false) then
+            pcall(makefolder, REPORT_FOLDER)
         end
     end
-    return preferred or first
+
+    local data = sanitizeForJson({
+        version = SESSION_VERSION,
+        modes = state.modes,
+    })
+
+    local encoded = safe(function() return HttpService:JSONEncode(data) end, nil)
+    if not encoded then return false end
+    return pcall(writefile, SAVE_FILE, encoded)
 end
 
-local function placeEffect(root,dummy)
-    local anchor = anchorOf(dummy)
-    local ref = referencePart(root)
-    if not anchor or not ref then return false,"Sin anchor/reference part." end
+local function loadState()
+    if type(readfile) ~= "function" or type(isfile) ~= "function" then return end
+    if not safe(function() return isfile(SAVE_FILE) end, false) then return end
+    local raw = safe(function() return readfile(SAVE_FILE) end, nil)
+    if type(raw) ~= "string" or raw == "" then return end
+    local decoded = safe(function() return HttpService:JSONDecode(raw) end, nil)
+    if type(decoded) ~= "table" or type(decoded.modes) ~= "table" then return end
 
-    local placement = nil
-    pcall(function() placement = ref:GetAttribute("Placement") end)
-    placement = type(placement) == "string" and string.lower(placement) or ""
-
-    local target = anchor.CFrame
-    if placement == "ground" then target = anchor.CFrame * CFrame.new(0,-2.9,0)
-    elseif placement == "feet" then target = anchor.CFrame * CFrame.new(0,-2.4,0)
-    elseif placement == "head" then target = anchor.CFrame * CFrame.new(0,2.6,0)
-    end
-
-    local refCF = ref.CFrame
-    for _,part in ipairs(baseParts(root)) do
-        local relative = refCF:ToObjectSpace(part.CFrame)
-        part.Anchored = true
-        part.CanCollide = false
-        part.CanTouch = false
-        part.CanQuery = false
-        part.CFrame = target * relative
-    end
-    return true
-end
-
-local function autoWire(root)
-    local attachments = {}
-    for _,o in ipairs(root:GetDescendants()) do
-        if o:IsA("Attachment") then attachments[#attachments+1] = o end
-    end
-    if #attachments < 2 then return end
-    for _,o in ipairs(root:GetDescendants()) do
-        if o:IsA("Beam") or o:IsA("Trail") then
-            pcall(function()
-                if not o.Attachment0 then o.Attachment0 = attachments[1] end
-                if not o.Attachment1 then o.Attachment1 = attachments[2] end
-            end)
+    for _, name in ipairs({"BASELINE", "XERO", "YISUS"}) do
+        local src = decoded.modes[name]
+        if type(src) == "table" then
+            state.modes[name].shots = type(src.shots) == "table" and src.shots or {}
+            state.modes[name].started = src.started
+            state.modes[name].fingerprint = src.fingerprint
         end
     end
 end
 
-local function emit(root)
-    autoWire(root)
-    for _,o in ipairs(root:GetDescendants()) do
-        if o:IsA("ParticleEmitter") then
-            local count = tonumber(o:GetAttribute("EmitCount")) or 0
-            local delaySec = tonumber(o:GetAttribute("EmitDelay")) or 0
-            local duration = tonumber(o:GetAttribute("EmitDuration")) or 0
+loadState()
 
-            task.delay(math.max(delaySec,0),function()
-                if not o.Parent then return end
-                if count > 0 then
-                    pcall(function() o:Emit(math.max(1,math.floor(count+.5))) end)
-                elseif o.Rate > 0 then
-                    o.Enabled = true
-                    local life = 0.6
-                    pcall(function() life = math.max(life,o.Lifetime.Max) end)
-                    task.delay(math.max(duration,life),function()
-                        if o.Parent then o.Enabled = false end
-                    end)
-                end
-            end)
-        elseif o:IsA("Sound") then
-            task.defer(function()
-                if o.Parent then pcall(function() o:Play() end) end
-            end)
-        elseif o:IsA("Trail") or o:IsA("Beam") or o:IsA("Highlight") or
-               o:IsA("Fire") or o:IsA("Smoke") or o:IsA("Sparkles") or
-               o:IsA("PointLight") or o:IsA("SpotLight") or o:IsA("SurfaceLight") then
-            local old = false
-            pcall(function() old = o.Enabled end)
-            pcall(function() o.Enabled = true end)
-            task.delay(1.2,function()
-                if o.Parent then pcall(function() o.Enabled = old end) end
-            end)
+local function markMode(name)
+    if not state.modes[name] then return end
+    state.mode = name
+    state.modes[name].started = os.time()
+    state.modes[name].fingerprint = metamethodFingerprint()
+    setStatus("ESCANEANDO " .. name .. " · dispara 3-5 veces")
+    saveState()
+    if name == "XERO" or name == "YISUS" then
+        writeModeReport(name)
+    end
+end
+
+local function recordShot(reason)
+    local mode = activeModeData()
+    if not mode then return end
+
+    local now = os.clock()
+    if now - state.lastShotAt < 0.08 then return end
+    state.lastShotAt = now
+
+    camera = Workspace.CurrentCamera or camera
+    local cf = camera and camera.CFrame or CFrame.new()
+    local tool = getEquippedTool()
+    local m = readMouse()
+    local playersNow = snapshotPlayers()
+
+    local shot = {
+        t = round(now, 4),
+        reason = reason,
+        tool = tool and tool.Name or "nil",
+        cameraPos = vec(cf.Position),
+        cameraLook = vec(cf.LookVector),
+        mouse = {
+            hitPos = m.hitPos,
+            target = m.target,
+        },
+        cameraToMouseDeg = nil,
+        fingerprint = metamethodFingerprint(),
+        toolBefore = snapshotTool(tool),
+        toolAfter = nil,
+        toolDiff = {},
+        damage = {},
+        projectiles = {},
+        cameraDelta50ms = nil,
+        cameraDelta150ms = nil,
+        mode = state.mode,
+        _cameraPos = cf.Position,
+        _cameraLook = cf.LookVector,
+        _playersRaw = playersNow,
+    }
+
+    if m.rawHitPos then
+        shot.cameraToMouseDeg = round(angleDeg(cf.LookVector, m.rawHitPos - cf.Position), 3)
+    end
+
+    table.insert(mode.shots, shot)
+    state.lastShot = shot
+    setStatus(state.mode .. " · disparo #" .. tostring(#mode.shots) .. " capturado")
+
+    -- Guardado CRÍTICO inmediato: si Xero provoca kick tras el disparo,
+    -- al menos esta captura base ya quedó escrita.
+    saveState()
+    flushActiveReport()
+
+    task.delay(0.05, function()
+        if not state.alive or not shot then return end
+        local cam = Workspace.CurrentCamera
+        if cam then
+            shot.cameraDelta50ms = round(angleDeg(shot._cameraLook, cam.CFrame.LookVector), 3)
+        end
+        saveState()
+        flushActiveReport()
+    end)
+
+    task.delay(0.15, function()
+        if not state.alive or not shot then return end
+        local cam = Workspace.CurrentCamera
+        if cam then
+            shot.cameraDelta150ms = round(angleDeg(shot._cameraLook, cam.CFrame.LookVector), 3)
+        end
+        shot.toolAfter = snapshotTool(getEquippedTool())
+        shot.toolDiff = diffTool(shot.toolBefore, shot.toolAfter)
+        saveState()
+        flushActiveReport()
+    end)
+end
+
+local function attachHumanoid(p, hum)
+    if not hum or state.humanoids[hum] then return end
+    state.humanoids[hum] = hum.Health
+    local last = hum.Health
+
+    track(hum.HealthChanged:Connect(function(newHealth)
+        local old = last
+        last = newHealth
+        state.humanoids[hum] = newHealth
+
+        local shot = state.lastShot
+        if not shot or not state.mode then return end
+        local dt = os.clock() - (shot.t or 0)
+        if dt < 0 or dt > 0.7 or newHealth >= old then return end
+
+        local uid = tostring(p.UserId)
+        local pdata = shot._playersRaw and shot._playersRaw[uid]
+        local victimPos = pdata and pdata.rawPos
+        local aimAngle = nil
+        if victimPos and shot._cameraPos and shot._cameraLook then
+            aimAngle = round(angleDeg(shot._cameraLook, victimPos - shot._cameraPos), 3)
+        end
+
+        table.insert(shot.damage, {
+            player = p.Name,
+            delta = round(old - newHealth, 2),
+            after = round(newHealth, 2),
+            delay = round(dt, 3),
+            cameraToVictimDeg = aimAngle,
+        })
+        saveState()
+        flushActiveReport()
+    end))
+end
+
+local function watchPlayer(p)
+    if p == player then return end
+    local function onChar(char)
+        local hum = char:FindFirstChildOfClass("Humanoid") or char:WaitForChild("Humanoid", 5)
+        if hum then attachHumanoid(p, hum) end
+    end
+    if p.Character then task.defer(onChar, p.Character) end
+    track(p.CharacterAdded:Connect(onChar))
+end
+
+for _, p in ipairs(Players:GetPlayers()) do watchPlayer(p) end
+track(Players.PlayerAdded:Connect(watchPlayer))
+
+local projectileWords = {
+    "bullet", "projectile", "tracer", "beam", "laser", "shot", "ray", "pellet", "knife", "throw"
+}
+local function projectileLike(obj)
+    local name = string.lower(obj.Name)
+    for _, w in ipairs(projectileWords) do
+        if string.find(name, w, 1, true) then return true end
+    end
+    if obj:IsA("BasePart") then
+        local vel = safe(function() return obj.AssemblyLinearVelocity.Magnitude end, 0)
+        if vel and vel > 25 then return true end
+    end
+    return obj:IsA("Beam") or obj:IsA("Trail")
+end
+
+track(Workspace.DescendantAdded:Connect(function(obj)
+    local shot = state.lastShot
+    if not shot or not state.mode then return end
+    local dt = os.clock() - (shot.t or 0)
+    if dt < 0 or dt > 0.35 then return end
+    if not projectileLike(obj) then return end
+    if #shot.projectiles >= 12 then return end
+
+    local item = {
+        delay = round(dt, 3),
+        class = obj.ClassName,
+        name = obj.Name,
+        path = shortPath(obj),
+    }
+
+    if obj:IsA("BasePart") then
+        item.pos = vec(obj.Position)
+        item.velocity = vec(obj.AssemblyLinearVelocity)
+        if shot._cameraPos and obj.AssemblyLinearVelocity.Magnitude > 0.1 then
+            item.cameraToVelocityDeg = round(angleDeg(shot._cameraLook, obj.AssemblyLinearVelocity), 3)
         end
     end
+
+    table.insert(shot.projectiles, item)
+    saveState()
+    flushActiveReport()
+end))
+
+local toolConnections = {}
+local function bindTool(tool)
+    if not tool or not tool:IsA("Tool") or toolConnections[tool] then return end
+    local c = tool.Activated:Connect(function()
+        recordShot("Tool.Activated")
+    end)
+    toolConnections[tool] = c
+    track(c)
 end
 
-local function clearSpawned()
-    for i = #App.Spawned,1,-1 do
-        local obj = App.Spawned[i]
-        App.Spawned[i] = nil
-        pcall(function() obj:Destroy() end)
+local function bindCharacter(char)
+    for _, c in pairs(toolConnections) do
+        -- las conexiones viejas quedan en cleanup global
+    end
+    for _, obj in ipairs(char:GetChildren()) do
+        if obj:IsA("Tool") then bindTool(obj) end
+    end
+    track(char.ChildAdded:Connect(function(obj)
+        if obj:IsA("Tool") then bindTool(obj) end
+    end))
+end
+
+if player.Character then bindCharacter(player.Character) end
+track(player.CharacterAdded:Connect(bindCharacter))
+
+track(mouse.Button1Down:Connect(function()
+    task.delay(0.015, function()
+        if os.clock() - state.lastShotAt > 0.06 then
+            recordShot("Mouse.Button1Down")
+        end
+    end)
+end))
+
+local function avg(list)
+    local total, count = 0, 0
+    for _, n in ipairs(list) do
+        if type(n) == "number" then
+            total += n
+            count += 1
+        end
+    end
+    return count > 0 and total / count or nil
+end
+
+local function summarizeMode(name, mode, baselineFp)
+    local camMouse, camMove50, camMove150, victimAngles = {}, {}, {}, {}
+    local damageCount, projectileCount, toolDiffCount = 0, 0, 0
+
+    for _, s in ipairs(mode.shots or {}) do
+        table.insert(camMouse, s.cameraToMouseDeg)
+        table.insert(camMove50, s.cameraDelta50ms)
+        table.insert(camMove150, s.cameraDelta150ms)
+        projectileCount += #(s.projectiles or {})
+        toolDiffCount += #(s.toolDiff or {})
+        for _, d in ipairs(s.damage or {}) do
+            damageCount += 1
+            table.insert(victimAngles, d.cameraToVictimDeg)
+        end
+    end
+
+    local fp = mode.fingerprint
+    local baseNC = fingerprintKey(baselineFp, "namecall")
+    local baseIX = fingerprintKey(baselineFp, "index")
+    local nc = fingerprintKey(fp, "namecall")
+    local ix = fingerprintKey(fp, "index")
+
+    return {
+        name = name,
+        shots = #(mode.shots or {}),
+        namecallChanged = baselineFp and baseNC ~= "N/A" and nc ~= "N/A" and nc ~= baseNC or nil,
+        indexChanged = baselineFp and baseIX ~= "N/A" and ix ~= "N/A" and ix ~= baseIX or nil,
+        avgCameraToMouse = avg(camMouse),
+        avgCameraMove50 = avg(camMove50),
+        avgCameraMove150 = avg(camMove150),
+        avgCameraToVictim = avg(victimAngles),
+        damageCount = damageCount,
+        projectileCount = projectileCount,
+        toolDiffCount = toolDiffCount,
+    }
+end
+
+local function yn(v)
+    if v == nil then return "N/D" end
+    return v and "SÍ" or "NO"
+end
+
+local function num(v)
+    return type(v) == "number" and string.format("%.2f", v) or "N/D"
+end
+
+local function buildReport()
+    local baseline = state.modes.BASELINE
+    local xero = summarizeMode("XERO", state.modes.XERO, baseline.fingerprint)
+    local yisus = summarizeMode("YISUS", state.modes.YISUS, baseline.fingerprint)
+    local base = summarizeMode("BASELINE", baseline, baseline.fingerprint)
+
+    local lines = {}
+    table.insert(lines, "===== XERO AIM COMPARE LAB =====")
+    table.insert(lines, "Comparación pasiva · no instala hooks")
+    table.insert(lines, "")
+    table.insert(lines, string.format("%-10s | shots | __namecall | __index | cam->mouse | cam50ms | cam->victim | damage | projectiles | toolDiff",
+        "MODO"))
+
+    local function row(s)
+        table.insert(lines, string.format(
+            "%-10s | %5d | %10s | %7s | %10s | %7s | %11s | %6d | %11d | %8d",
+            s.name, s.shots, yn(s.namecallChanged), yn(s.indexChanged),
+            num(s.avgCameraToMouse), num(s.avgCameraMove50), num(s.avgCameraToVictim),
+            s.damageCount, s.projectileCount, s.toolDiffCount
+        ))
+    end
+
+    row(base)
+    row(xero)
+    row(yisus)
+    table.insert(lines, "")
+    table.insert(lines, "INTERPRETACIÓN AUTOMÁTICA:")
+
+    if xero.namecallChanged == true then
+        table.insert(lines, "- Xero cambia la huella de __namecall respecto al baseline.")
+    end
+    if xero.indexChanged == true then
+        table.insert(lines, "- Xero cambia la huella de __index respecto al baseline.")
+    end
+
+    if yisus.namecallChanged == false and yisus.indexChanged == false and (yisus.shots or 0) > 0 then
+        table.insert(lines, "- Yisus no deja la misma huella global de metamethods; probablemente usa otra ruta observable.")
+    elseif yisus.namecallChanged == true or yisus.indexChanged == true then
+        table.insert(lines, "- Yisus también altera al menos un metamethod global; hay que comparar la conducta de disparo, no solo la existencia del hook.")
+    end
+
+    if type(yisus.avgCameraToVictim) == "number" and yisus.avgCameraToVictim > 8 then
+        table.insert(lines, "- Yisus consiguió daño con víctimas bastante fuera de la dirección de cámara; el comportamiento es realmente 'silent'.")
+    end
+
+    if yisus.projectileCount > xero.projectileCount + 2 then
+        table.insert(lines, "- Yisus genera/modifica más objetos de proyectil/tracer visibles que Xero.")
+    end
+
+    if yisus.toolDiffCount > xero.toolDiffCount + 2 then
+        table.insert(lines, "- Yisus produce más cambios observables dentro del Tool/Values/Attributes.")
+    end
+
+    if xero.shots < 2 or yisus.shots < 2 then
+        table.insert(lines, "- Faltan muestras. Usa al menos 3 disparos por modo para sacar una diferencia confiable.")
+    end
+
+    table.insert(lines, "")
+    table.insert(lines, "DETALLE POR DISPARO:")
+
+    for _, modeName in ipairs({"BASELINE", "XERO", "YISUS"}) do
+        local mode = state.modes[modeName]
+        table.insert(lines, "")
+        table.insert(lines, "[" .. modeName .. "]")
+        for i, s in ipairs(mode.shots or {}) do
+            local dmg = {}
+            for _, d in ipairs(s.damage or {}) do
+                table.insert(dmg, string.format("%s(-%.1f, %.1f°, %.3fs)", d.player, d.delta or 0, d.cameraToVictimDeg or -1, d.delay or -1))
+            end
+            table.insert(lines, string.format(
+                "#%d %s tool=%s cam->mouse=%s° camΔ50=%s° damage=%s projectiles=%d toolDiff=%d",
+                i, tostring(s.reason), tostring(s.tool), num(s.cameraToMouseDeg), num(s.cameraDelta50ms),
+                #dmg > 0 and table.concat(dmg, ", ") or "none",
+                #(s.projectiles or {}), #(s.toolDiff or {})
+            ))
+            for _, diff in ipairs(s.toolDiff or {}) do
+                table.insert(lines, "  TOOL " .. diff)
+            end
+            for _, p in ipairs(s.projectiles or {}) do
+                table.insert(lines, string.format("  PROJ %s %s velAngle=%s°", p.class or "?", p.name or "?", num(p.cameraToVelocityDeg)))
+            end
+        end
+    end
+
+    return table.concat(lines, "\n")
+end
+
+
+local function modeReportPath(modeName)
+    if modeName == "XERO" then return XERO_REPORT_FILE end
+    if modeName == "YISUS" then return YISUS_REPORT_FILE end
+    return nil
+end
+
+local function buildSingleModeReport(modeName)
+    local mode = state.modes[modeName]
+    if not mode then return "Modo inválido: " .. tostring(modeName) end
+
+    local baseline = state.modes.BASELINE
+    local baselineFp = baseline and baseline.fingerprint or nil
+    local summary = summarizeMode(modeName, mode, baselineFp)
+
+    local lines = {}
+    table.insert(lines, "===== XERO AIM COMPARE LAB · " .. modeName .. " =====")
+    table.insert(lines, "Reporte independiente · guardado automático")
+    table.insert(lines, "Creator: Kev")
+    table.insert(lines, "PlaceId: " .. tostring(game.PlaceId))
+    table.insert(lines, "JobId: " .. tostring(game.JobId))
+    table.insert(lines, "User: " .. tostring(player.Name))
+    table.insert(lines, "Shots captured: " .. tostring(summary.shots))
+    table.insert(lines, "")
+
+    table.insert(lines, "[HUELLA GLOBAL]")
+    table.insert(lines, "__namecall changed vs baseline: " .. yn(summary.namecallChanged))
+    table.insert(lines, "__index changed vs baseline: " .. yn(summary.indexChanged))
+
+    if mode.fingerprint then
+        table.insert(lines, "__namecall fingerprint: " .. fingerprintKey(mode.fingerprint, "namecall"))
+        table.insert(lines, "__index fingerprint: " .. fingerprintKey(mode.fingerprint, "index"))
+    else
+        table.insert(lines, "__namecall fingerprint: N/D")
+        table.insert(lines, "__index fingerprint: N/D")
+    end
+
+    table.insert(lines, "")
+    table.insert(lines, "[RESUMEN]")
+    table.insert(lines, "Avg camera -> Mouse.Hit: " .. num(summary.avgCameraToMouse) .. " deg")
+    table.insert(lines, "Avg camera movement @50ms: " .. num(summary.avgCameraMove50) .. " deg")
+    table.insert(lines, "Avg camera movement @150ms: " .. num(summary.avgCameraMove150) .. " deg")
+    table.insert(lines, "Avg camera -> damaged victim: " .. num(summary.avgCameraToVictim) .. " deg")
+    table.insert(lines, "Damage events: " .. tostring(summary.damageCount))
+    table.insert(lines, "Projectile/tracer observations: " .. tostring(summary.projectileCount))
+    table.insert(lines, "Tool Attribute/Value changes: " .. tostring(summary.toolDiffCount))
+
+    table.insert(lines, "")
+    table.insert(lines, "[DISPAROS]")
+    for i, shot in ipairs(mode.shots or {}) do
+        local dmg = {}
+        for _, d in ipairs(shot.damage or {}) do
+            table.insert(dmg, string.format(
+                "%s(-%.1f HP, cam=%.2f deg, +%.3fs)",
+                tostring(d.player),
+                tonumber(d.delta) or 0,
+                tonumber(d.cameraToVictimDeg) or -1,
+                tonumber(d.delay) or -1
+            ))
+        end
+
+        table.insert(lines, string.format(
+            "#%d | %s | tool=%s | cam->mouse=%s deg | camD50=%s deg | camD150=%s deg | damage=%s | projectiles=%d | toolDiff=%d",
+            i,
+            tostring(shot.reason),
+            tostring(shot.tool),
+            num(shot.cameraToMouseDeg),
+            num(shot.cameraDelta50ms),
+            num(shot.cameraDelta150ms),
+            #dmg > 0 and table.concat(dmg, ", ") or "none",
+            #(shot.projectiles or {}),
+            #(shot.toolDiff or {})
+        ))
+
+        if shot.mouse then
+            table.insert(lines, "  Mouse.Target: " .. tostring(shot.mouse.target or "nil"))
+            if shot.mouse.hitPos then
+                table.insert(lines, "  Mouse.Hit: " .. serializeValue(shot.mouse.hitPos))
+            end
+        end
+
+        for _, diff in ipairs(shot.toolDiff or {}) do
+            table.insert(lines, "  TOOL: " .. tostring(diff))
+        end
+
+        for _, projectile in ipairs(shot.projectiles or {}) do
+            table.insert(lines, string.format(
+                "  PROJECTILE: %s | %s | path=%s | velAngle=%s deg",
+                tostring(projectile.class or "?"),
+                tostring(projectile.name or "?"),
+                tostring(projectile.path or "?"),
+                num(projectile.cameraToVelocityDeg)
+            ))
+        end
+    end
+
+    table.insert(lines, "")
+    table.insert(lines, "[NOTAS]")
+    if summary.shots == 0 then
+        table.insert(lines, "- Aún no se capturó ningún disparo.")
+    elseif summary.shots < 3 then
+        table.insert(lines, "- Muestra pequeña; 3-5 disparos dan una comparación más estable.")
+    end
+
+    if modeName == "XERO" then
+        table.insert(lines, "- Este archivo se reescribe inmediatamente después de cada evento capturado.")
+        table.insert(lines, "- Si el juego expulsa al cliente, la última escritura completada permanece en disco.")
+    elseif modeName == "YISUS" then
+        table.insert(lines, "- Este reporte es independiente del de Xero; no necesitas ejecutar ambos hubs en la misma sesión.")
+    end
+
+    return table.concat(lines, "\n")
+end
+
+writeModeReport = function(modeName)
+    local path = modeReportPath(modeName)
+    if not path or type(writefile) ~= "function" then return false end
+
+    if type(makefolder) == "function" then
+        if type(isfolder) ~= "function" or not safe(function() return isfolder(SAVE_FOLDER) end, false) then
+            pcall(makefolder, SAVE_FOLDER)
+        end
+        if type(isfolder) ~= "function" or not safe(function() return isfolder(REPORT_FOLDER) end, false) then
+            pcall(makefolder, REPORT_FOLDER)
+        end
+    end
+
+    local report = buildSingleModeReport(modeName)
+    local ok = pcall(writefile, path, report)
+    return ok
+end
+
+flushActiveReport = function()
+    if state.mode == "XERO" or state.mode == "YISUS" then
+        writeModeReport(state.mode)
     end
 end
 
-local function forceSelected(meta)
-    clearSpawned()
-
-    local def,err = loadEffect(meta)
-    if not def then return false,err end
-
-    local root,buildErr = buildEffect(def)
-    if not root then return false,buildErr end
-
-    local dummy,dummyErr = makeDummy()
-    if not dummy then
-        root:Destroy()
-        return false,dummyErr
-    end
-
-    applyBodyStyle(dummy,meta.name)
-
-    root.Name = "XeroRemote_" .. meta.name
-    root.Parent = Workspace
-    table.insert(App.Spawned,root)
-    Debris:AddItem(root,12)
-
-    local okPlace,placeErr = placeEffect(root,dummy)
-    if not okPlace then return false,placeErr end
-
-    emit(root)
-    return true
+-- =========================
+-- UI
+-- =========================
+local guiParent = player:WaitForChild("PlayerGui")
+if type(gethui) == "function" then
+    guiParent = safe(gethui, guiParent)
+else
+    guiParent = CoreGui
 end
 
--- ================= UI compacta / responsive =================
-
-local parent = CoreGui
-pcall(function() if gethui then parent = gethui() end end)
-
-local oldGui = parent:FindFirstChild("XeroRemoteDeathEffectHub")
-if oldGui then oldGui:Destroy() end
+local old = safe(function() return guiParent:FindFirstChild("XeroAimCompareLab") end, nil)
+if old then old:Destroy() end
 
 local gui = Instance.new("ScreenGui")
-gui.Name = "XeroRemoteDeathEffectHub"
+gui.Name = "XeroAimCompareLab"
 gui.ResetOnSpawn = false
 gui.IgnoreGuiInset = true
-gui.DisplayOrder = 2147483647
-gui.Parent = parent
+gui.DisplayOrder = 2147483000
+gui.Parent = guiParent
 
-local card = Instance.new("Frame")
-card.AnchorPoint = Vector2.new(.5,.5)
-card.Position = UDim2.fromScale(.5,.5)
-card.BackgroundColor3 = Color3.fromRGB(8,8,10)
-card.BorderSizePixel = 0
-card.Parent = gui
-Instance.new("UICorner",card).CornerRadius = UDim.new(0,16)
-local stroke = Instance.new("UIStroke",card)
-stroke.Color = Color3.fromRGB(44,44,50)
+local main = Instance.new("Frame")
+main.Size = UDim2.fromOffset(520, 390)
+main.Position = UDim2.new(0.5, -260, 0.5, -195)
+main.BackgroundColor3 = Color3.fromRGB(10,10,10)
+main.BorderSizePixel = 0
+main.Parent = gui
+Instance.new("UICorner", main).CornerRadius = UDim.new(0, 16)
 
-local function resizeCard()
-    local cam = Workspace.CurrentCamera
-    local vp = cam and cam.ViewportSize or Vector2.new(1280,720)
-    local w = math.clamp(vp.X - 36, 360, 620)
-    local h = math.clamp(vp.Y - 70, 310, 410)
-    card.Size = UDim2.fromOffset(w,h)
-end
-resizeCard()
-if Workspace.CurrentCamera then
-    track(Workspace.CurrentCamera:GetPropertyChangedSignal("ViewportSize"):Connect(resizeCard))
-end
-
-local header = Instance.new("Frame")
-header.Size = UDim2.new(1,0,0,48)
-header.BackgroundTransparency = 1
-header.Active = true
-header.Parent = card
+local stroke = Instance.new("UIStroke", main)
+stroke.Color = Color3.fromRGB(55,55,55)
+stroke.Thickness = 1
 
 local title = Instance.new("TextLabel")
+title.Size = UDim2.new(1, -30, 0, 28)
+title.Position = UDim2.fromOffset(15, 11)
 title.BackgroundTransparency = 1
-title.Position = UDim2.fromOffset(14,7)
-title.Size = UDim2.new(1,-70,0,20)
+title.Text = "XERO | AIM COMPARE LAB"
+title.TextColor3 = Color3.fromRGB(245,245,245)
 title.Font = Enum.Font.GothamBold
-title.TextSize = 14
-title.TextColor3 = Color3.fromRGB(245,245,247)
+title.TextSize = 17
 title.TextXAlignment = Enum.TextXAlignment.Left
-title.Text = "XERO · DEATH EFFECT LAB"
-title.Parent = header
+title.Parent = main
 
-local subtitle = Instance.new("TextLabel")
-subtitle.BackgroundTransparency = 1
-subtitle.Position = UDim2.fromOffset(14,26)
-subtitle.Size = UDim2.new(1,-70,0,15)
-subtitle.Font = Enum.Font.Gotham
-subtitle.TextSize = 9
-subtitle.TextColor3 = Color3.fromRGB(145,145,153)
-subtitle.TextXAlignment = Enum.TextXAlignment.Left
-subtitle.Text = "GitHub remoto · FORCE VFX"
-subtitle.Parent = header
+local sub = Instance.new("TextLabel")
+sub.Size = UDim2.new(1, -30, 0, 18)
+sub.Position = UDim2.fromOffset(15, 37)
+sub.BackgroundTransparency = 1
+sub.Text = "by Kev · comparador pasivo"
+sub.TextColor3 = Color3.fromRGB(135,135,135)
+sub.Font = Enum.Font.Gotham
+sub.TextSize = 11
+sub.TextXAlignment = Enum.TextXAlignment.Left
+sub.Parent = main
 
-local close = Instance.new("TextButton")
-close.AnchorPoint = Vector2.new(1,0)
-close.Position = UDim2.new(1,-8,0,7)
-close.Size = UDim2.fromOffset(34,34)
-close.BackgroundColor3 = Color3.fromRGB(19,19,22)
-close.BorderSizePixel = 0
-close.Text = "×"
-close.Font = Enum.Font.GothamBold
-close.TextSize = 17
-close.TextColor3 = Color3.fromRGB(235,235,238)
-close.Parent = header
-Instance.new("UICorner",close).CornerRadius = UDim.new(0,9)
+local status = Instance.new("TextLabel")
+status.Size = UDim2.new(1, -30, 0, 22)
+status.Position = UDim2.fromOffset(15, 61)
+status.BackgroundTransparency = 1
+status.Text = state.status
+status.TextColor3 = Color3.fromRGB(205,205,205)
+status.Font = Enum.Font.GothamMedium
+status.TextSize = 12
+status.TextXAlignment = Enum.TextXAlignment.Left
+status.Parent = main
+state.statusLabel = status
 
-local search = Instance.new("TextBox")
-search.Position = UDim2.fromOffset(12,52)
-search.Size = UDim2.new(.50,-18,0,34)
-search.BackgroundColor3 = Color3.fromRGB(15,15,18)
-search.BorderSizePixel = 0
-search.ClearTextOnFocus = false
-search.PlaceholderText = "Buscar effect..."
-search.Text = ""
-search.Font = Enum.Font.Gotham
-search.TextSize = 10
-search.TextColor3 = Color3.fromRGB(235,235,239)
-search.PlaceholderColor3 = Color3.fromRGB(125,125,134)
-search.Parent = card
-Instance.new("UICorner",search).CornerRadius = UDim.new(0,9)
-local searchPad = Instance.new("UIPadding",search)
-searchPad.PaddingLeft = UDim.new(0,10)
-searchPad.PaddingRight = UDim.new(0,10)
+local buttons = Instance.new("Frame")
+buttons.Size = UDim2.new(1, -30, 0, 72)
+buttons.Position = UDim2.fromOffset(15, 89)
+buttons.BackgroundTransparency = 1
+buttons.Parent = main
 
-local force = Instance.new("TextButton")
-force.Position = UDim2.new(.50,2,0,52)
-force.Size = UDim2.new(.27,-8,0,34)
-force.BackgroundColor3 = Color3.fromRGB(22,22,25)
-force.BorderSizePixel = 0
-force.Text = "FORCE VFX"
-force.Font = Enum.Font.GothamBold
-force.TextSize = 10
-force.TextColor3 = Color3.fromRGB(245,245,247)
-force.Parent = card
-Instance.new("UICorner",force).CornerRadius = UDim.new(0,9)
+local grid = Instance.new("UIGridLayout", buttons)
+grid.CellSize = UDim2.new(1/3, -6, 0, 31)
+grid.CellPadding = UDim2.fromOffset(8, 8)
+grid.SortOrder = Enum.SortOrder.LayoutOrder
 
-local clear = Instance.new("TextButton")
-clear.Position = UDim2.new(.77,2,0,52)
-clear.Size = UDim2.new(.23,-14,0,34)
-clear.BackgroundColor3 = Color3.fromRGB(18,18,21)
-clear.BorderSizePixel = 0
-clear.Text = "CLEAR"
-clear.Font = Enum.Font.GothamMedium
-clear.TextSize = 10
-clear.TextColor3 = Color3.fromRGB(225,225,230)
-clear.Parent = card
-Instance.new("UICorner",clear).CornerRadius = UDim.new(0,9)
-
-local list = Instance.new("ScrollingFrame")
-list.Position = UDim2.fromOffset(12,96)
-list.Size = UDim2.new(.46,-18,1,-108)
-list.BackgroundColor3 = Color3.fromRGB(11,11,13)
-list.BorderSizePixel = 0
-list.ScrollBarThickness = 3
-list.AutomaticCanvasSize = Enum.AutomaticSize.Y
-list.CanvasSize = UDim2.fromOffset(0,0)
-list.Parent = card
-Instance.new("UICorner",list).CornerRadius = UDim.new(0,11)
-local listPad = Instance.new("UIPadding",list)
-listPad.PaddingTop = UDim.new(0,6)
-listPad.PaddingBottom = UDim.new(0,6)
-listPad.PaddingLeft = UDim.new(0,6)
-listPad.PaddingRight = UDim.new(0,6)
-local layout = Instance.new("UIListLayout",list)
-layout.Padding = UDim.new(0,4)
-
-local detail = Instance.new("TextBox")
-detail.Position = UDim2.new(.46,2,0,96)
-detail.Size = UDim2.new(.54,-14,1,-108)
-detail.BackgroundColor3 = Color3.fromRGB(10,10,12)
-detail.BorderSizePixel = 0
-detail.ClearTextOnFocus = false
-detail.MultiLine = true
-detail.TextEditable = false
-detail.TextWrapped = true
-detail.Font = Enum.Font.Code
-detail.TextSize = 10
-detail.TextColor3 = Color3.fromRGB(215,215,221)
-detail.TextXAlignment = Enum.TextXAlignment.Left
-detail.TextYAlignment = Enum.TextYAlignment.Top
-detail.Text = "Cargando manifest de GitHub..."
-detail.Parent = card
-Instance.new("UICorner",detail).CornerRadius = UDim.new(0,11)
-local dp = Instance.new("UIPadding",detail)
-dp.PaddingTop = UDim.new(0,9)
-dp.PaddingBottom = UDim.new(0,9)
-dp.PaddingLeft = UDim.new(0,9)
-dp.PaddingRight = UDim.new(0,9)
-
-local buttons = {}
-
-local function setSelected(meta)
-    App.Selected = meta
-    local cached = App.Cache[meta.name] ~= nil
-    detail.Text = table.concat({
-        "Effect: " .. tostring(meta.name),
-        "Root: " .. tostring(meta.rootClass or "?"),
-        "Captured descendants: " .. tostring(meta.capturedDescendants or "?"),
-        "Objects in dump: " .. tostring(meta.objects or "?"),
-        "",
-        "Source: GitHub",
-        "Cached this session: " .. tostring(cached),
-        "Replication required: NO",
-        "",
-        "Pulsa FORCE VFX."
-    },"\n")
+local function makeButton(text, order, cb)
+    local b = Instance.new("TextButton")
+    b.LayoutOrder = order
+    b.Text = text
+    b.BackgroundColor3 = Color3.fromRGB(23,23,23)
+    b.TextColor3 = Color3.fromRGB(235,235,235)
+    b.Font = Enum.Font.GothamMedium
+    b.TextSize = 11
+    b.AutoButtonColor = true
+    b.Parent = buttons
+    Instance.new("UICorner", b).CornerRadius = UDim.new(0, 9)
+    local s = Instance.new("UIStroke", b)
+    s.Color = Color3.fromRGB(48,48,48)
+    s.Thickness = 1
+    b.MouseButton1Click:Connect(cb)
+    return b
 end
 
-local function rebuildList()
-    for _,b in ipairs(buttons) do b:Destroy() end
-    table.clear(buttons)
+makeButton("BASELINE (OPCIONAL)", 1, function() markMode("BASELINE") end)
+makeButton("ESCANEAR XERO", 2, function() markMode("XERO") end)
+makeButton("ESCANEAR YISUS", 3, function() markMode("YISUS") end)
+makeButton("DETENER", 4, function()
+    state.mode = nil
+    setStatus("Captura detenida")
+    saveState()
+end)
 
-    local manifest = App.Manifest
-    if not manifest then return end
+local reportBox = Instance.new("TextBox")
+reportBox.Size = UDim2.new(1, -30, 1, -177)
+reportBox.Position = UDim2.fromOffset(15, 171)
+reportBox.BackgroundColor3 = Color3.fromRGB(15,15,15)
+reportBox.BorderSizePixel = 0
+reportBox.TextColor3 = Color3.fromRGB(190,190,190)
+reportBox.Font = Enum.Font.Code
+reportBox.TextSize = 11
+reportBox.TextWrapped = false
+reportBox.MultiLine = true
+reportBox.ClearTextOnFocus = false
+reportBox.TextEditable = false
+reportBox.TextXAlignment = Enum.TextXAlignment.Left
+reportBox.TextYAlignment = Enum.TextYAlignment.Top
+reportBox.Text = "ESCANEAR XERO -> XeroHub/AimReports/Xero_Report.txt\nESCANEAR YISUS -> XeroHub/AimReports/Yisus_Report.txt\n\nCada disparo actualiza SU archivo inmediatamente.\nNo necesitas ejecutar ambos hubs juntos."
+reportBox.Parent = main
+Instance.new("UICorner", reportBox).CornerRadius = UDim.new(0, 10)
+local pad = Instance.new("UIPadding", reportBox)
+pad.PaddingLeft = UDim.new(0, 9)
+pad.PaddingRight = UDim.new(0, 9)
+pad.PaddingTop = UDim.new(0, 8)
+pad.PaddingBottom = UDim.new(0, 8)
 
-    local q = string.lower(search.Text or "")
-    local shown = 0
-    for _,meta in ipairs(manifest.effects) do
-        if q == "" or string.find(string.lower(meta.name),q,1,true) then
-            shown = shown + 1
-            local b = Instance.new("TextButton")
-            b.LayoutOrder = shown
-            b.Size = UDim2.new(1,0,0,34)
-            b.BackgroundColor3 = Color3.fromRGB(17,17,20)
-            b.BorderSizePixel = 0
-            b.AutoButtonColor = false
-            b.Font = Enum.Font.GothamMedium
-            b.TextSize = 9
-            b.TextColor3 = Color3.fromRGB(235,235,239)
-            b.TextXAlignment = Enum.TextXAlignment.Left
-            b.Text = "  " .. meta.name
-            b.Parent = list
-            Instance.new("UICorner",b).CornerRadius = UDim.new(0,8)
-            b.MouseButton1Click:Connect(function() setSelected(meta) end)
-            buttons[#buttons+1] = b
-        end
+makeButton("GUARDAR REPORTES", 5, function()
+    local okX = writeModeReport("XERO")
+    local okY = writeModeReport("YISUS")
+    local report = "XERO -> " .. XERO_REPORT_FILE .. " [" .. (okX and "OK" or "ERROR") .. "]\n"
+        .. "YISUS -> " .. YISUS_REPORT_FILE .. " [" .. (okY and "OK" or "ERROR") .. "]"
+    reportBox.Text = report
+    setStatus("Reportes independientes actualizados")
+    if type(setclipboard) == "function" then
+        pcall(setclipboard, report)
     end
-end
+end)
 
-search:GetPropertyChangedSignal("Text"):Connect(rebuildList)
+makeButton("BORRAR CAPTURAS", 6, function()
+    state.modes = {
+        BASELINE = {shots = {}, started = nil, fingerprint = nil},
+        XERO = {shots = {}, started = nil, fingerprint = nil},
+        YISUS = {shots = {}, started = nil, fingerprint = nil},
+    }
+    state.mode = nil
+    state.lastShot = nil
+    reportBox.Text = "Capturas en memoria reiniciadas.\nLos .txt existentes se actualizarán al próximo escaneo."
+    setStatus("Datos reiniciados")
+    saveState()
+    writeModeReport("XERO")
+    writeModeReport("YISUS")
+end)
 
-force.MouseButton1Click:Connect(function()
-    local meta = App.Selected
-    if not meta then
-        detail.Text = "Selecciona un effect primero."
-        return
-    end
-
-    detail.Text = "Descargando/reconstruyendo " .. meta.name .. "..."
-    task.spawn(function()
-        local ok,err = forceSelected(meta)
-        if ok then
-            detail.Text = table.concat({
-                "✅ FORCE VFX",
-                "",
-                "Effect: " .. meta.name,
-                "Replication required: NO",
-                "Loaded from GitHub: YES",
-                "Cached this session: YES",
-                "",
-                "Mira el dummy enfrente."
-            },"\n")
-        else
-            detail.Text = "❌ " .. meta.name .. "\n\n" .. tostring(err)
+-- Drag
+do
+    local dragging, dragStart, startPos, dragInput
+    title.Active = true
+    title.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+            dragging = true
+            dragStart = input.Position
+            startPos = main.Position
+            input.Changed:Connect(function()
+                if input.UserInputState == Enum.UserInputState.End then dragging = false end
+            end)
         end
     end)
-end)
-
-clear.MouseButton1Click:Connect(function()
-    clearSpawned()
-    if App.Selected then
-        setSelected(App.Selected)
-    else
-        detail.Text = "Limpio."
-    end
-end)
-
--- Drag: toda la barra superior.
-local dragging = false
-local dragStart, startPos
-
-header.InputBegan:Connect(function(input)
-    if input.UserInputType ~= Enum.UserInputType.MouseButton1
-        and input.UserInputType ~= Enum.UserInputType.Touch then
-        return
-    end
-    dragging = true
-    dragStart = input.Position
-    startPos = card.Position
-end)
-
-track(UserInputService.InputChanged:Connect(function(input)
-    if not dragging then return end
-    if input.UserInputType ~= Enum.UserInputType.MouseMovement
-        and input.UserInputType ~= Enum.UserInputType.Touch then
-        return
-    end
-
-    local delta = input.Position - dragStart
-    card.Position = UDim2.new(
-        startPos.X.Scale,
-        startPos.X.Offset + delta.X,
-        startPos.Y.Scale,
-        startPos.Y.Offset + delta.Y
-    )
-end))
-
-track(UserInputService.InputEnded:Connect(function(input)
-    if input.UserInputType == Enum.UserInputType.MouseButton1
-        or input.UserInputType == Enum.UserInputType.Touch then
-        dragging = false
-    end
-end))
-
-function App.Destroy()
-    if not App.Alive then return end
-    App.Alive = false
-    clearSpawned()
-    for i = #App.Connections,1,-1 do
-        pcall(function() App.Connections[i]:Disconnect() end)
-        App.Connections[i] = nil
-    end
-    pcall(function() gui:Destroy() end)
-    if ENV.__XERO_REMOTE_DEATH_EFFECT_HUB == App then
-        ENV.__XERO_REMOTE_DEATH_EFFECT_HUB = nil
-    end
+    title.InputChanged:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch then
+            dragInput = input
+        end
+    end)
+    track(UserInputService.InputChanged:Connect(function(input)
+        if dragging and input == dragInput then
+            local delta = input.Position - dragStart
+            main.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+        end
+    end))
 end
 
-close.MouseButton1Click:Connect(App.Destroy)
+state.gui = gui
 
-task.spawn(function()
-    local manifest,err = loadManifest()
-    if not manifest then
-        detail.Text =
-            "❌ No pude cargar manifest.json\n\n" ..
-            tostring(err) ..
-            "\n\nSube la carpeta death_effects del ZIP al root del repo."
-        return
+local exportEnv = (getgenv and getgenv()) or _G
+exportEnv.XeroAimCompareLab = {
+    Report = buildReport,
+    ReportXero = function() return buildSingleModeReport("XERO") end,
+    ReportYisus = function() return buildSingleModeReport("YISUS") end,
+    SaveReports = function()
+        return writeModeReport("XERO"), writeModeReport("YISUS")
+    end,
+    Save = saveState,
+    SetMode = markMode,
+    Stop = function() state.mode = nil setStatus("Captura detenida") end,
+    Destroy = function()
+        state.alive = false
+        for _, c in ipairs(state.connections) do pcall(function() c:Disconnect() end) end
+        pcall(function() gui:Destroy() end)
     end
+}
 
-    table.sort(manifest.effects,function(a,b) return a.name < b.name end)
-    rebuildList()
-
-    if manifest.effects[1] then
-        setSelected(manifest.effects[1])
-    end
-end)
+setStatus("Listo · ESCANEAR XERO o ESCANEAR YISUS")

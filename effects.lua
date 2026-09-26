@@ -3381,7 +3381,7 @@ local title = Instance.new("TextLabel")
 title.BackgroundTransparency = 1
 title.Position = UDim2.fromOffset(16, 12)
 title.Size = UDim2.new(1,-32,0,22)
-title.Text = "XERO · DEATH EFFECTS · ENEMIES R17"
+title.Text = "XERO · DEATH EFFECTS · INSTANT R24"
 title.TextColor3 = Color3.fromRGB(245,245,245)
 title.Font = Enum.Font.GothamBold
 title.TextSize = 14
@@ -3475,6 +3475,39 @@ local function refresh()
     effectLabel.Text = selectedEffect() or "Sin efectos"
 end
 refresh()
+
+-- R24: build/mirror the selected native asset BEFORE a kill happens.
+-- The V2 JSON was already preloaded at startup; this removes the remaining
+-- reconstruction cost from the lethal-hit path.
+local preparedEffectName = nil
+local preparedEffectAsset = nil
+
+local function prepareSelectedEffect()
+    local name = selectedEffect()
+    if not name then return false, "sin efecto seleccionado" end
+
+    if preparedEffectName == name
+        and preparedEffectAsset
+        and preparedEffectAsset.Parent then
+        return true, "ya armado"
+    end
+
+    local asset, _, why = ensureNativeAsset(name)
+    if not asset then
+        preparedEffectName = nil
+        preparedEffectAsset = nil
+        return false, tostring(why or "no se pudo preparar")
+    end
+
+    preparedEffectName = name
+    preparedEffectAsset = asset
+    return true, tostring(why or "asset listo")
+end
+
+-- Default (Frostbite) is armed before the user gets into a kill.
+task.defer(function()
+    prepareSelectedEffect()
+end)
 
 local function isEnemyPlayer(player)
     if not player or player == LP then return false end
@@ -3798,42 +3831,88 @@ local function triggerVictim(player, character, hum, proof)
     local effectName = selectedEffect()
     if not effectName then return false end
 
+    -- Native asset should already be prepared by the selector/toggle. This is
+    -- only a safety net if the player kills during the first startup frames.
+    if preparedEffectName ~= effectName
+        or not preparedEffectAsset
+        or not preparedEffectAsset.Parent then
+        prepareSelectedEffect()
+    end
+
     lastAppliedAt = os.clock()
-    status.Text =
-        "☠ Kill confirmado: " .. tostring(player.Name) ..
-        " · buscando dummy/cadáver..." ..
-        (proof and ("\n" .. tostring(proof)) or "")
 
     local deathPosition = info.deathPosition or modelPosition(character)
     local deathAt = info.deathAt or os.clock()
+    local immediateApplied = false
+    local immediateTarget = nil
 
-    task.spawn(function()
-        local target, targetKind = waitForDeathTarget(player, character, deathPosition, deathAt)
-        if not target or not target.Parent then
+    -- R24 IMPORTANT: do NOT wait for the DUELS corpse. At the lethal hit the
+    -- original Character still exists for a tiny window, so run the native
+    -- effect on it immediately. This is what makes the effect start before the
+    -- body reaches the floor.
+    if character and character.Parent then
+        local liveHum = character:FindFirstChildOfClass("Humanoid")
+        if liveHum then
+            immediateTarget = character
             status.Text =
-                "✕ Kill confirmado, pero no apareció un dummy/cadáver utilizable.\n" ..
-                "Nuevos cerca: " .. nearbyNewModelSummary(deathPosition, deathAt)
+                "2/3 · IMPACTO LETAL · EFECTO INSTANTÁNEO\n" ..
+                tostring(effectName) .. " → " .. tostring(player.Name) ..
+                (proof and ("\n" .. tostring(proof)) or "")
+
+            local ok, result = pcall(function()
+                return runNativeOnVictim(effectName, character, status)
+            end)
+            immediateApplied = ok and result == true
+        end
+    end
+
+    -- DUELS can replace the live Character with a visible corpse/dummy almost
+    -- immediately afterwards. Bridge the same effect onto that replacement so
+    -- the animation continues on the body that falls, but never delay the first
+    -- frame waiting for this search.
+    task.spawn(function()
+        local target, targetKind =
+            waitForDeathTarget(player, character, deathPosition, deathAt)
+
+        if target and target.Parent and target ~= immediateTarget then
+            status.Text =
+                "↪ Continuando en " .. tostring(targetKind) .. " · " ..
+                tostring(target.Name) .. "..."
+
+            local ok, result = pcall(function()
+                return runNativeOnVictim(effectName, target, status)
+            end)
+
+            if not ok or result ~= true then
+                if not immediateApplied then
+                    status.Text =
+                        "✕ Kill confirmado, pero no se pudo aplicar el efecto al cuerpo.\n" ..
+                        "Nuevos cerca: " .. nearbyNewModelSummary(deathPosition, deathAt)
+                end
+            end
             return
         end
 
-        local hasHumanoid = target:FindFirstChildOfClass("Humanoid") ~= nil
-        status.Text =
-            "2/3 · CUERPO/DUMMY DETECTADO\n" ..
-            tostring(targetKind) .. " · " .. tostring(target.Name) ..
-            " · Humanoid: " .. (hasHumanoid and "sí" or "no") ..
-            "\nAplicando " .. tostring(effectName) .. "..."
-
-        local ok, result = pcall(function()
-            return runNativeOnVictim(effectName, target, status)
-        end)
-        if not ok or result ~= true then
-            status.Text =
-                "✕ Se encontró " .. tostring(targetKind) .. " (" .. tostring(target.Name) .. ")" ..
-                " pero DeathEffectPreview no pudo aplicarlo.\nHumanoid: " ..
-                (hasHumanoid and "sí" or "no")
+        -- If the instant pass succeeded, no dummy is required for correctness.
+        if immediateApplied then
+            return
         end
+
+        -- Last-resort path for cases where the Character disappeared before the
+        -- local kill signal arrived. This keeps the stable R23 dummy behavior.
+        if target and target.Parent then
+            local ok, result = pcall(function()
+                return runNativeOnVictim(effectName, target, status)
+            end)
+            if ok and result == true then return end
+        end
+
+        status.Text =
+            "✕ TU kill se confirmó, pero el Character desapareció antes del efecto.\n" ..
+            "Nuevos cerca: " .. nearbyNewModelSummary(deathPosition, deathAt)
     end)
-    return true
+
+    return immediateApplied or true
 end
 
 local function newestPending()
@@ -4271,14 +4350,22 @@ prev.MouseButton1Click:Connect(function()
     index -= 1
     if index < 1 then index = #EFFECTS end
     refresh()
-    status.Text = "Efecto seleccionado: " .. tostring(selectedEffect())
+    status.Text = "Armando " .. tostring(selectedEffect()) .. "..."
+    local ok, why = prepareSelectedEffect()
+    status.Text = ok
+        and ("✓ Efecto listo: " .. tostring(selectedEffect()))
+        or ("✕ No se pudo preparar: " .. tostring(why))
 end)
 
 nxt.MouseButton1Click:Connect(function()
     index += 1
     if index > #EFFECTS then index = 1 end
     refresh()
-    status.Text = "Efecto seleccionado: " .. tostring(selectedEffect())
+    status.Text = "Armando " .. tostring(selectedEffect()) .. "..."
+    local ok, why = prepareSelectedEffect()
+    status.Text = ok
+        and ("✓ Efecto listo: " .. tostring(selectedEffect()))
+        or ("✕ No se pudo preparar: " .. tostring(why))
 end)
 
 toggle.MouseButton1Click:Connect(function()
@@ -4287,9 +4374,18 @@ toggle.MouseButton1Click:Connect(function()
     refreshAllTracked()
 
     if enabled then
+        status.Text = "Armando " .. tostring(selectedEffect()) .. " para impacto instantáneo..."
+        local ready, why = prepareSelectedEffect()
+        if not ready then
+            enabled = false
+            toggle.Text = "MIS KILLS: OFF"
+            status.Text = "✕ No se pudo preparar el efecto: " .. tostring(why)
+            return
+        end
+
         status.Text =
             "✓ Activo · " .. tostring(selectedEffect()) ..
-            "\nTU kill → dummy/cadáver de DUELS → efecto."
+            "\nTU kill → Character al impacto → dummy como puente."
     else
         for _, entry in ipairs(pendingDeaths) do
             removePending(entry)
@@ -4331,13 +4427,11 @@ UserInputService.InputChanged:Connect(function(input)
 end)
 
 print(
-    "[Xero Death Dummy Kills R23 StableBase]",
+    "[Xero Death Effects R24 InstantKill]",
     #EFFECTS,
     "efectos ·",
     PRELOAD_STATS.loaded,
     "precargados ·",
     BASE
 )
-
-
 

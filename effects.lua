@@ -1,5 +1,5 @@
 --[[
-XeroHub | DUELS Death Effects · Stable Base R288883 · Local Kills + Dummy Bridge
+XeroHub | DUELS Death Effects · Stable Base R23 · Local Kills + Dummy Bridge
 Kev
 
 Objetivo:
@@ -8,9 +8,9 @@ Objetivo:
 - Reconstruye el asset faltante bajo ReplicatedStorage.ReplicatedSkins.Effects.
 - Observa a los jugadores enemigos durante la ronda.
 - Cuando un enemigo muere, sólo continúa si el kill puede atribuirse al jugador local.
-- Usa SU Character real como víctima.
+- Usa un PROXY LOCAL externo; el Character enemigo queda intacto/read-only.
 - Llama la lógica NATIVA del juego:
-      DeathEffectPreview.play(victimCharacter, effectName, cleaner)
+      DeathEffectPreview.play(localProxy, effectName, cleaner)
   para que el propio módulo aplique deformaciones, transparencias, cambios del
   cuerpo, animaciones, etc., no sólo partículas/sonidos.
 
@@ -3073,17 +3073,19 @@ local function enforceInvisibleCarriers(dummy, asset, effectName)
 
     if not next(names) then return end
 
-    local root = dummy and dummy:FindFirstChild("HumanoidRootPart")
     local locked = setmetatable({}, {__mode="k"})
     local propertyConnections = setmetatable({}, {__mode="k"})
 
-    local function nearDummy(part)
-        if not root or not part:IsA("BasePart") then return true end
-        return (part.Position - root.Position).Magnitude <= 45
+    local function belongsToOurCameraVisual(obj)
+        if not obj then return false end
+        if dummy and obj:IsDescendantOf(dummy) then return true end
+        local cameraRoot = ENV.__XERO_DEATH_PROXY and ENV.__XERO_DEATH_PROXY.Root
+        return cameraRoot and obj:IsDescendantOf(cameraRoot) or false
     end
 
     local function forceHidden(part)
         if not part or not part.Parent or not part:IsA("BasePart") then return end
+        if not belongsToOurCameraVisual(part) then return end
 
         pcall(function()
             part.Transparency = 1
@@ -3096,7 +3098,8 @@ local function enforceInvisibleCarriers(dummy, asset, effectName)
         if not propertyConnections[part] then
             local ok, conn = pcall(function()
                 return part:GetPropertyChangedSignal("Transparency"):Connect(function()
-                    if part.Parent and part.Transparency < .999 then
+                    if part.Parent and belongsToOurCameraVisual(part)
+                        and part.Transparency < .999 then
                         pcall(function()
                             part.Transparency = 1
                             part.LocalTransparencyModifier = 1
@@ -3104,71 +3107,40 @@ local function enforceInvisibleCarriers(dummy, asset, effectName)
                     end
                 end)
             end)
-
-            if ok and conn then
-                propertyConnections[part] = conn
-            end
+            if ok and conn then propertyConnections[part] = conn end
         end
     end
 
     local function inspect(obj)
-        if obj:IsA("BasePart")
-            and names[obj.Name]
-            and nearDummy(obj) then
+        if obj and obj:IsA("BasePart") and names[obj.Name]
+            and belongsToOurCameraVisual(obj) then
             locked[obj] = true
             forceHidden(obj)
         end
     end
 
-    local conns = {
-        Workspace.DescendantAdded:Connect(inspect),
-        dummy.DescendantAdded:Connect(inspect),
-    }
-
-    local camera = Workspace.CurrentCamera
-    if camera then
-        conns[#conns+1] = camera.DescendantAdded:Connect(inspect)
+    local conns = {dummy.DescendantAdded:Connect(inspect)}
+    local cameraRoot = ENV.__XERO_DEATH_PROXY and ENV.__XERO_DEATH_PROXY.Root
+    if cameraRoot then
+        conns[#conns+1] = cameraRoot.DescendantAdded:Connect(inspect)
     end
 
     local function rescan()
         if not dummy or not dummy.Parent then return end
-
-        for _, obj in ipairs(dummy:GetDescendants()) do
-            inspect(obj)
+        for _, obj in ipairs(dummy:GetDescendants()) do inspect(obj) end
+        local rootNow = ENV.__XERO_DEATH_PROXY and ENV.__XERO_DEATH_PROXY.Root
+        if rootNow then
+            for _, obj in ipairs(rootNow:GetDescendants()) do inspect(obj) end
         end
-
-        local cameraNow = Workspace.CurrentCamera
-        if cameraNow then
-            for _, obj in ipairs(cameraNow:GetDescendants()) do
-                inspect(obj)
-            end
-        end
-
-        -- Selected effect only; short scan window.
-        for _, obj in ipairs(Workspace:GetDescendants()) do
-            if obj:IsA("BasePart")
-                and names[obj.Name]
-                and nearDummy(obj) then
-                inspect(obj)
-            end
-        end
-
-        for part in pairs(locked) do
-            forceHidden(part)
-        end
+        for part in pairs(locked) do forceHidden(part) end
     end
 
-    for _, delayTime in ipairs({
-        0, .03, .08, .16, .28, .45, .70, 1.0, 1.35, 1.75, 2.20
-    }) do
+    for _, delayTime in ipairs({0, .03, .08, .16, .28, .45, .70, 1.0, 1.35, 1.75, 2.20}) do
         task.delay(delayTime, rescan)
     end
 
     task.delay(2.45, function()
-        for _, conn in ipairs(conns) do
-            pcall(function() conn:Disconnect() end)
-        end
-
+        for _, conn in ipairs(conns) do pcall(function() conn:Disconnect() end) end
         for part, conn in pairs(propertyConnections) do
             pcall(function() conn:Disconnect() end)
             propertyConnections[part] = nil
@@ -3189,8 +3161,429 @@ local function scheduleV2ClothingLock(dummy, asset)
 end
 
 
+
+-- ============================================================
+-- R32 · CURRENTCAMERA READ-ONLY VISUAL PROXY
+-- Same principle as XeroHub ESP: the real enemy is only a reference.
+-- We NEVER parent effect objects into the real Character and NEVER mutate
+-- its body properties. DeathEffectPreview runs on a CurrentCamera-local cloned proxy.
+-- ============================================================
+if ENV.__XERO_DEATH_PROXY
+    and type(ENV.__XERO_DEATH_PROXY.Cleanup) == "function" then
+    pcall(ENV.__XERO_DEATH_PROXY.Cleanup)
+end
+
+ENV.__XERO_DEATH_PROXY = {
+    Root = nil,
+    FollowConnections = setmetatable({}, {__mode = "k"}),
+    SourceByProxy = setmetatable({}, {__mode = "k"}),
+    TemplateByHumanoid = setmetatable({}, {__mode = "k"}),
+    TemplateBuilding = setmetatable({}, {__mode = "k"}),
+}
+
+ENV.__XERO_DEATH_PROXY.EnsureRoot = function()
+    local camera = Workspace.CurrentCamera
+    if not camera then return nil end
+
+    local root = ENV.__XERO_DEATH_PROXY.Root
+    if root and root.Parent == camera then
+        return root
+    end
+
+    if root then
+        pcall(function() root:Destroy() end)
+        ENV.__XERO_DEATH_PROXY.Root = nil
+    end
+
+    -- Everything visual for death effects lives under CurrentCamera.
+    -- The real enemy/corpse is never used as a parent and never mutated.
+    local old = camera:FindFirstChild("XeroDeathVisuals")
+    if old then pcall(function() old:Destroy() end) end
+
+    root = Instance.new("Folder")
+    root.Name = "XeroDeathVisuals"
+    root.Parent = camera
+    ENV.__XERO_DEATH_PROXY.Root = root
+    return root
+end
+
+ENV.__XERO_DEATH_PROXY.DisconnectFollow = function(proxy)
+    local conn = ENV.__XERO_DEATH_PROXY.FollowConnections[proxy]
+    if conn then
+        pcall(function() conn:Disconnect() end)
+        ENV.__XERO_DEATH_PROXY.FollowConnections[proxy] = nil
+    end
+end
+
+ENV.__XERO_DEATH_PROXY.DestroyProxy = function(proxy)
+    if not proxy then return end
+    ENV.__XERO_DEATH_PROXY.DisconnectFollow(proxy)
+    ENV.__XERO_DEATH_PROXY.SourceByProxy[proxy] = nil
+    cleanVictim(proxy)
+    pcall(function()
+        if proxy.Parent then proxy:Destroy() end
+    end)
+end
+
+ENV.__XERO_DEATH_PROXY.Clear = function()
+    for proxy in pairs(ENV.__XERO_DEATH_PROXY.FollowConnections) do
+        ENV.__XERO_DEATH_PROXY.DisconnectFollow(proxy)
+    end
+
+    local root = ENV.__XERO_DEATH_PROXY.Root
+    if root and root.Parent then
+        for _, child in ipairs(root:GetChildren()) do
+            ENV.__XERO_DEATH_PROXY.DestroyProxy(child)
+        end
+    end
+end
+
+ENV.__XERO_DEATH_PROXY.Cleanup = function()
+    ENV.__XERO_DEATH_PROXY.Clear()
+
+    for hum, template in pairs(ENV.__XERO_DEATH_PROXY.TemplateByHumanoid) do
+        ENV.__XERO_DEATH_PROXY.TemplateByHumanoid[hum] = nil
+        if template then
+            pcall(function() template:Destroy() end)
+        end
+    end
+
+    local root = ENV.__XERO_DEATH_PROXY.Root
+    if root then
+        pcall(function() root:Destroy() end)
+    end
+    ENV.__XERO_DEATH_PROXY.Root = nil
+end
+
+ENV.__XERO_DEATH_PROXY.Sanitize = function(model)
+    if not model then return nil end
+
+    for _, obj in ipairs(model:GetDescendants()) do
+        if obj:IsA("Script")
+            or obj:IsA("LocalScript")
+            or obj:IsA("ModuleScript")
+            or obj:IsA("Tool")
+            or obj:IsA("Sound") then
+
+            -- Snapshot sounds (Died/GunKill/etc.) are not part of the death effect.
+            -- Removing them prevents the local visual proxy from replaying native audio.
+            pcall(function() obj:Destroy() end)
+
+        elseif obj:IsA("BasePart") then
+            pcall(function()
+                obj.CanCollide = false
+                obj.CanTouch = false
+                obj.CanQuery = false
+            end)
+
+        elseif obj:IsA("Humanoid") then
+            pcall(function()
+                obj.DisplayDistanceType = Enum.HumanoidDisplayDistanceType.None
+                obj.HealthDisplayType = Enum.HumanoidHealthDisplayType.AlwaysOff
+                obj.NameDisplayDistance = 0
+            end)
+        end
+    end
+
+    return model
+end
+
+-- Build an EXACT detached visual template while the enemy is ALIVE.
+-- R28 deliberately does NOT use HumanoidDescription/UserId reconstruction.
+-- Those APIs can lose game-specific body meshes/accessories and produce a blocky rig.
+-- Instead we copy the CURRENT visible Character hierarchy child-by-child. The real
+-- enemy is read-only: no Archivable writes, no reparenting, no property mutation.
+ENV.__XERO_DEATH_PROXY.PairCloneTree = function(source, clone, map)
+    if not source or not clone then return end
+    map[source] = clone
+
+    local sourceCounts = {}
+    for _, sourceChild in ipairs(source:GetChildren()) do
+        local key = sourceChild.ClassName .. "\0" .. sourceChild.Name
+        sourceCounts[key] = (sourceCounts[key] or 0) + 1
+        local wantedIndex = sourceCounts[key]
+        local seen = 0
+        local cloneChild
+
+        for _, candidate in ipairs(clone:GetChildren()) do
+            if candidate.ClassName == sourceChild.ClassName
+                and candidate.Name == sourceChild.Name then
+                seen += 1
+                if seen == wantedIndex then
+                    cloneChild = candidate
+                    break
+                end
+            end
+        end
+
+        if cloneChild then
+            ENV.__XERO_DEATH_PROXY.PairCloneTree(sourceChild, cloneChild, map)
+        end
+    end
+end
+
+ENV.__XERO_DEATH_PROXY.RepairCloneRefs = function(sourceCharacter, proxy, map)
+    if not proxy or not map then return end
+
+    for sourceObj, cloneObj in pairs(map) do
+        if cloneObj and cloneObj.Parent then
+            if sourceObj:IsA("JointInstance") then
+                pcall(function()
+                    cloneObj.Part0 = map[sourceObj.Part0]
+                    cloneObj.Part1 = map[sourceObj.Part1]
+                end)
+            elseif sourceObj:IsA("WeldConstraint") then
+                pcall(function()
+                    cloneObj.Part0 = map[sourceObj.Part0]
+                    cloneObj.Part1 = map[sourceObj.Part1]
+                end)
+            elseif sourceObj:IsA("Constraint")
+                or sourceObj:IsA("Beam")
+                or sourceObj:IsA("Trail") then
+                pcall(function() cloneObj.Attachment0 = map[sourceObj.Attachment0] end)
+                pcall(function() cloneObj.Attachment1 = map[sourceObj.Attachment1] end)
+            end
+        end
+    end
+
+    pcall(function()
+        if sourceCharacter.PrimaryPart and map[sourceCharacter.PrimaryPart] then
+            proxy.PrimaryPart = map[sourceCharacter.PrimaryPart]
+        end
+    end)
+end
+
+ENV.__XERO_DEATH_PROXY.CopyExactCharacter = function(character)
+    if not character or not character:IsA("Model") then
+        return nil, "Character inválido"
+    end
+
+    local proxy = Instance.new("Model")
+    proxy.Name = tostring(character.Name)
+    local map = {[character] = proxy}
+    local copied = 0
+
+    for _, child in ipairs(character:GetChildren()) do
+        if not child:IsA("Script")
+            and not child:IsA("LocalScript")
+            and not child:IsA("ModuleScript")
+            and not child:IsA("Tool") then
+
+            local okClone, clone = pcall(function()
+                return child:Clone()
+            end)
+
+            if okClone and clone then
+                clone.Parent = proxy
+                copied += 1
+                ENV.__XERO_DEATH_PROXY.PairCloneTree(child, clone, map)
+            end
+        end
+    end
+
+    if copied == 0 then
+        proxy:Destroy()
+        return nil, "ningún hijo visual se pudo copiar"
+    end
+
+    -- A Humanoid is required by DeathEffectPreview. Normally it was copied
+    -- above; this is only a detached-proxy fallback and never touches source.
+    if not proxy:FindFirstChildOfClass("Humanoid") then
+        local hum = Instance.new("Humanoid")
+        hum.Name = "Humanoid"
+        hum.Parent = proxy
+    end
+
+    ENV.__XERO_DEATH_PROXY.RepairCloneRefs(character, proxy, map)
+    ENV.__XERO_DEATH_PROXY.Sanitize(proxy)
+    proxy.Parent = nil
+    return proxy
+end
+
+ENV.__XERO_DEATH_PROXY.BuildTemplate = function(player, character, hum)
+    if not hum or ENV.__XERO_DEATH_PROXY.TemplateBuilding[hum] then return end
+    if ENV.__XERO_DEATH_PROXY.TemplateByHumanoid[hum] then return end
+
+    ENV.__XERO_DEATH_PROXY.TemplateBuilding[hum] = true
+
+    task.spawn(function()
+        local template
+        if character and character.Parent then
+            template = select(1, ENV.__XERO_DEATH_PROXY.CopyExactCharacter(character))
+        end
+
+        if template then
+            template.Name = "XeroDeathTemplate_" .. tostring(player and player.Name or "Enemy")
+            template.Parent = nil
+
+            local old = ENV.__XERO_DEATH_PROXY.TemplateByHumanoid[hum]
+            if old and old ~= template then
+                pcall(function() old:Destroy() end)
+            end
+            ENV.__XERO_DEATH_PROXY.TemplateByHumanoid[hum] = template
+        end
+
+        ENV.__XERO_DEATH_PROXY.TemplateBuilding[hum] = nil
+    end)
+end
+
+ENV.__XERO_DEATH_PROXY.Make = function(source, effectName, hum, player, deathPosition)
+    local proxy
+    local reason
+
+    -- Best path: take a fresh read-only visual snapshot in the kill frame so
+    -- hair, accessories, package meshes and the current body pose are exact.
+    if source and source.Parent and source:IsA("Model") then
+        proxy, reason = ENV.__XERO_DEATH_PROXY.CopyExactCharacter(source)
+    end
+
+    -- If DUELS removed the Character before the confirmation arrived, use the
+    -- exact detached template captured while it was alive. No generic avatar.
+    if not proxy then
+        local base = hum and ENV.__XERO_DEATH_PROXY.TemplateByHumanoid[hum] or nil
+        if base then
+            local ok, generated = pcall(function() return base:Clone() end)
+            if ok and generated then proxy = generated end
+        end
+    end
+
+    if not proxy then
+        return nil, reason or "plantilla visual exacta aún no disponible"
+    end
+
+    ENV.__XERO_DEATH_PROXY.Sanitize(proxy)
+    proxy.Name = "XeroDeathVisual_" .. tostring(player and player.Name or (source and source.Name) or "Enemy")
+    local cameraRoot = ENV.__XERO_DEATH_PROXY.EnsureRoot()
+    if not cameraRoot then
+        pcall(function() proxy:Destroy() end)
+        return nil, "CurrentCamera no disponible"
+    end
+    proxy.Parent = cameraRoot
+
+    local positioned = false
+    if source and source.Parent then
+        positioned = pcall(function() proxy:PivotTo(source:GetPivot()) end)
+    end
+    if not positioned and deathPosition then
+        pcall(function()
+            local pivot = proxy:GetPivot()
+            proxy:PivotTo(CFrame.new(deathPosition) * (pivot - pivot.Position))
+        end)
+    end
+
+    -- Only the detached proxy receives death state / effect physics.
+    local proxyHumanoid = proxy:FindFirstChildOfClass("Humanoid")
+    if proxyHumanoid then
+        pcall(function()
+            proxyHumanoid.BreakJointsOnDeath = false
+            proxyHumanoid.Health = 0
+        end)
+    end
+
+    proxy:SetAttribute("XeroDeathVisualProxy", true)
+    proxy:SetAttribute("XeroDeathEffect", tostring(effectName or ""))
+    ENV.__XERO_DEATH_PROXY.SourceByProxy[proxy] = source
+
+    task.delay(10.35, function()
+        if proxy and proxy.Parent then
+            ENV.__XERO_DEATH_PROXY.DestroyProxy(proxy)
+        end
+    end)
+
+    return proxy
+end
+
+ENV.__XERO_DEATH_PROXY.OwnsMotion = function(effectName, proxy)
+    local lower = string.lower(tostring(effectName or ""))
+
+    -- Known effects whose native behavior intentionally controls the body's
+    -- position/anchoring. Do not force them to follow the DUELS corpse.
+    if string.find(lower, "ufo", 1, true)
+        or string.find(lower, "abduct", 1, true)
+        or string.find(lower, "ghost", 1, true)
+        or string.find(lower, "freeze", 1, true) then
+        return true
+    end
+
+    -- Generic fallback: if the native renderer adds motion/force constraints,
+    -- or anchors any visible body part, let that physics own the proxy.
+    if proxy and proxy.Parent then
+        for _, obj in ipairs(proxy:GetDescendants()) do
+            if obj:IsA("BasePart")
+                and obj.Name ~= "HumanoidRootPart"
+                and obj.Anchored then
+                return true
+            end
+
+            local class = obj.ClassName
+            if class == "BodyPosition"
+                or class == "BodyVelocity"
+                or class == "BodyGyro"
+                or class == "BodyForce"
+                or class == "BodyAngularVelocity"
+                or class == "RocketPropulsion"
+                or class == "LinearVelocity"
+                or class == "AngularVelocity"
+                or class == "VectorForce"
+                or class == "AlignPosition"
+                or class == "AlignOrientation"
+                or class == "Torque" then
+                return true
+            end
+        end
+    end
+
+    return false
+end
+
+ENV.__XERO_DEATH_PROXY.FollowCorpse = function(proxy, corpse, effectName)
+    if not proxy or not proxy.Parent or not corpse or not corpse.Parent then
+        return false
+    end
+
+    ENV.__XERO_DEATH_PROXY.DisconnectFollow(proxy)
+
+    -- Freeze / UFO / Ghost etc. own their motion. Frostbite and normal
+    -- body-style effects do not, so they follow only the corpse's WORLD PIVOT
+    -- while preserving their own rigid/effect pose.
+    if ENV.__XERO_DEATH_PROXY.OwnsMotion(effectName, proxy) then
+        return false
+    end
+
+    ENV.__XERO_DEATH_PROXY.FollowConnections[proxy] =
+        game:GetService("RunService").RenderStepped:Connect(function()
+            if not proxy.Parent or not corpse.Parent then
+                ENV.__XERO_DEATH_PROXY.DisconnectFollow(proxy)
+                return
+            end
+
+            -- If the native effect later starts controlling physics, stop
+            -- following immediately instead of fighting the effect.
+            if ENV.__XERO_DEATH_PROXY.OwnsMotion(effectName, proxy) then
+                ENV.__XERO_DEATH_PROXY.DisconnectFollow(proxy)
+                return
+            end
+
+            local okPivot, pivot = pcall(function()
+                return corpse:GetPivot()
+            end)
+
+            if okPivot and typeof(pivot) == "CFrame" then
+                pcall(function()
+                    proxy:PivotTo(pivot)
+                end)
+            end
+        end)
+
+    return true
+end
+
+ENV.__XERO_DEATH_PROXY.EnsureRoot()
+
 local function cleanupLegacyDecoratedArtifacts()
-    for _, obj in ipairs(Workspace:GetDescendants()) do
+    local cameraRoot = ENV.__XERO_DEATH_PROXY and ENV.__XERO_DEATH_PROXY.Root
+    if not cameraRoot then return end
+    for _, obj in ipairs(cameraRoot:GetDescendants()) do
         if obj.Name == "XeroEffect_WeldToRoot" then
             pcall(function() obj:Destroy() end)
         end
@@ -3235,8 +3628,7 @@ local function runNativeOnVictim(name, victim, statusLabel)
 
     local before = snapshotDummyState(victim)
 
-    -- R29: Preview.play owns particle emission. Do NOT force Emit() again;
-    -- doing so can replay the same VFX a second time.
+    -- R32: Preview.play owns VFX/audio emission. Never re-Emit particles manually.
     enforceInvisibleCarriers(victim, asset, name)
 
     local clothesV2 = applyV2Clothing(victim, asset)
@@ -3251,8 +3643,8 @@ local function runNativeOnVictim(name, victim, statusLabel)
             tostring(assetStatus)
     end
 
-    -- This is the important part: the native preview is executed on the
-    -- actual dead enemy character rather than on a disposable preview dummy.
+    -- R32: DeathEffectPreview runs only on a CurrentCamera-local visual proxy.
+    -- The real enemy/corpse is never passed to the renderer.
     local ok, result = pcall(function()
         return Preview.play(victim, name, cleaner)
     end)
@@ -3276,8 +3668,7 @@ local function runNativeOnVictim(name, victim, statusLabel)
         bodyPatchSource = "Frostbite · sin cara/ropa + accesorios negros"
 
     elseif name == "Ghosted" then
-        -- R29: no manual fly/fade replay here. Preview.play must own Ghosted's
-        -- native motion so it is not animated twice.
+        -- CurrentCamera proxy: native preview owns Ghosted movement/fade.
         bodyPatched = false
         bodyPatchSource = nil
 
@@ -3383,7 +3774,7 @@ local title = Instance.new("TextLabel")
 title.BackgroundTransparency = 1
 title.Position = UDim2.fromOffset(16, 12)
 title.Size = UDim2.new(1,-32,0,22)
-title.Text = "XERO · DEATH EFFECTS · REAL CORPSE R29"
+title.Text = "XERO · DEATH EFFECTS · CURRENTCAMERA R32"
 title.TextColor3 = Color3.fromRGB(245,245,245)
 title.Font = Enum.Font.GothamBold
 title.TextSize = 14
@@ -3495,8 +3886,8 @@ local function isEnemyPlayer(player)
 end
 
 local function refreshHumanoidDeathMode(player, hum)
-    -- R29: STRICT READ-ONLY on live enemy Humanoids.
-    -- Do not restore/change BreakJointsOnDeath or any other live-character property.
+    -- R27: strict read-only target policy. Do not write BreakJointsOnDeath or
+    -- any other property on the enemy Humanoid/Character.
     return
 end
 
@@ -3644,237 +4035,146 @@ local function isCurrentPlayerCharacter(model)
     return false
 end
 
--- Kept because the existing Workspace watcher calls it. R31 no longer depends
--- on "new model" timing, but retaining this avoids changing unrelated plumbing.
+local function looksLikeBody(model)
+    if not model or not model:IsA("Model") or not model.Parent then return false end
+    local bodyParts, totalParts = 0, 0
+    for _, obj in ipairs(model:GetDescendants()) do
+        if obj:IsA("BasePart") then
+            totalParts += 1
+            local n = normalized(obj.Name)
+            if n == "head" or n == "humanoidrootpart" or n == "torso"
+                or n == "uppertorso" or n == "lowertorso"
+                or string.find(n, "arm", 1, true) or string.find(n, "leg", 1, true)
+                or string.find(n, "hand", 1, true) or string.find(n, "foot", 1, true) then
+                bodyParts += 1
+            end
+        end
+    end
+    return bodyParts >= 3 and totalParts >= 4
+end
+
 local function rememberDeathModel(model)
-    if model and model:IsA("Model") and model.Parent then
+    if model and model:IsA("Model") and model.Parent
+        and model:GetAttribute("XeroDeathVisualProxy") ~= true then
         recentDeathModels[model] = os.clock()
     end
 end
 
--- One table keeps the chunk's local count LOWER than R30 while giving the
--- detector several strategies. Live enemy objects are only READ here.
-local CorpseScan = {}
-
-function CorpseScan.Capture(character)
-    local signature = {Parts = {}, Accessories = {}, PartRefs = {}}
-    if not character then return signature end
-    for _, obj in ipairs(character:GetDescendants()) do
-        if obj:IsA("BasePart") then
-            local n = normalized(obj.Name)
-            signature.Parts[n] = (signature.Parts[n] or 0) + 1
-            signature.PartRefs[#signature.PartRefs + 1] = obj
-        elseif obj:IsA("Accessory") then
-            signature.Accessories[normalized(obj.Name)] = true
-        end
-    end
-    return signature
-end
-
-function CorpseScan.TrackedHits(model, signature)
-    local hits = 0
-    for _, part in ipairs(signature and signature.PartRefs or {}) do
-        if part and part.Parent then
-            local ok, inside = pcall(function() return part:IsDescendantOf(model) end)
-            if ok and inside then hits += 1 end
-        end
-    end
-    return hits
-end
-
-function CorpseScan.Overlap(model, signature)
-    local partSeen, accessorySeen = {}, {}
-    for _, obj in ipairs(model:GetDescendants()) do
-        if obj:IsA("BasePart") then
-            local n = normalized(obj.Name)
-            partSeen[n] = (partSeen[n] or 0) + 1
-        elseif obj:IsA("Accessory") then
-            accessorySeen[normalized(obj.Name)] = true
-        end
-    end
-
-    local partHits = 0
-    for n, wanted in pairs(signature and signature.Parts or {}) do
-        partHits += math.min(wanted, partSeen[n] or 0)
-    end
-
-    local accessoryHits = 0
-    for n in pairs(signature and signature.Accessories or {}) do
-        if accessorySeen[n] then accessoryHits += 1 end
-    end
-    return partHits, accessoryHits
-end
-
-function CorpseScan.RagdollSignals(model)
-    local n = 0
-    for _, obj in ipairs(model:GetDescendants()) do
-        if obj:IsA("BallSocketConstraint")
-            or obj:IsA("HingeConstraint")
-            or obj:IsA("RodConstraint")
-            or obj:IsA("SpringConstraint")
-            or obj:IsA("AlignPosition")
-            or obj:IsA("AlignOrientation") then
-            n += 1
-            if n >= 12 then break end
-        end
-    end
-    return n
-end
-
-function CorpseScan.Score(model, player, originalCharacter, deathPosition, info)
-    if not model or not model:IsA("Model") or not model.Parent then return nil end
-    if model:GetAttribute("XeroDeathVisualProxy") == true
-        or string.find(tostring(model.Name), "XeroDeathVisual_", 1, true) then
-        return nil
-    end
-
-    local hum = model:FindFirstChildOfClass("Humanoid")
-    if not hum then return nil end
-
-    -- Never mutate/select a living Player.Character.
+local function scoreDeathModel(model, player, originalCharacter, deathPosition, deathAt)
+    if not model or model == originalCharacter or not model.Parent then return nil end
+    if model:GetAttribute("XeroDeathVisualProxy") == true then return nil end
     if isCurrentPlayerCharacter(model) then
-        local health = math.huge
-        pcall(function() health = hum.Health end)
-        if health > 0 then return nil end
+        -- Some games briefly promote the corpse/dummy to Player.Character.
+        -- Exclude only a LIVE character; a dead replacement is still a valid target.
+        local liveHum = model:FindFirstChildOfClass("Humanoid")
+        if liveHum and liveHum.Health > 0 then return nil end
     end
+
+    local createdAt = recentDeathModels[model]
+    if deathAt and createdAt and createdAt < deathAt - 0.20 then return nil end
+    if not looksLikeBody(model) then return nil end
 
     local pos = modelPosition(model)
     if not pos or not deathPosition then return nil end
     local distance = (pos - deathPosition).Magnitude
-    if distance > 55 then return nil end
+    if distance > 24 then return nil end
 
-    local signature = info and info.signature
-    local trackedHits = CorpseScan.TrackedHits(model, signature)
-    local partHits, accessoryHits = CorpseScan.Overlap(model, signature)
-    local score = math.max(0, 110 - distance * 3.0)
-
-    score += math.min(partHits, 18) * 9
-    score += math.min(accessoryHits, 8) * 22
-    score += math.min(CorpseScan.RagdollSignals(model), 12) * 5
-    if trackedHits > 0 then score += 500 + math.min(trackedHits, 20) * 12 end
-    if model == originalCharacter then score += 280 end
-
-    local health = math.huge
-    pcall(function() health = hum.Health end)
-    if health <= 0 then score += 190 end
-
+    local score = 80 - distance * 2.5
     local modelName = normalized(model.Name)
     local victimName = normalized(player and player.Name or "")
     local displayName = normalized(player and player.DisplayName or "")
+
     if victimName ~= "" and (modelName == victimName or string.find(modelName, victimName, 1, true)) then
-        score += 100
+        score += 80
     end
     if displayName ~= "" and displayName ~= victimName and string.find(modelName, displayName, 1, true) then
-        score += 45
+        score += 35
     end
     if string.find(modelName, "dummy", 1, true)
         or string.find(modelName, "corpse", 1, true)
         or string.find(modelName, "ragdoll", 1, true)
         or string.find(modelName, "dead", 1, true)
         or string.find(modelName, "body", 1, true) then
-        score += 55
+        score += 35
     end
+    if model:FindFirstChildOfClass("Humanoid") then score += 25 end
+    if createdAt and deathAt and math.abs(createdAt - deathAt) <= 0.90 then score += 45 end
 
-    if trackedHits == 0 and model ~= originalCharacter and partHits < 5 and accessoryHits == 0 then
-        return nil
-    end
-
-    return score, {
-        distance = distance,
-        trackedHits = trackedHits,
-        partHits = partHits,
-        accessoryHits = accessoryHits,
-        health = health,
-    }
-end
-
-function CorpseScan.Find(player, originalCharacter, deathPosition, info)
-    local best, bestScore, bestMeta = nil, -math.huge, nil
-    local seen = setmetatable({}, {__mode = "k"})
-
-    local function consider(model, bonus)
-        if not model or seen[model] then return end
-        seen[model] = true
-        local score, meta = CorpseScan.Score(model, player, originalCharacter, deathPosition, info)
-        if not score then return end
-        score += bonus or 0
-        if score > bestScore then best, bestScore, bestMeta = model, score, meta end
-    end
-
-    -- A) Same physical parts got reparented into DUELS' ragdoll/corpse.
-    local signature = info and info.signature
-    for _, part in ipairs(signature and signature.PartRefs or {}) do
-        if part and part.Parent then
-            local node = part.Parent
-            while node and node ~= Workspace do
-                if node:IsA("Model") then consider(node, 260) end
-                node = node.Parent
+    local okAttrs, attrs = pcall(function() return model:GetAttributes() end)
+    if okAttrs and type(attrs) == "table" and player then
+        for key, value in pairs(attrs) do
+            local k = normalized(key)
+            if (k == "userid" or k == "playerid" or k == "ownerid")
+                and tonumber(value) == player.UserId then
+                score += 120
+            elseif (k == "player" or k == "owner" or k == "username")
+                and normalized(value) == victimName then
+                score += 100
             end
         end
     end
 
-    -- B) Same Character became the dead ragdoll.
-    consider(originalCharacter, 180)
-
-    -- C) DUELS cloned/reused a corpse before GunKill arrived. Scan CURRENT state,
-    -- not only DescendantAdded events after death.
-    for _, obj in ipairs(Workspace:GetDescendants()) do
-        if obj:IsA("Model") then consider(obj, 0) end
-    end
-    return best, bestScore, bestMeta
+    return score
 end
 
-function CorpseScan.Summary(player, originalCharacter, deathPosition, info)
-    local rows, seen = {}, setmetatable({}, {__mode = "k"})
-    local function add(model)
-        if not model or seen[model] then return end
-        seen[model] = true
-        local score, meta = CorpseScan.Score(model, player, originalCharacter, deathPosition, info)
-        if score then rows[#rows + 1] = {model=model, score=score, meta=meta} end
+local function findBestDeathModel(player, originalCharacter, deathPosition, deathAt)
+    local best, bestScore = nil, -math.huge
+    for model in pairs(recentDeathModels) do
+        if model and model.Parent then
+            local score = scoreDeathModel(model, player, originalCharacter, deathPosition, deathAt)
+            if score and score > bestScore then
+                best, bestScore = model, score
+            end
+        end
     end
-    add(originalCharacter)
-    for _, obj in ipairs(Workspace:GetDescendants()) do
-        if obj:IsA("Model") then add(obj) end
-    end
-    table.sort(rows, function(a,b) return a.score > b.score end)
-    if #rows == 0 then return "sin candidatos con Humanoid" end
-    local out = {}
-    for i = 1, math.min(3, #rows) do
-        local x = rows[i]
-        out[#out+1] = string.format(
-            "%s S:%d D:%.1f H:%.0f P:%d A:%d T:%d",
-            tostring(x.model.Name), math.floor(x.score), x.meta.distance,
-            x.meta.health, x.meta.partHits, x.meta.accessoryHits, x.meta.trackedHits
-        )
-    end
-    return table.concat(out, " | ")
+    return best, bestScore
 end
 
-local function waitForDeathTarget(player, originalCharacter, deathPosition, deathAt, info)
-    local deadline = os.clock() + 1.20
-    local stableCandidate, stableFrames = nil, 0
-    repeat
-        local best, score, meta = CorpseScan.Find(player, originalCharacter, deathPosition, info)
-        if best and score >= 150 then
-            if stableCandidate == best then stableFrames += 1
-            else stableCandidate, stableFrames = best, 1 end
-
-            -- Reparented parts / the dead original are unambiguous immediately.
-            -- A cloned corpse gets one extra Heartbeat to finish constructing.
-            if (meta and meta.trackedHits > 0) or best == originalCharacter or stableFrames >= 2 then
-                if best == originalCharacter then
-                    return best, "Character muerto/ragdoll real"
-                elseif meta and meta.trackedHits > 0 then
-                    return best, "ragdoll real por partes reparentadas"
-                else
-                    return best, "cadáver real por firma del avatar"
+local function nearbyNewModelSummary(deathPosition, deathAt)
+    if not deathPosition then return "ninguno" end
+    local found = {}
+    for model, createdAt in pairs(recentDeathModels) do
+        if model and model.Parent and (not deathAt or createdAt >= deathAt - 0.20) then
+            local pos = modelPosition(model)
+            if pos then
+                local distance = (pos - deathPosition).Magnitude
+                if distance <= 35 then
+                    found[#found + 1] = {
+                        name = tostring(model.Name),
+                        distance = distance,
+                        humanoid = model:FindFirstChildOfClass("Humanoid") ~= nil,
+                    }
                 end
             end
         end
-        if os.clock() >= deadline then break end
-        RunService.Heartbeat:Wait()
-    until false
-    return nil, CorpseScan.Summary(player, originalCharacter, deathPosition, info)
+    end
+    table.sort(found, function(a, b) return a.distance < b.distance end)
+    if #found == 0 then return "ninguno" end
+    local parts = {}
+    for i = 1, math.min(#found, 4) do
+        local x = found[i]
+        parts[#parts + 1] = string.format("%s %.1fst H:%s", x.name, x.distance, x.humanoid and "sí" or "no")
+    end
+    return table.concat(parts, " | ")
+end
+
+local function waitForDeathTarget(player, originalCharacter, deathPosition, deathAt)
+    local deadline = os.clock() + 0.90
+    repeat
+        local best, score = findBestDeathModel(player, originalCharacter, deathPosition, deathAt)
+        if best and score >= 55 then
+            task.wait(0.03)
+            return best, "dummy/cadáver"
+        end
+        task.wait(0.025)
+    until os.clock() >= deadline
+
+    if originalCharacter and originalCharacter.Parent
+        and originalCharacter:FindFirstChildOfClass("Humanoid") then
+        return originalCharacter, "Character original"
+    end
+
+    return nil, "sin cuerpo visual"
 end
 
 local function triggerVictim(player, character, hum, proof)
@@ -3890,47 +4190,46 @@ local function triggerVictim(player, character, hum, proof)
     if not effectName then return false end
 
     lastAppliedAt = os.clock()
-
     local deathPosition = info.deathPosition or modelPosition(character)
-    local deathAt = info.deathAt or os.clock()
 
-    -- R31: never touch a living enemy Character. Once DUELS has killed/replaced it,
-    -- that same Model may be the native physical corpse and becomes a valid target.
     status.Text =
         "1/3 · TU KILL CONFIRMADO\n" ..
         tostring(effectName) .. " → " .. tostring(player.Name) ..
         (proof and ("\n" .. tostring(proof)) or "")
 
-    task.spawn(function()
-        local target, targetKind =
-            waitForDeathTarget(player, character, deathPosition, deathAt, info)
+    -- Source is READ-ONLY. Make() copies current visuals or falls back to the
+    -- detached template captured while alive. No property is written to source.
+    local proxy, proxyErr =
+        ENV.__XERO_DEATH_PROXY.Make(
+            character, effectName, hum, player, deathPosition
+        )
 
-        if not target or not target.Parent then
-            status.Text =
-                "✕ Kill confirmado, no encontré el cadáver real.\n" ..
-                "Top candidatos: " .. tostring(targetKind)
-            return
-        end
-
-        -- One corpse, one Preview.play. No second bridge/proxy/reapply.
+    if not proxy or not proxy.Parent then
         status.Text =
-            "2/3 · DUMMY REAL DETECTADO\n" ..
-            tostring(targetKind) .. " · " .. tostring(target.Name)
+            "✕ Kill confirmado, no pude crear visual CurrentCamera.\n" ..
+            tostring(proxyErr or "proxy no disponible")
+        return false
+    end
 
-        local ok, result = pcall(function()
-            return runNativeOnVictim(effectName, target, status)
-        end)
+    status.Text =
+        "2/3 · VISUAL CURRENTCAMERA\n" ..
+        tostring(effectName) .. " · enemigo real intacto"
 
-        if ok and result == true then
-            status.Text =
-                "3/3 · EFECTO NATIVO EN CUERPO REAL\n" ..
-                tostring(effectName) .. " · física DUELS · 1 sola ejecución"
-        else
-            status.Text =
-                "✕ Dummy real encontrado, pero Preview.play falló.\n" ..
-                tostring(result)
-        end
+    local ok, result = pcall(function()
+        return runNativeOnVictim(effectName, proxy, status)
     end)
+
+    if not ok or result ~= true then
+        ENV.__XERO_DEATH_PROXY.DestroyProxy(proxy)
+        status.Text =
+            "✕ CurrentCamera creado, pero DeathEffectPreview falló.\n" ..
+            tostring(result)
+        return false
+    end
+
+    status.Text =
+        "3/3 · EFECTO LOCAL EN CURRENTCAMERA\n" ..
+        tostring(effectName) .. " · 0 escrituras al enemigo"
 
     return true
 end
@@ -4136,8 +4435,21 @@ local function hookCharacter(player, character)
             triggered = false,
             connections = {},
         }
-        info.signature = CorpseScan.Capture(character)
         trackedHumanoids[hum] = info
+
+        -- Prebuild a detached visual body while the enemy is alive.
+        -- This avoids touching/cloning the real Character after DUELS removes it.
+        ENV.__XERO_DEATH_PROXY.BuildTemplate(player, character, hum)
+        task.delay(0.75, function()
+            if hum and hum.Parent and not ENV.__XERO_DEATH_PROXY.TemplateByHumanoid[hum] then
+                ENV.__XERO_DEATH_PROXY.BuildTemplate(player, character, hum)
+            end
+        end)
+        task.delay(1.80, function()
+            if hum and hum.Parent and not ENV.__XERO_DEATH_PROXY.TemplateByHumanoid[hum] then
+                ENV.__XERO_DEATH_PROXY.BuildTemplate(player, character, hum)
+            end
+        end)
 
         refreshHumanoidDeathMode(player, hum)
 
@@ -4225,7 +4537,12 @@ local function refreshAllTracked()
             hookPlayer(player)
             local character = player.Character
             local hum = character and character:FindFirstChildOfClass("Humanoid")
-            if hum then refreshHumanoidDeathMode(player, hum) end
+            if hum then
+                if not ENV.__XERO_DEATH_PROXY.TemplateByHumanoid[hum] then
+                    ENV.__XERO_DEATH_PROXY.BuildTemplate(player, character, hum)
+                end
+                refreshHumanoidDeathMode(player, hum)
+            end
         end
     end
 end
@@ -4387,9 +4704,17 @@ toggle.MouseButton1Click:Connect(function()
     refreshAllTracked()
 
     if enabled then
+        local readyTemplates, trackedCount = 0, 0
+        for hum in pairs(trackedHumanoids) do
+            trackedCount += 1
+            if ENV.__XERO_DEATH_PROXY.TemplateByHumanoid[hum] then
+                readyTemplates += 1
+            end
+        end
         status.Text =
             "✓ Activo · " .. tostring(selectedEffect()) ..
-            "\nTU kill → dummy/cadáver de DUELS → efecto."
+            "\nPlantillas visuales exactas: " .. tostring(readyTemplates) .. "/" .. tostring(trackedCount) ..
+            " · enemigo read-only · sin avatar genérico"
     else
         for _, entry in ipairs(pendingDeaths) do
             removePending(entry)
@@ -4397,7 +4722,14 @@ toggle.MouseButton1Click:Connect(function()
         table.clear(pendingDeaths)
         table.clear(recentKillCredits)
         table.clear(recentDeathModels)
-        status.Text = "Desactivado · no se aplicarán efectos nuevos."
+        ENV.__XERO_DEATH_PROXY.Clear()
+        status.Text = "Desactivado · proxies locales limpiados."
+    end
+end)
+
+gui.Destroying:Connect(function()
+    if ENV.__XERO_DEATH_PROXY then
+        ENV.__XERO_DEATH_PROXY.Clear()
     end
 end)
 
@@ -4431,7 +4763,7 @@ UserInputService.InputChanged:Connect(function(input)
 end)
 
 print(
-    "[Xero Death Effects R29 InstantStable]",
+    "[Xero Death Effects R32 CurrentCamera]",
     #EFFECTS,
     "efectos ·",
     PRELOAD_STATS.loaded,

@@ -7277,7 +7277,7 @@ local function selectEffect(value)
         state.Selecting = false
     end)
 end
-Tabs.Efectos:Paragraph({Title = "Efectos de muerte", Desc = "Elige un efecto de muerte. Algunos efectos pueden estar incompletos y se irán mejorando. Todo es visual."})
+Tabs.Efectos:Paragraph({Title = "Efectos de muerte", Desc = "Elige un efecto para tus eliminaciones. Algunos efectos pueden estar incompletos y se irán mejorando. Hipotermia, corazón, congelar y piña conservan el cuerpo hasta cambiar de ronda."})
 dropdown = Tabs.Efectos:Dropdown({Title = "Efecto", Values = choices, Value = state.Selected, Callback = selectEffect})
 toggle = Tabs.Efectos:Toggle({Title = "Cambiar efecto de muerte", Desc = "Aplica el efecto seleccionado a tus eliminaciones.", Value = false, Callback = function(value)
     if not state.Syncing then setEnabled(value == true) end
@@ -10855,55 +10855,24 @@ runtime.Track(Players.PlayerRemoving:Connect(function(p)
 end))
 
 function isEnemy(targetPlayer)
-    if targetPlayer == player then return false end
     if not teamCheckEnabled then return true end
-    if not targetPlayer or targetPlayer.Parent ~= Players then return false end
-
+    if targetPlayer == player then return false end
+    
     if enemyCache[targetPlayer] ~= nil then return enemyCache[targetPlayer] end
 
-    -- XERO TEAM FIX: nunca asumir "enemigo" mientras DUELS todavía está
-    -- resolviendo Team/TeamColor al entrar, respawnear o cambiar de ronda.
-    -- Ese fallback optimista era el que podía meter aliados en el caché del ESP.
-    local isDiff = false
-    local myTeam = player.Team
-    local theirTeam = targetPlayer.Team
-
-    if myTeam ~= nil or theirTeam ~= nil then
-        -- Si sólo uno de los dos Team está listo, esperamos al siguiente evento.
-        -- setupPlayerEvents/updateMyTeam invalidan el caché al resolverse.
-        if myTeam ~= nil and theirTeam ~= nil then
-            isDiff = (myTeam ~= theirTeam)
-        end
+    local isDiff = true
+    if player.Team ~= nil and targetPlayer.Team ~= nil then
+        isDiff = (player.Team ~= targetPlayer.Team)
     else
-        local pAttr = player:GetAttribute("Team") or player:GetAttribute("team")
+        local pAttr = player:GetAttribute("Team") or player:GetAttribute("team") 
         local tAttr = targetPlayer:GetAttribute("Team") or targetPlayer:GetAttribute("team")
-
-        if pAttr ~= nil or tAttr ~= nil then
-            if pAttr ~= nil and tAttr ~= nil then
-                isDiff = tostring(pAttr) ~= tostring(tAttr)
-            end
-        elseif player.Neutral == true or targetPlayer.Neutral == true then
-            -- Lobby/espectador/transición: no marcar como enemigo por descarte.
-            isDiff = false
-        else
-            local myColor = player.TeamColor
-            local theirColor = targetPlayer.TeamColor
-            if myColor ~= nil and theirColor ~= nil then
-                -- Igual color = aliado. Distinto color sólo cuenta cuando al menos
-                -- uno dejó los colores neutros/default típicos de transición.
-                if myColor == theirColor then
-                    isDiff = false
-                else
-                    local myName = tostring(myColor.Name or "")
-                    local theirName = tostring(theirColor.Name or "")
-                    local myDefault = myName == "White" or myName == "Medium stone grey"
-                    local theirDefault = theirName == "White" or theirName == "Medium stone grey"
-                    isDiff = not (myDefault and theirDefault)
-                end
-            end
+        if pAttr ~= nil and tAttr ~= nil then
+            isDiff = (pAttr ~= tAttr)
+        elseif player.TeamColor.Name ~= "White" and player.TeamColor.Name ~= "Medium stone grey" then
+            isDiff = (player.TeamColor ~= targetPlayer.TeamColor)
         end
     end
-
+    
     enemyCache[targetPlayer] = isDiff
     return isDiff
 end

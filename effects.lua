@@ -1,5 +1,5 @@
 --[[
-XeroHub | DUELS Death Effects · Native Dummy Bridge R12 SoulReaper Native-Only
+XeroHub | DUELS Death Effects · Native Dummy Bridge R13 Clean
 Kev
 
 Objetivo:
@@ -64,7 +64,7 @@ end
 -- ============================================================
 -- Repo / cache
 -- ============================================================
-local CACHE_FOLDER = "XeroHub/DeathEffectsNativeDummyR12"
+local CACHE_FOLDER = "XeroHub/DeathEffectsNativeDummyR13"
 
 local function ensureFolder(path)
     if type(makefolder) ~= "function" then return end
@@ -122,7 +122,8 @@ for _, entry in ipairs(manifest.effects) do
         and type(entry.name) == "string"
         and type(entry.v2) == "string"
         and not isJellyEffect(entry.name)
-        and entry.name ~= "Heartbeat" then
+        and entry.name ~= "Heartbeat"
+        and entry.name ~= "SoulReaper" then
         EFFECTS[#EFFECTS + 1] = entry.name
         BY_NAME[entry.name] = entry
     end
@@ -2929,6 +2930,11 @@ local function runNative(name, statusLabel)
         return
     end
 
+    if name == "SoulReaper" then
+        statusLabel.Text = "SoulReaper eliminado del renderer."
+        return
+    end
+
     local asset, injected, assetStatus = ensureNativeAsset(name)
     if not asset then
         statusLabel.Text = "✕ Asset: " .. tostring(assetStatus)
@@ -3003,15 +3009,6 @@ local function runNative(name, statusLabel)
         bodyPatched = true
         bodyPatchSource = "SpiritOverload · TODO RGB 36,75,26"
 
-    elseif name == "SoulReaper" then
-        -- R12: do NOT fabricate SoulReaper victim animation.
-        -- The collected V2 contains the correct VFX, but SoulReaper is not
-        -- present in DeathEffectPreview's native config table and our V3
-        -- collector did not capture the real movement/AnimationTrack.
-        -- Keep Preview.play's VFX only until the real motion is captured.
-        bodyPatched = false
-        bodyPatchSource = "SoulReaper · VFX nativo, animación pendiente"
-
     elseif name == "Heartache" then
         scheduleHeartacheReal(dummy)
         bodyPatched = true
@@ -3060,7 +3057,7 @@ local function runNative(name, statusLabel)
 
     statusLabel.Text =
         "✓ Nativo ejecutado · " .. name ..
-        "\nR12 · víctima completa."
+        "\nR13 · víctima completa."
 
     task.delay(.90, function()
         if not dummy.Parent then return end
@@ -3107,7 +3104,7 @@ local title = Instance.new("TextLabel")
 title.BackgroundTransparency = 1
 title.Position = UDim2.fromOffset(16, 12)
 title.Size = UDim2.new(1,-32,0,22)
-title.Text = "XERO · DEATH EFFECT · NATIVE DUMMY R12"
+title.Text = "XERO · DEATH EFFECT · NATIVE DUMMY R13"
 title.TextColor3 = Color3.fromRGB(245,245,245)
 title.Font = Enum.Font.GothamBold
 title.TextSize = 14

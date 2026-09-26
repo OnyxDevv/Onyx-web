@@ -2,8 +2,6 @@
 XeroHub | DUELS Death Effects · CurrentCamera R36 · Fix duplicados · Base original
 Kev
 
-Test de tiempos
-
 Objetivo:
 - VOLVER al comportamiento que ya funcionaba.
 - Descarga el V2 limpio del catálogo final.

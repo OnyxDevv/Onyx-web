@@ -2693,6 +2693,10 @@ local function observeNativeParticles(dummy, effectName)
             return
         end
 
+        if proxyState and proxyState.RegisterTransient then
+            pcall(proxyState.RegisterTransient, dummy, obj)
+        end
+
         local key = relativeKey(obj)
         if seenKeys[key] then
             seen[obj] = true
@@ -4267,45 +4271,259 @@ ENV.__XERO_DEATH_PROXY.SoundGuards = setmetatable({}, {__mode = "k"})
 ENV.__XERO_DEATH_PROXY.GuardEffectSounds = function(proxy)
     local state = ENV.__XERO_DEATH_PROXY
     if state.SoundGuards[proxy] then return end
+
+    -- One-shot por víctima: el cuerpo puede persistir toda la ronda, pero los
+    -- sonidos del efecto NO. Cada sonido lógico sólo puede iniciar una vez y,
+    -- pasado el arranque del efecto, cualquier Sound tardío queda silenciado.
     local connections, seen, played = {}, setmetatable({}, {__mode="k"}), {}
-    local alive = true
+    local alive, sealed = true, false
+
+    local function soundKey(sound)
+        local id = tostring(sound.SoundId or "")
+        -- El módulo a veces recrea el mismo Sound con otro nombre/ruta. Si existe
+        -- SoundId, ésa es la identidad: cada audio del efecto suena una sola vez.
+        if id ~= "" then return id end
+        return tostring(sound.Name or "Sound")
+    end
+
+    local function silence(sound)
+        pcall(function()
+            sound.Looped = false
+            sound.Volume = 0
+            sound:Stop()
+        end)
+    end
+
     local function watch(sound)
         if not sound:IsA("Sound") or seen[sound] then return end
         seen[sound] = true
         local started = false
-        local function silence()
-            sound.Volume = 0
-            sound:Stop()
-        end
-        local function key()
-            local path, node = {}, sound
-            while node and node ~= proxy do
-                table.insert(path, 1, node.Name)
-                node = node.Parent
-            end
-            return table.concat(path, "/") .. ":" .. tostring(sound.SoundId)
-        end
+
         local function onPlay()
             if not alive then return end
-            if started or played[key()] then silence(); return end
+            local key = soundKey(sound)
+            if sealed or started or played[key] then
+                silence(sound)
+                return
+            end
             started = true
-            played[key()] = true
-            sound.Looped = false
+            played[key] = true
+            pcall(function() sound.Looped = false end)
         end
-        sound.Looped = false
+
+        pcall(function() sound.Looped = false end)
         connections[#connections+1] = sound:GetPropertyChangedSignal("Looped"):Connect(function()
-            if alive and sound.Looped then sound.Looped = false end
+            if alive and sound.Looped then
+                pcall(function() sound.Looped = false end)
+            end
         end)
         connections[#connections+1] = sound.Played:Connect(onPlay)
-        if sound.Playing or sound.IsPlaying then onPlay() end
+
+        if sealed then
+            silence(sound)
+        elseif sound.Playing or sound.IsPlaying then
+            onPlay()
+        end
     end
+
     connections[#connections+1] = proxy.DescendantAdded:Connect(watch)
     for _, obj in ipairs(proxy:GetDescendants()) do watch(obj) end
+
+    -- A partir de aquí no permitimos que el renderer vuelva a crear/reproducir
+    -- audio en un cadáver persistente. Un sonido que ya arrancó puede terminar
+    -- su reproducción normal; sólo se bloquean reinicios y sonidos tardíos.
+    task.delay(3.0, function()
+        if alive and proxy and proxy.Parent then
+            sealed = true
+        end
+    end)
+
     state.SoundGuards[proxy] = function()
         alive = false
-        for _, conn in ipairs(connections) do conn:Disconnect() end
-        for sound in pairs(seen) do pcall(function() sound:Stop() end) end
+        sealed = true
+        for _, conn in ipairs(connections) do
+            pcall(function() conn:Disconnect() end)
+        end
+        for sound in pairs(seen) do silence(sound) end
     end
+end
+
+-- VFX one-shot independiente del tiempo de vida del clon. Frostbite/Freeze/etc.
+-- pueden dejar el cuerpo congelado toda la ronda sin dejar ParticleEmitters,
+-- Beams, Trails, Smoke, Fire o Sparkles reactivándose eternamente.
+ENV.__XERO_DEATH_PROXY.TransientGuards = setmetatable({}, {__mode = "k"})
+ENV.__XERO_DEATH_PROXY.RegisterTransient = function(proxy, object)
+    local state = ENV.__XERO_DEATH_PROXY
+    local guard = state and state.TransientGuards and state.TransientGuards[proxy]
+    if guard and guard.Register then
+        guard.Register(object)
+    end
+end
+
+ENV.__XERO_DEATH_PROXY.GuardOneShotVFX = function(proxy)
+    local state = ENV.__XERO_DEATH_PROXY
+    if not proxy or not proxy.Parent or state.TransientGuards[proxy] then return end
+
+    local alive, sealed = true, false
+    local connections = {}
+    local seen = setmetatable({}, {__mode = "k"})
+    local usedKeys = {}
+    local records = setmetatable({}, {__mode = "k"})
+
+    local function isVisual(obj)
+        return obj:IsA("ParticleEmitter")
+            or obj:IsA("Beam")
+            or obj:IsA("Trail")
+            or obj:IsA("Smoke")
+            or obj:IsA("Fire")
+            or obj:IsA("Sparkles")
+    end
+
+    local function relativeKey(obj)
+        local pieces = {}
+        local node = obj
+        while node and node ~= proxy do
+            local ordinal = 1
+            local parent = node.Parent
+            if parent then
+                for _, sibling in ipairs(parent:GetChildren()) do
+                    if sibling == node then break end
+                    if sibling.ClassName == node.ClassName and sibling.Name == node.Name then
+                        ordinal += 1
+                    end
+                end
+            end
+            table.insert(
+                pieces, 1,
+                tostring(node.ClassName) .. ":" .. tostring(node.Name) .. "#" .. tostring(ordinal)
+            )
+            node = parent
+        end
+        if node ~= proxy then
+            -- Para VFX externos registrados por el observer conservamos también
+            -- ordinal: dos capas legítimas con el mismo nombre pueden reproducirse
+            -- una vez cada una, pero una recreación de la misma capa no se repite.
+            local parent = obj.Parent
+            local ordinal = 1
+            if parent then
+                for _, sibling in ipairs(parent:GetChildren()) do
+                    if sibling == obj then break end
+                    if sibling.ClassName == obj.ClassName and sibling.Name == obj.Name then
+                        ordinal += 1
+                    end
+                end
+            end
+            pieces = {
+                tostring(parent and parent.Name or "externo"),
+                tostring(obj.ClassName) .. ":" .. tostring(obj.Name) .. "#" .. tostring(ordinal),
+            }
+        end
+        return table.concat(pieces, "/")
+    end
+
+    local function disable(obj)
+        if not obj or not obj.Parent or not isVisual(obj) then return end
+        pcall(function() obj.Enabled = false end)
+    end
+
+    local function activationWindow(obj)
+        local explicit = tonumber(obj:GetAttribute("EmitDuration"))
+        if explicit and explicit > 0 then
+            return math.clamp(explicit, 0.05, 2.25)
+        end
+        if obj:IsA("ParticleEmitter") then return 1.35 end
+        if obj:IsA("Beam") or obj:IsA("Trail") then return 1.65 end
+        return 1.35
+    end
+
+    local function watch(obj)
+        if not alive or not obj or seen[obj] or not isVisual(obj) then return end
+        seen[obj] = true
+
+        local key = relativeKey(obj)
+        local rec = {Used = false, Locked = false, LastEnabled = false}
+        records[obj] = rec
+
+        local markedBurst = obj:IsA("ParticleEmitter")
+            and (obj:GetAttribute("EmitCount") ~= nil
+                or obj:GetAttribute("KillEffectEmitCount") ~= nil)
+
+        local function onEnabled()
+            if not alive or not obj.Parent then return end
+            local enabledNow = false
+            pcall(function() enabledNow = obj.Enabled == true end)
+            rec.LastEnabled = enabledNow
+            if not enabledNow then return end
+
+            -- Los emitters con EmitCount se reproducen por :Emit() en el bridge;
+            -- Enabled sólo provocaría una segunda reproducción continua.
+            if markedBurst or sealed or rec.Locked or usedKeys[key] then
+                rec.Locked = true
+                disable(obj)
+                return
+            end
+
+            rec.Used = true
+            usedKeys[key] = true
+            local thisRecord = rec
+            task.delay(activationWindow(obj), function()
+                if not alive or records[obj] ~= thisRecord then return end
+                thisRecord.Locked = true
+                disable(obj)
+            end)
+        end
+
+        if markedBurst then
+            -- :Emit() funciona aun con Enabled=false: garantizamos burst único.
+            disable(obj)
+        else
+            connections[#connections+1] = obj:GetPropertyChangedSignal("Enabled"):Connect(onEnabled)
+            local currentlyEnabled = false
+            pcall(function() currentlyEnabled = obj.Enabled == true end)
+            if currentlyEnabled then onEnabled() end
+        end
+    end
+
+    local function scan(root)
+        if not root then return end
+        if isVisual(root) then watch(root) end
+        for _, obj in ipairs(root:GetDescendants()) do
+            if isVisual(obj) then watch(obj) end
+        end
+    end
+
+    local guard = {}
+    guard.Register = function(obj)
+        if not alive or not obj then return end
+        if isVisual(obj) then watch(obj) else scan(obj) end
+        if sealed and isVisual(obj) then disable(obj) end
+    end
+    guard.Stop = function()
+        if not alive then return end
+        alive = false
+        sealed = true
+        for _, conn in ipairs(connections) do
+            pcall(function() conn:Disconnect() end)
+        end
+        for obj in pairs(seen) do disable(obj) end
+    end
+
+    state.TransientGuards[proxy] = guard
+    connections[#connections+1] = proxy.DescendantAdded:Connect(function(obj)
+        if isVisual(obj) then
+            watch(obj)
+            if sealed then disable(obj) end
+        end
+    end)
+    scan(proxy)
+
+    -- Tras la coreografía inicial, el clon puede quedarse pero el VFX queda
+    -- definitivamente sellado. Las partículas ya emitidas terminan su Lifetime.
+    task.delay(3.0, function()
+        if not alive or not proxy.Parent then return end
+        sealed = true
+        for obj in pairs(seen) do disable(obj) end
+    end)
 end
 
 ENV.__XERO_DEATH_PROXY.MeasureBodyChange = function(proxy, info)
@@ -4378,6 +4596,12 @@ ENV.__XERO_DEATH_PROXY.DestroyProxy = function(proxy)
     if stopSounds then
         stopSounds()
         ENV.__XERO_DEATH_PROXY.SoundGuards[proxy] = nil
+    end
+    local transientGuard = ENV.__XERO_DEATH_PROXY.TransientGuards
+        and ENV.__XERO_DEATH_PROXY.TransientGuards[proxy]
+    if transientGuard then
+        pcall(function() transientGuard.Stop() end)
+        ENV.__XERO_DEATH_PROXY.TransientGuards[proxy] = nil
     end
     ENV.__XERO_DEATH_PROXY.DisconnectFollow(proxy)
     local physicsConn = ENV.__XERO_DEATH_PROXY.PhysicsConnections[proxy]
@@ -5265,6 +5489,7 @@ local function runNativeOnVictim(name, victim, statusLabel)
     local hatsV2 = attachV2HatIfNeeded(victim, asset)
 
     ENV.__XERO_DEATH_PROXY.GuardEffectSounds(victim)
+    ENV.__XERO_DEATH_PROXY.GuardOneShotVFX(victim)
     local cleaner = makeCleaner()
     victimCleaners[victim] = cleaner
     if name == "Ghosted" or string.find(string.lower(tostring(name)), "venom", 1, true) then
@@ -6676,7 +6901,7 @@ local function selectEffect(value)
         state.Selecting = false
     end)
 end
-Tabs.Efectos:Paragraph({Title = "Efectos de muerte", Desc = "Elige un efecto para tus eliminaciones. Hipotermia, corazón, congelar y piña conservan el cuerpo hasta cambiar de ronda."})
+Tabs.Efectos:Paragraph({Title = "Efectos de muerte", Desc = "Elige un efecto para tus eliminaciones. Algunos efectos pueden estar incompletos y se irán mejorando. Hipotermia, corazón, congelar y piña conservan el cuerpo hasta cambiar de ronda."})
 dropdown = Tabs.Efectos:Dropdown({Title = "Efecto", Values = choices, Value = state.Selected, Callback = selectEffect})
 toggle = Tabs.Efectos:Toggle({Title = "Cambiar efecto de muerte", Desc = "Aplica el efecto seleccionado a tus eliminaciones.", Value = false, Callback = function(value)
     if not state.Syncing then setEnabled(value == true) end
@@ -12888,18 +13113,68 @@ end
 
 -- Las armas equipadas también viven dentro del Character. El overlay sólo debe
 -- ocultar el avatar base; jamás un Tool ni sus Handles/meshes/efectos.
-function runtime.AvatarCloneIsToolVisual(object, char)
-    if not object then return false end
+function runtime.AvatarCloneFindWeaponRoot(object, char)
+    if not object then return nil end
     char = char or player.Character
 
-    local tool
-    if object:IsA("Tool") then
-        tool = object
-    else
-        tool = object:FindFirstAncestorWhichIsA("Tool")
+    -- Caso normal de Roblox: Tool equipado dentro del Character.
+    local tool = object:IsA("Tool") and object or object:FindFirstAncestorWhichIsA("Tool")
+    if tool and (not char or tool:IsDescendantOf(char)) then
+        return tool
     end
 
-    return tool ~= nil and (not char or tool:IsDescendantOf(char))
+    -- DUELS no siempre conserva todas las armas como Tool durante cada fase de
+    -- equip/skin. Algunas copias pueden pasar por Model/Folder/Accessory o dejar
+    -- Handles directamente bajo un contenedor del Character. Detectamos sólo
+    -- raíces con señales claras de arma para no liberar partes normales del avatar.
+    local node = object
+    while node and node ~= char do
+        local name = string.lower(tostring(node.Name or ""))
+        local strongWeaponName =
+            name == "gun"
+            or name == "knife"
+            or name == "pistol"
+            or name == "revolver"
+            or name == "blade"
+            or name == "weapon"
+            or string.find(name, "defaultgun", 1, true) ~= nil
+            or string.find(name, "defaultknife", 1, true) ~= nil
+            or string.find(name, "gunpartsfolder", 1, true) ~= nil
+            or string.find(name, "knifepartsfolder", 1, true) ~= nil
+
+        local hasKillSignal = false
+        if node.Parent == char or strongWeaponName then
+            hasKillSignal = node:FindFirstChild("GunKill", true) ~= nil
+                or node:FindFirstChild("KnifeKill", true) ~= nil
+                or node:FindFirstChild("Stab", true) ~= nil
+        end
+
+        local hasHandle = false
+        if node:IsA("BasePart") and name == "handle" then
+            hasHandle = true
+        else
+            local handle = node:FindFirstChild("Handle")
+            hasHandle = handle ~= nil and handle:IsA("BasePart")
+        end
+
+        local directLooseHandle = node:IsA("BasePart") and name == "handle" and node.Parent == char
+
+        if directLooseHandle
+            or hasKillSignal
+            or (strongWeaponName and (hasHandle or node:IsA("BasePart") or node:IsA("Model") or node:IsA("Folder") or node:IsA("Accoutrement"))) then
+            if not char or node:IsDescendantOf(char) then
+                return node
+            end
+        end
+
+        node = node.Parent
+    end
+
+    return nil
+end
+
+function runtime.AvatarCloneIsToolVisual(object, char)
+    return runtime.AvatarCloneFindWeaponRoot(object, char) ~= nil
 end
 
 function runtime.AvatarCloneResetBaseVisualTracking()
@@ -12994,7 +13269,7 @@ end
 -- Liberación dirigida: ya no recorremos BaseVisualCache entero por frame. Si se
 -- equipa/reparenta un Tool, sólo inspeccionamos ese Tool y restauramos los objetos
 -- que realmente estaban cacheados como parte del avatar base.
-function runtime.AvatarCloneReleaseToolVisuals(char, specificTool)
+function runtime.AvatarCloneReleaseToolVisuals(char, specificRoot)
     local state = runtime.Appearance.AvatarClone
     local cache = state.BaseVisualCache
     if not cache then return end
@@ -13005,24 +13280,29 @@ function runtime.AvatarCloneReleaseToolVisuals(char, specificTool)
         end
     end
 
-    local function releaseTool(tool)
-        if not tool or not tool:IsA("Tool") then return end
-        if char and not tool:IsDescendantOf(char) then return end
-        releaseObject(tool)
-        for _, object in ipairs(tool:GetDescendants()) do
+    local function releaseRoot(root)
+        if not root then return end
+        if char and not root:IsDescendantOf(char) then return end
+        releaseObject(root)
+        for _, object in ipairs(root:GetDescendants()) do
             releaseObject(object)
         end
     end
 
-    if specificTool then
-        releaseTool(specificTool)
+    if specificRoot then
+        releaseRoot(specificRoot)
         return
     end
 
     char = char or player.Character
     if not char then return end
+    local released = setmetatable({}, {__mode = "k"})
     for _, child in ipairs(char:GetChildren()) do
-        if child:IsA("Tool") then releaseTool(child) end
+        local root = runtime.AvatarCloneFindWeaponRoot(child, char)
+        if root and not released[root] then
+            released[root] = true
+            releaseRoot(root)
+        end
     end
 end
 
@@ -13274,6 +13554,11 @@ function runtime.AvatarCloneEnforceBaseHiddenParts(char)
         local object = parts[i]
         if not object or not object.Parent or not cache[object] then
             runtime.AvatarCloneUntrackHiddenObject(object)
+        elseif runtime.AvatarCloneIsToolVisual(object, char) then
+            -- Si DUELS terminó de convertir/reparentar esta pieza como arma después
+            -- de que el clon la cacheó, la liberamos inmediatamente y dejamos de
+            -- forzar LocalTransparencyModifier=1 sobre ella.
+            runtime.AvatarCloneRestoreCachedVisual(object, cache)
         else
             if not (korblox and object.Name == "RightUpperLeg" and object.Parent == char)
                 and object.LocalTransparencyModifier ~= 1 then
@@ -13300,6 +13585,8 @@ function runtime.AvatarCloneEnforceBaseHidden(char)
         local object = textures[i]
         if not object or not object.Parent or not cache[object] then
             runtime.AvatarCloneUntrackHiddenObject(object)
+        elseif runtime.AvatarCloneIsToolVisual(object, char) then
+            runtime.AvatarCloneRestoreCachedVisual(object, cache)
         else
             if object.Transparency ~= 1 then object.Transparency = 1 end
             i += 1
@@ -13312,6 +13599,8 @@ function runtime.AvatarCloneEnforceBaseHidden(char)
         local object = effects[i]
         if not object or not object.Parent or not cache[object] then
             runtime.AvatarCloneUntrackHiddenObject(object)
+        elseif runtime.AvatarCloneIsToolVisual(object, char) then
+            runtime.AvatarCloneRestoreCachedVisual(object, cache)
         else
             if object.Enabled then object.Enabled = false end
             i += 1
@@ -13646,14 +13935,14 @@ function runtime.AvatarCloneBuildMotorSync(char, overlay)
         if state.Overlay ~= overlay or not state.Active then return end
         if object:IsDescendantOf(overlay) then return end
 
-        -- EQUIPPED WEAPON FIX: Character.DescendantAdded también dispara por el
-        -- Tool y por TODOS sus descendientes. Nunca los pasamos al hide del avatar.
-        local tool = object:IsA("Tool") and object or object:FindFirstAncestorWhichIsA("Tool")
-        if tool then
-            runtime.AvatarCloneBindToolVisualGuard(char, tool)
-            if state.BaseVisualCache[object] then
-                runtime.AvatarCloneRestoreCachedVisual(object, state.BaseVisualCache)
-            end
+        -- EQUIPPED WEAPON FIX: además de Tool, DUELS puede usar contenedores
+        -- visuales intermedios (DefaultGun/DefaultKnife/Model/Folder/Accessory).
+        -- Si una pieza pertenecía al cache del avatar, liberamos toda la raíz del arma.
+        local weaponRoot = runtime.AvatarCloneFindWeaponRoot(object, char)
+        if weaponRoot then
+            local tool = weaponRoot:IsA("Tool") and weaponRoot or weaponRoot:FindFirstAncestorWhichIsA("Tool")
+            if tool then runtime.AvatarCloneBindToolVisualGuard(char, tool) end
+            runtime.AvatarCloneReleaseToolVisuals(char, weaponRoot)
             return
         end
 
@@ -14342,12 +14631,11 @@ function runtime.BeginAvatarCloneRespawnMask(char, generation)
                 poseCacheDirty = true
             end
 
-            local tool = object:IsA("Tool") and object or object:FindFirstAncestorWhichIsA("Tool")
-            if tool then
-                runtime.AvatarCloneBindToolVisualGuard(char, tool)
-                if state.BaseVisualCache[object] then
-                    runtime.AvatarCloneRestoreCachedVisual(object, state.BaseVisualCache)
-                end
+            local weaponRoot = runtime.AvatarCloneFindWeaponRoot(object, char)
+            if weaponRoot then
+                local tool = weaponRoot:IsA("Tool") and weaponRoot or weaponRoot:FindFirstAncestorWhichIsA("Tool")
+                if tool then runtime.AvatarCloneBindToolVisualGuard(char, tool) end
+                runtime.AvatarCloneReleaseToolVisuals(char, weaponRoot)
                 return
             end
 
@@ -19738,7 +20026,12 @@ UIElements.SliFOVSize = Tabs.Aim:Slider({
 -- ==========================================
 
 Tabs.KillAll:Section({
-    Title = "Kill all Cuchillo"
+    Title = "Kill All · En mantenimiento"
+})
+
+Tabs.KillAll:Paragraph({
+    Title = "En mantenimiento",
+    Desc = "Kill All está desactivado temporalmente mientras se mejora su estabilidad."
 })
 
 local KillRunService = game:GetService("RunService")
@@ -21459,16 +21752,34 @@ UIElements.TogKillAll =
     Tabs.KillAll:Toggle({
 
     Title =
-        "Activar Kill All",
+        "Kill All · En mantenimiento",
 
     Desc =
-        "Mata a los enemigos con cuchillo",
+        "Temporalmente desactivado mientras se mejora.",
 
     Value =
         false,
 
     Callback =
         function(Value)
+
+        -- Kill All queda visible para indicar su estado, pero no puede activarse
+        -- mientras esté en mantenimiento. Conservamos la lógica debajo para
+        -- reactivarla más adelante sin rehacer la función completa.
+        if Value then
+            killAllEnabled = false
+            showBottomMessage("Kill All está en mantenimiento.")
+            killAllRejectingToggle = true
+            task.defer(function()
+                pcall(function()
+                    if UIElements.TogKillAll then
+                        UIElements.TogKillAll:Set(false)
+                    end
+                end)
+                killAllRejectingToggle = false
+            end)
+            return
+        end
 
 
         -- ==================================

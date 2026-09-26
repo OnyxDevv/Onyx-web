@@ -1,5 +1,5 @@
 --[[
-XeroHub | DUELS Death Effects · Stable Base R29 · Local Kills + Dummy Bridge
+XeroHub | DUELS Death Effects · Stable Base R23 · Local Kills + Dummy Bridge
 Kev
 
 Objetivo:
@@ -3669,12 +3669,20 @@ local function rememberDeathModel(model)
 end
 
 local function scoreDeathModel(model, player, originalCharacter, deathPosition, deathAt)
-    if not model or model == originalCharacter or not model.Parent then return nil end
-    if isCurrentPlayerCharacter(model) then
-        -- Some games briefly promote the corpse/dummy to Player.Character.
-        -- Exclude only a LIVE character; a dead replacement is still a valid target.
-        local liveHum = model:FindFirstChildOfClass("Humanoid")
-        if liveHum and liveHum.Health > 0 then return nil end
+    if not model or not model.Parent then return nil end
+
+    local modelHum = model:FindFirstChildOfClass("Humanoid")
+
+    -- R30: the DUELS corpse can be the SAME Model that was Player.Character.
+    -- It is only eligible once it is actually dead or no longer the player's
+    -- current Character. We never touch a living enemy Character.
+    if model == originalCharacter then
+        local stillCurrent = player and player.Character == model
+        local stillAlive = modelHum and modelHum.Health > 0
+        if stillCurrent and stillAlive then return nil end
+    elseif isCurrentPlayerCharacter(model) then
+        -- Never select another player's live Character as a corpse.
+        if modelHum and modelHum.Health > 0 then return nil end
     end
 
     local createdAt = recentDeathModels[model]
@@ -3726,14 +3734,34 @@ end
 
 local function findBestDeathModel(player, originalCharacter, deathPosition, deathAt)
     local best, bestScore = nil, -math.huge
-    for model in pairs(recentDeathModels) do
-        if model and model.Parent then
-            local score = scoreDeathModel(model, player, originalCharacter, deathPosition, deathAt)
-            if score and score > bestScore then
-                best, bestScore = model, score
-            end
+
+    local function consider(model, bonus)
+        if not model or not model.Parent then return end
+        local score = scoreDeathModel(model, player, originalCharacter, deathPosition, deathAt)
+        if not score then return end
+        score += bonus or 0
+        if score > bestScore then
+            best, bestScore = model, score
         end
     end
+
+    -- Most important R30 fix: DUELS may keep/reuse the original Character as
+    -- the physical corpse. It was invisible to R29 because recentDeathModels
+    -- only tracked newly-added Models. Only consider it after death/replacement.
+    consider(originalCharacter, 220)
+
+    for model in pairs(recentDeathModels) do
+        consider(model, 0)
+    end
+
+    -- Fallback for corpses built inside/reusing an existing Workspace model.
+    -- This short scan happens only during the kill window, not every frame forever.
+    for _, obj in ipairs(Workspace:GetDescendants()) do
+        if obj:IsA("Model") then
+            consider(obj, 0)
+        end
+    end
+
     return best, bestScore
 end
 
@@ -3766,23 +3794,25 @@ local function nearbyNewModelSummary(deathPosition, deathAt)
 end
 
 local function waitForDeathTarget(player, originalCharacter, deathPosition, deathAt)
-    -- R29: use ONLY the real DUELS corpse/dummy. Never fall back to the live/original
-    -- Player.Character, because the user's security watches that object.
-    -- Check immediately and then once per Heartbeat; effect starts on the first frame
-    -- the native corpse is actually usable.
-    local deadline = os.clock() + 0.55
+    -- R30: accept DUELS' real death body whether it is a new dummy OR the
+    -- original Character after it has died/been replaced. Living Characters
+    -- remain strictly read-only and cannot pass scoreDeathModel().
+    local deadline = os.clock() + 0.90
 
     repeat
         local best, score = findBestDeathModel(player, originalCharacter, deathPosition, deathAt)
         if best and score >= 55 then
-            return best, "dummy/cadáver real"
+            if best == originalCharacter then
+                return best, "Character muerto reutilizado por DUELS"
+            end
+            return best, "dummy/cadáver real separado"
         end
 
         if os.clock() >= deadline then break end
         RunService.Heartbeat:Wait()
     until false
 
-    return nil, "sin dummy/cadáver real"
+    return nil, "sin cuerpo de muerte utilizable"
 end
 
 local function triggerVictim(player, character, hum, proof)
@@ -3802,8 +3832,8 @@ local function triggerVictim(player, character, hum, proof)
     local deathPosition = info.deathPosition or modelPosition(character)
     local deathAt = info.deathAt or os.clock()
 
-    -- R29: DO NOT run the renderer on the enemy Character and DO NOT create a proxy.
-    -- We wait only for DUELS' own death body, then run the effect exactly once on it.
+    -- R30: never touch a living enemy Character. Once DUELS has killed/replaced it,
+    -- that same Model may be the native physical corpse and becomes a valid target.
     status.Text =
         "1/3 · TU KILL CONFIRMADO\n" ..
         tostring(effectName) .. " → " .. tostring(player.Name) ..
@@ -3815,7 +3845,7 @@ local function triggerVictim(player, character, hum, proof)
 
         if not target or not target.Parent then
             status.Text =
-                "✕ Kill confirmado, DUELS no creó un dummy utilizable a tiempo.\n" ..
+                "✕ Kill confirmado, no encontré el cuerpo muerto utilizable.\n" ..
                 "Nuevos cerca: " .. nearbyNewModelSummary(deathPosition, deathAt)
             return
         end
@@ -3831,7 +3861,7 @@ local function triggerVictim(player, character, hum, proof)
 
         if ok and result == true then
             status.Text =
-                "3/3 · EFECTO NATIVO EN DUMMY REAL\n" ..
+                "3/3 · EFECTO NATIVO EN CUERPO REAL\n" ..
                 tostring(effectName) .. " · física DUELS · 1 sola ejecución"
         else
             status.Text =

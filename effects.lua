@@ -2,6 +2,8 @@
 XeroHub | DUELS Death Effects · CurrentCamera R36 · Fix duplicados · Base original
 Kev
 
+Test de tiempos
+
 Objetivo:
 - VOLVER al comportamiento que ya funcionaba.
 - Descarga el V2 limpio del catálogo final.
@@ -3428,6 +3430,36 @@ ENV.__XERO_DEATH_PROXY.GuardEffectSounds = function(proxy)
     end
 end
 
+ENV.__XERO_DEATH_PROXY.MeasureBodyChange = function(proxy, info)
+    local connections, done = {}, false
+    local rt = ENV.__XERO_DEATH_BRIDGE_RUNTIME
+    local function stop()
+        if done then return end
+        done = true
+        for _, conn in ipairs(connections) do conn:Disconnect() end
+    end
+    local function changed()
+        if done or not proxy.Parent then return end
+        info.firstBodyChangeAt = os.clock()
+        stop()
+        local text = proxy:GetAttribute("XeroTiming")
+        if text and rt.TimingProxy == proxy and rt.TimingLabel then
+            rt.TimingLabel.Text = rt.TimingLabel.Text .. string.format(
+                "\nPrimer cambio del cuerpo: +%.0f ms desde confirmación",
+                (info.firstBodyChangeAt-info.confirmedAt)*1000)
+        end
+    end
+    for _, part in ipairs(proxy:GetChildren()) do
+        if part:IsA("BasePart") and part.Name ~= "HumanoidRootPart" then
+            for _, prop in ipairs({"Transparency","Size","Color"}) do
+                connections[#connections+1] = part:GetPropertyChangedSignal(prop):Connect(changed)
+            end
+        end
+    end
+    connections[#connections+1] = proxy.Destroying:Connect(stop)
+    task.delay(3, stop)
+end
+
 ENV.__XERO_DEATH_PROXY.EnsureRoot = function()
     local camera = Workspace.CurrentCamera
     if not camera then return nil end
@@ -4502,8 +4534,8 @@ gui.Parent = PlayerGui
 ENV.__XERO_DEATH_BRIDGE_RUNTIME.Gui = gui
 
 local frame = Instance.new("Frame")
-frame.Size = UDim2.fromOffset(430, 370)
-frame.Position = UDim2.new(.5, -215, .5, -185)
+frame.Size = UDim2.fromOffset(430, 410)
+frame.Position = UDim2.new(.5, -215, .5, -205)
 frame.BackgroundColor3 = Color3.fromRGB(12,12,12)
 frame.BorderSizePixel = 0
 frame.Parent = gui
@@ -4559,7 +4591,7 @@ do
     local label = ENV.__XERO_DEATH_BRIDGE_RUNTIME.TimingLabel
     label.Name = "LastKillTiming"
     label.Position = UDim2.fromOffset(16, 215)
-    label.Size = UDim2.new(1, -32, 0, 139)
+    label.Size = UDim2.new(1, -32, 0, 179)
     label.BackgroundColor3 = Color3.fromRGB(24,24,24)
     label.BorderSizePixel = 0
     label.TextColor3 = Color3.fromRGB(235,235,235)
@@ -4602,6 +4634,22 @@ end
 
 local enabled = false
 local deathRuntime = ENV.__XERO_DEATH_BRIDGE_RUNTIME
+deathRuntime.TraceEvents = {}
+deathRuntime.TraceMark = function(kind, character)
+    local events = deathRuntime.TraceEvents
+    events[#events + 1] = {at=os.clock(), kind=kind, character=character}
+    if #events > 40 then table.remove(events, 1) end
+end
+deathRuntime.TraceText = function(character, at)
+    local lines = {}
+    for _, item in ipairs(deathRuntime.TraceEvents) do
+        if at - item.at <= 3 and (not item.character or item.character == character) then
+            lines[#lines + 1] = string.format("%s %+.0f ms", item.kind, (item.at - at)*1000)
+        end
+    end
+    while #lines > 5 do table.remove(lines, 1) end
+    return #lines > 0 and table.concat(lines, " | ") or "Sin eventos previos observados"
+end
 local trackedHumanoids = setmetatable({}, {__mode = "k"})
 deathRuntime.TrackedHumanoids = trackedHumanoids
 local playerConnections = {}
@@ -5009,6 +5057,8 @@ local function triggerVictim(player, character, hum, proof)
         tostring(effectName) .. " · sólo LocalTransparencyModifier"
 
     info.cloneReadyAt = os.clock()
+    info.trace = deathRuntime.TraceText(character, info.confirmedAt)
+    state.MeasureBodyChange(proxy, info)
     local ok, result = pcall(function()
         return runNativeOnVictim(effectName, proxy, status)
     end)
@@ -5031,8 +5081,12 @@ local function triggerVictim(player, character, hum, proof)
     ))
     status.Text = tostring(effectName) .. "\n" .. proxy:GetAttribute("XeroTiming")
     if deathRuntime.TimingLabel then
+        deathRuntime.TimingProxy = proxy
         deathRuntime.TimingLabel.Text = "ÚLTIMA KILL · " .. tostring(player.Name)
             .. " · " .. tostring(effectName) .. "\n" .. proxy:GetAttribute("XeroTiming")
+            .. "\nEventos relativos a confirmación:\n" .. tostring(info.trace)
+            .. (info.firstBodyChangeAt and string.format("\nPrimer cambio del cuerpo: +%.0f ms",
+                (info.firstBodyChangeAt-info.confirmedAt)*1000) or "")
     end
     warn("[Xero Death Timing] " .. tostring(player.Name) .. " | " .. proxy:GetAttribute("XeroTiming"))
 
@@ -5127,6 +5181,7 @@ end
 local function recordLocalKillSignal(source, count)
     if not enabled or not deathRuntime.Alive
         or ENV.__XERO_DEATH_BRIDGE_RUNTIME ~= deathRuntime then return end
+    deathRuntime.TraceMark(source, nil)
     count = math.max(1, math.floor(tonumber(count) or 1))
     local now = os.clock()
 
@@ -5307,6 +5362,7 @@ local function hookCharacter(player, character)
         refreshHumanoidDeathMode(player, hum)
 
         info.connections[#info.connections + 1] = hum.Died:Connect(function()
+            deathRuntime.TraceMark("Died", character)
             queueVictimDeath(player, character, hum)
         end)
 
@@ -5330,6 +5386,7 @@ local function hookCharacter(player, character)
                 deathRuntime.RestoreCharacter(character)
             end
             if health <= 0 then
+                deathRuntime.TraceMark("Vida 0", character)
                 queueVictimDeath(player, character, hum)
             end
         end)
@@ -5383,6 +5440,7 @@ local function hookPlayer(player)
         local hum = character and character:FindFirstChildOfClass("Humanoid")
         local info = hum and trackedHumanoids[hum]
         if hum and info and not info.triggered then
+            deathRuntime.TraceMark("CharacterRemoving", character)
             info.deathAt = info.deathAt or os.clock()
             info.deathPosition = info.deathPosition or modelPosition(character)
             info.deathEligible = enabled and isEnemyPlayer(player)
@@ -5555,6 +5613,7 @@ ENV.__XERO_DEATH_BRIDGE_RUNTIME.SetRecentMelee = function(character, source)
         At = os.clock(),
         Source = source,
     }
+    deathRuntime.TraceMark("Melee " .. source, character)
     if lateContact then
         deathRuntime.RecentMelee = nil
         triggerVictim(targetPlayer, character, hum, "cuchillo local · contacto y muerte")
@@ -5620,6 +5679,7 @@ ENV.__XERO_DEATH_BRIDGE_RUNTIME.HookMeleeTool = function(tool)
     killSignalConnections[#killSignalConnections + 1] = tool.Activated:Connect(function()
         if not enabled then return end
         rt.RecentMeleeAttackAt = os.clock()
+        deathRuntime.TraceMark("Activated " .. tool.Name, nil)
         rt.FindMeleeTarget(tool)
     end)
 end

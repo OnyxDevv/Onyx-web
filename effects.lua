@@ -1,5 +1,5 @@
 --[[
-XeroHub | DUELS Death Effects · Native Dummy Bridge R6 RealVictim
+XeroHub | DUELS Death Effects · Native Dummy Bridge R7 FullVictim
 Kev
 
 Objetivo:
@@ -64,7 +64,7 @@ end
 -- ============================================================
 -- Repo / cache
 -- ============================================================
-local CACHE_FOLDER = "XeroHub/DeathEffectsNativeDummyR6"
+local CACHE_FOLDER = "XeroHub/DeathEffectsNativeDummyR7"
 
 local function ensureFolder(path)
     if type(makefolder) ~= "function" then return end
@@ -111,10 +111,17 @@ end
 
 local EFFECTS = {}
 local BY_NAME = {}
+
+local function isJellyEffect(name)
+    return type(name) == "string"
+        and string.find(name, "Jelly", 1, true) ~= nil
+end
+
 for _, entry in ipairs(manifest.effects) do
     if type(entry) == "table"
         and type(entry.name) == "string"
-        and type(entry.v2) == "string" then
+        and type(entry.v2) == "string"
+        and not isJellyEffect(entry.name) then
         EFFECTS[#EFFECTS + 1] = entry.name
         BY_NAME[entry.name] = entry
     end
@@ -869,6 +876,7 @@ local BODY_STYLE_FALLBACK = {
     Freeze = {
         Color = Color3.fromRGB(4,175,236),
         Material = Enum.Material.SmoothPlastic,
+        Reflectance = 0.35,
     },
     Frostbite = {
         Color = Color3.fromRGB(53,124,133),
@@ -913,46 +921,70 @@ local BODY_STYLE_FALLBACK = {
     },
 }
 
-local function nativeConfigFor(name, asset)
-    if type(getConfigFunction) ~= "function" then return nil end
+local function getUpvaluesSafe(fn)
+    local getter = (debug and debug.getupvalues) or getupvalues
+    if type(getter) ~= "function" or type(fn) ~= "function" then
+        return nil
+    end
 
-    local attempts = {
-        {name, asset},
-        {name, nil},
-        {name, {}},
-        {asset, name},
-    }
+    local ok, values = pcall(getter, fn)
+    if ok and type(values) == "table" then
+        return values
+    end
+end
 
-    for _, args in ipairs(attempts) do
-        local ok, result = pcall(function()
-            return getConfigFunction(table.unpack(args))
-        end)
+local function findNativeConfigTable()
+    local ups = getUpvaluesSafe(getConfigFunction)
+    if not ups then return nil end
 
-        if ok and type(result) == "table" then
-            return result
+    local best
+    local bestCount = 0
+
+    for _, value in pairs(ups) do
+        if type(value) == "table" then
+            local count = 0
+            local stringKeys = 0
+
+            for key in pairs(value) do
+                count += 1
+                if type(key) == "string" then
+                    stringKeys += 1
+                end
+            end
+
+            if stringKeys >= 20 and count > bestCount then
+                best = value
+                bestCount = count
+            end
+        end
+    end
+
+    return best
+end
+
+local NATIVE_CONFIGS = findNativeConfigTable()
+
+local function nativeConfigFor(name)
+    if type(NATIVE_CONFIGS) == "table" then
+        local cfg = NATIVE_CONFIGS[name]
+        if type(cfg) == "table" then
+            return cfg
         end
     end
 end
 
-local function bodyStyleFromConfig(name, asset)
-    local cfg = nativeConfigFor(name, asset)
-    if type(cfg) == "table" and type(cfg.BodyStyle) == "table" then
+local function bodyStyleFromConfig(name)
+    local cfg = nativeConfigFor(name)
+
+    if type(cfg) == "table"
+        and type(cfg.BodyStyle) == "table" then
         return cfg.BodyStyle, "BodyStyle nativo"
     end
 
     local fallback = BODY_STYLE_FALLBACK[name]
     if fallback then
-        return fallback, "BodyStyle fallback confirmado"
+        return fallback, "BodyStyle fallback"
     end
-end
-
-local function isRealBodyPart(dummy, obj)
-    if not obj:IsA("BasePart") then return false end
-    if obj.Name == "HumanoidRootPart" then return false end
-    if obj:FindFirstAncestorOfClass("Accessory") then return false end
-    if obj:FindFirstAncestorOfClass("Tool") then return false end
-    if not obj:IsDescendantOf(dummy) then return false end
-    return true
 end
 
 local function applyBodyStyleOnly(dummy, style, snap)
@@ -1030,7 +1062,7 @@ local function applyBodyStyleOnly(dummy, style, snap)
 end
 
 local function scheduleBodyStylePatch(dummy, name, asset)
-    local style, source = bodyStyleFromConfig(name, asset)
+    local style, source = bodyStyleFromConfig(name)
     if not style then
         return false, "sin BodyStyle"
     end
@@ -1529,13 +1561,14 @@ local function observeNativeParticles(dummy)
 end
 
 -- ============================================================
--- R6 REAL-VICTIM FIDELITY
+-- R7 FULL-VICTIM FIDELITY
 -- ============================================================
 
 local function allBaseParts(dummy)
     local out = {}
     for _, obj in ipairs(dummy:GetDescendants()) do
-        if obj:IsA("BasePart") and obj.Name ~= "HumanoidRootPart" then
+        if obj:IsA("BasePart")
+            and obj.Name ~= "HumanoidRootPart" then
             out[#out+1] = obj
         end
     end
@@ -1544,6 +1577,7 @@ end
 
 local function bodyPartsOnly(dummy)
     local out = {}
+
     for _, obj in ipairs(dummy:GetDescendants()) do
         if obj:IsA("BasePart")
             and obj.Name ~= "HumanoidRootPart"
@@ -1552,11 +1586,13 @@ local function bodyPartsOnly(dummy)
             out[#out+1] = obj
         end
     end
+
     return out
 end
 
 local function accessoryParts(dummy)
     local out = {}
+
     for _, accessory in ipairs(dummy:GetChildren()) do
         if accessory:IsA("Accessory") then
             for _, obj in ipairs(accessory:GetDescendants()) do
@@ -1566,55 +1602,59 @@ local function accessoryParts(dummy)
             end
         end
     end
+
     return out
 end
 
-local function applyStyleToParts(parts, style)
-    if type(style) ~= "table" then return end
-
-    local color = style.Color
-    if typeof(color) == "BrickColor" then color = color.Color end
-
-    for _, part in ipairs(parts) do
-        if part and part.Parent then
-            if typeof(color) == "Color3" then
-                pcall(function() part.Color = color end)
-            end
-            if typeof(style.Material) == "EnumItem" then
-                pcall(function() part.Material = style.Material end)
-            end
-            if type(style.MaterialVariant) == "string" then
-                pcall(function() part.MaterialVariant = style.MaterialVariant end)
-            end
-            if type(style.Transparency) == "number" then
-                pcall(function() part.Transparency = style.Transparency end)
-            end
-            if type(style.Reflectance) == "number" then
-                pcall(function() part.Reflectance = style.Reflectance end)
-            end
+local function removeSurfaceAppearance(root)
+    for _, obj in ipairs(root:GetDescendants()) do
+        if obj:IsA("SurfaceAppearance") then
+            pcall(function() obj:Destroy() end)
         end
     end
 end
 
-local function scheduleFreezeReal(dummy)
-    local style =
-        BODY_STYLE_FALLBACK.Freeze
-        or {
-            Color = Color3.fromRGB(4,175,236),
-            Material = Enum.Material.SmoothPlastic,
-        }
-
-    -- Freeze really colors EVERYTHING visible, including hats/hair/accessories.
-    for _, delayTime in ipairs({.03, .16, .38, .72}) do
-        task.delay(delayTime, function()
-            if dummy and dummy.Parent then
-                applyStyleToParts(allBaseParts(dummy), style)
+local function setTextureTint(root, color, removeTexture)
+    for _, obj in ipairs(root:GetDescendants()) do
+        if obj:IsA("SpecialMesh") then
+            if removeTexture then
+                pcall(function() obj.TextureId = "" end)
             end
-        end)
+            pcall(function()
+                obj.VertexColor = Vector3.new(color.R, color.G, color.B)
+            end)
+
+        elseif obj:IsA("Decal") or obj:IsA("Texture") then
+            pcall(function()
+                obj.Color3 = color
+            end)
+        end
     end
 end
 
-local function removeClassicClothesAndFace(dummy)
+local function forceSolidPart(part, color, material, reflectance)
+    if not part or not part.Parent or not part:IsA("BasePart") then return end
+
+    pcall(function()
+        part.Color = color
+        part.Material = material
+        part.MaterialVariant = ""
+        if type(reflectance) == "number" then
+            part.Reflectance = reflectance
+        end
+    end)
+
+    if part:IsA("MeshPart") then
+        pcall(function()
+            part.TextureID = ""
+        end)
+    end
+
+    removeSurfaceAppearance(part)
+    setTextureTint(part, color, true)
+end
+
+local function removeClassicClothes(dummy)
     for _, child in ipairs(dummy:GetChildren()) do
         if child:IsA("Shirt")
             or child:IsA("Pants")
@@ -1622,93 +1662,381 @@ local function removeClassicClothesAndFace(dummy)
             pcall(function() child:Destroy() end)
         end
     end
+end
 
+local function removeFaceCompletely(dummy)
+    local head = dummy and dummy:FindFirstChild("Head")
+    if not head then return end
+
+    for _, obj in ipairs(head:GetDescendants()) do
+        if obj:IsA("Decal")
+            or obj:IsA("Texture")
+            or obj:IsA("SurfaceAppearance") then
+            pcall(function() obj:Destroy() end)
+
+        elseif obj:IsA("SpecialMesh") then
+            pcall(function() obj.TextureId = "" end)
+        end
+    end
+
+    if head:IsA("MeshPart") then
+        pcall(function()
+            head.TextureID = ""
+        end)
+    end
+end
+
+local function forceFreezePass(dummy)
+    if not dummy or not dummy.Parent then return end
+
+    local style =
+        BODY_STYLE_FALLBACK.Freeze
+        or {
+            Color = Color3.fromRGB(4,175,236),
+            Material = Enum.Material.SmoothPlastic,
+            Reflectance = .35,
+        }
+
+    local color = style.Color
+    if typeof(color) == "BrickColor" then color = color.Color end
+    color = typeof(color) == "Color3" and color or Color3.fromRGB(4,175,236)
+
+    local material =
+        typeof(style.Material) == "EnumItem"
+        and style.Material
+        or Enum.Material.SmoothPlastic
+
+    -- Classic clothes cannot actually be recolored uniformly, so removing them
+    -- is the only way the complete victim can become the frozen material.
+    removeClassicClothes(dummy)
+
+    for _, part in ipairs(allBaseParts(dummy)) do
+        forceSolidPart(
+            part,
+            color,
+            material,
+            style.Reflectance
+        )
+    end
+
+    -- The face remains, but is tinted with the same frozen color.
     local head = dummy:FindFirstChild("Head")
     if head then
-        for _, child in ipairs(head:GetChildren()) do
-            if child:IsA("Decal") or child:IsA("Texture") then
-                pcall(function() child:Destroy() end)
-            end
+        setTextureTint(head, color, false)
+    end
+end
+
+local function scheduleFreezeReal(dummy)
+    -- Re-apply because native preview can add/re-parent visual avatar pieces
+    -- asynchronously after play() returns.
+    for _, delayTime in ipairs({0, .05, .14, .30, .55, .90, 1.35, 1.80}) do
+        task.delay(delayTime, function()
+            forceFreezePass(dummy)
+        end)
+    end
+
+    local conn
+    conn = dummy.DescendantAdded:Connect(function()
+        task.defer(function()
+            forceFreezePass(dummy)
+        end)
+    end)
+
+    task.delay(2.0, function()
+        pcall(function() conn:Disconnect() end)
+    end)
+end
+
+local function blackenAccessory(accessory)
+    if not accessory or not accessory:IsA("Accessory") then return end
+
+    for _, obj in ipairs(accessory:GetDescendants()) do
+        if obj:IsA("BasePart") then
+            forceSolidPart(
+                obj,
+                Color3.new(0,0,0),
+                Enum.Material.SmoothPlastic,
+                0
+            )
+
+        elseif obj:IsA("Decal") or obj:IsA("Texture") then
+            pcall(function()
+                obj.Color3 = Color3.new(0,0,0)
+            end)
         end
     end
 end
 
-local function scheduleFrostbiteReal(dummy)
-    local bodyStyle =
+local function forceFrostbitePass(dummy)
+    if not dummy or not dummy.Parent then return end
+
+    local style =
         BODY_STYLE_FALLBACK.Frostbite
         or {
             Color = Color3.fromRGB(53,124,133),
             Material = Enum.Material.SmoothPlastic,
         }
 
-    for _, delayTime in ipairs({.03, .16, .38, .72, 1.10}) do
+    local color = style.Color
+    if typeof(color) == "BrickColor" then color = color.Color end
+    color = typeof(color) == "Color3" and color or Color3.fromRGB(53,124,133)
+
+    local material =
+        typeof(style.Material) == "EnumItem"
+        and style.Material
+        or Enum.Material.SmoothPlastic
+
+    removeClassicClothes(dummy)
+    removeFaceCompletely(dummy)
+
+    for _, part in ipairs(bodyPartsOnly(dummy)) do
+        forceSolidPart(part, color, material, 0)
+    end
+
+    for _, accessory in ipairs(dummy:GetChildren()) do
+        if accessory:IsA("Accessory") then
+            blackenAccessory(accessory)
+        end
+    end
+end
+
+local function scheduleFrostbiteReal(dummy)
+    for _, delayTime in ipairs({0, .04, .12, .28, .52, .86, 1.25, 1.70, 2.15}) do
+        task.delay(delayTime, function()
+            forceFrostbitePass(dummy)
+        end)
+    end
+
+    local conn
+    conn = dummy.DescendantAdded:Connect(function(obj)
+        task.defer(function()
+            if not dummy.Parent then return end
+
+            if obj:IsA("Shirt")
+                or obj:IsA("Pants")
+                or obj:IsA("ShirtGraphic") then
+                pcall(function() obj:Destroy() end)
+                return
+            end
+
+            forceFrostbitePass(dummy)
+        end)
+    end)
+
+    task.delay(2.35, function()
+        pcall(function() conn:Disconnect() end)
+    end)
+end
+
+local function setGhostTransparency(dummy, alpha)
+    for _, part in ipairs(allBaseParts(dummy)) do
+        pcall(function()
+            part.Transparency = alpha
+        end)
+
+        for _, obj in ipairs(part:GetDescendants()) do
+            if obj:IsA("Decal") or obj:IsA("Texture") then
+                pcall(function()
+                    obj.Transparency = alpha
+                end)
+            end
+        end
+    end
+end
+
+local function prepareGhostedBody(dummy)
+    if not dummy or not dummy.Parent then return end
+
+    local green = Color3.fromRGB(32,255,69)
+
+    -- This is the body state present in the captured real Ghosted death:
+    -- Neon green, textureless and already at ~0.30 transparency.
+    removeClassicClothes(dummy)
+
+    for _, part in ipairs(allBaseParts(dummy)) do
+        forceSolidPart(
+            part,
+            green,
+            Enum.Material.Neon,
+            0
+        )
+        pcall(function() part.Transparency = .30 end)
+    end
+
+    local hum = dummy:FindFirstChildOfClass("Humanoid")
+    if hum then
+        local animator = hum:FindFirstChildOfClass("Animator")
+        if animator then
+            pcall(function()
+                for _, track in ipairs(animator:GetPlayingAnimationTracks()) do
+                    track:Stop(0)
+                end
+            end)
+        end
+
+        pcall(function()
+            hum.AutoRotate = false
+            hum.PlatformStand = true
+            hum:ChangeState(Enum.HumanoidStateType.Ragdoll)
+        end)
+    end
+
+    local root = dummy:FindFirstChild("HumanoidRootPart")
+    if root then
+        pcall(function()
+            root.Anchored = false
+        end)
+    end
+end
+
+local function playGhostedCapturedNativeFade(dummy)
+    if not dummy or not dummy.Parent then return end
+
+    prepareGhostedBody(dummy)
+
+    -- Timings/alpha values are taken from the captured real Ghosted death.
+    -- We interpolate between the observed native frames instead of using an
+    -- invented single tween.
+    local points = {
+        {0.000, 0.3000000},
+        {0.209, 0.4036046},
+        {0.292, 0.4776512},
+        {0.578, 0.6622272},
+        {0.963, 0.9094248},
+        {1.449, 1.0000000},
+    }
+
+    for i = 2, #points do
+        local prev = points[i-1]
+        local current = points[i]
+        local delayTime = prev[1]
+        local duration = math.max(0.01, current[1] - prev[1])
+        local targetAlpha = current[2]
+
         task.delay(delayTime, function()
             if not dummy or not dummy.Parent then return end
 
-            -- "Hipotermia":
-            -- body = frostbite style
-            -- clothes/face = removed
-            -- hair/accessories = black
-            removeClassicClothesAndFace(dummy)
-            applyStyleToParts(bodyPartsOnly(dummy), bodyStyle)
-
-            for _, part in ipairs(accessoryParts(dummy)) do
+            for _, part in ipairs(allBaseParts(dummy)) do
                 pcall(function()
-                    part.Color = Color3.new(0,0,0)
-                    part.Material = Enum.Material.SmoothPlastic
-                    part.MaterialVariant = ""
+                    TweenService:Create(
+                        part,
+                        TweenInfo.new(
+                            duration,
+                            Enum.EasingStyle.Linear,
+                            Enum.EasingDirection.Out
+                        ),
+                        {Transparency = targetAlpha}
+                    ):Play()
                 end)
+
+                for _, obj in ipairs(part:GetDescendants()) do
+                    if obj:IsA("Decal") or obj:IsA("Texture") then
+                        pcall(function()
+                            TweenService:Create(
+                                obj,
+                                TweenInfo.new(
+                                    duration,
+                                    Enum.EasingStyle.Linear,
+                                    Enum.EasingDirection.Out
+                                ),
+                                {Transparency = targetAlpha}
+                            ):Play()
+                        end)
+                    end
+                end
             end
         end)
     end
 end
 
-local nativeConvertToRagdoll =
-    findFunction("convertToRagdoll", "DestroyBody")
+local function collectInvisibleCarrierNames(asset)
+    local names = {}
 
-local function playGhostedNativeDeath(dummy)
-    if not dummy or not dummy.Parent then return end
-
-    -- Use DUELS' actual death/ragdoll routine instead of inventing an animation.
-    if type(nativeConvertToRagdoll) == "function" then
-        task.delay(.04, function()
-            if dummy and dummy.Parent then
-                pcall(nativeConvertToRagdoll, dummy)
+    local function hasVfx(root)
+        for _, obj in ipairs(root:GetDescendants()) do
+            if obj:IsA("ParticleEmitter")
+                or obj:IsA("Beam")
+                or obj:IsA("Trail") then
+                return true
             end
-        end)
+        end
+        return false
     end
 
-    -- Ghosted's collected asset is neon green and its captured behavior
-    -- progressively fades the dead character. Apply that over the whole victim
-    -- so it doesn't only affect random sampled limbs.
-    local ghostGreen = Color3.fromRGB(32,255,69)
+    local function inspect(obj)
+        if obj:IsA("BasePart")
+            and obj.Transparency >= .98
+            and hasVfx(obj) then
+            names[obj.Name] = true
+        end
+    end
 
-    task.delay(.02, function()
-        if not dummy or not dummy.Parent then return end
+    inspect(asset)
+    for _, obj in ipairs(asset:GetDescendants()) do
+        inspect(obj)
+    end
 
-        for _, part in ipairs(bodyPartsOnly(dummy)) do
+    return names
+end
+
+local function enforceInvisibleCarriers(dummy, asset)
+    local names = collectInvisibleCarrierNames(asset)
+    if not next(names) then return end
+
+    local root = dummy and dummy:FindFirstChild("HumanoidRootPart")
+
+    local function nearDummy(part)
+        if not root or not part:IsA("BasePart") then return true end
+        return (part.Position - root.Position).Magnitude <= 40
+    end
+
+    local function inspect(obj)
+        if obj:IsA("BasePart")
+            and names[obj.Name]
+            and nearDummy(obj) then
             pcall(function()
-                part.Color = ghostGreen
-                part.Material = Enum.Material.Neon
+                obj.Transparency = 1
+                obj.CanCollide = false
+                obj.CanTouch = false
+                obj.CanQuery = false
             end)
         end
-    end)
+    end
 
-    task.delay(.12, function()
+    local conns = {
+        Workspace.DescendantAdded:Connect(inspect),
+        dummy.DescendantAdded:Connect(inspect),
+    }
+
+    local camera = Workspace.CurrentCamera
+    if camera then
+        conns[#conns+1] = camera.DescendantAdded:Connect(inspect)
+    end
+
+    local function rescan()
         if not dummy or not dummy.Parent then return end
 
-        for _, part in ipairs(allBaseParts(dummy)) do
-            pcall(function()
-                TweenService:Create(
-                    part,
-                    TweenInfo.new(
-                        1.35,
-                        Enum.EasingStyle.Quad,
-                        Enum.EasingDirection.In
-                    ),
-                    {Transparency = 1}
-                ):Play()
-            end)
+        for _, obj in ipairs(dummy:GetDescendants()) do
+            inspect(obj)
+        end
+
+        for _, obj in ipairs(Workspace:GetDescendants()) do
+            if obj:IsA("BasePart")
+                and names[obj.Name]
+                and nearDummy(obj) then
+                inspect(obj)
+            end
+        end
+    end
+
+    task.delay(.04, rescan)
+    task.delay(.18, rescan)
+    task.delay(.48, rescan)
+    task.delay(.95, rescan)
+
+    task.delay(1.55, function()
+        for _, conn in ipairs(conns) do
+            pcall(function() conn:Disconnect() end)
         end
     end)
 end
@@ -1726,7 +2054,11 @@ local function scheduleV2ClothingLock(dummy, asset)
 end
 
 local function runNative(name, statusLabel)
-    -- R6: native renderer first. No generic V3 body replay.
+    if isJellyEffect(name) then
+        statusLabel.Text = "Jelly eliminado del renderer."
+        return
+    end
+
     local asset, injected, assetStatus = ensureNativeAsset(name)
     if not asset then
         statusLabel.Text = "✕ Asset: " .. tostring(assetStatus)
@@ -1742,8 +2074,9 @@ local function runNative(name, statusLabel)
     local before = snapshotDummyState(dummy)
 
     observeNativeParticles(dummy)
+    enforceInvisibleCarriers(dummy, asset)
 
-    -- V2 remains authoritative for effect-owned clothing and 3D cosmetics.
+    -- V2 remains authoritative for effect-owned clothes and 3D cosmetics.
     local clothesV2 = applyV2Clothing(dummy, asset)
     local hatsV2 = attachV2HatIfNeeded(dummy, asset)
 
@@ -1751,7 +2084,7 @@ local function runNative(name, statusLabel)
     activeCleaner = cleaner
 
     statusLabel.Text =
-        "Aplicando efecto como víctima real...\n" ..
+        "Aplicando efecto a víctima completa...\n" ..
         tostring(assetStatus)
 
     local ok, result = pcall(function()
@@ -1761,43 +2094,30 @@ local function runNative(name, statusLabel)
     local bodyPatched = false
     local bodyPatchSource = nil
 
-    -- Explicit rules only. This prevents unrelated green/black limbs.
     if name == "Freeze" then
         scheduleFreezeReal(dummy)
         bodyPatched = true
-        bodyPatchSource = "Freeze · TODO el avatar"
+        bodyPatchSource = "Freeze · TODO sólido"
 
     elseif name == "Frostbite" then
         scheduleFrostbiteReal(dummy)
         bodyPatched = true
-        bodyPatchSource = "Frostbite · body + accesorios negros"
+        bodyPatchSource = "Frostbite · sin cara/ropa + accesorios negros"
 
     elseif name == "Ghosted" then
-        playGhostedNativeDeath(dummy)
+        playGhostedCapturedNativeFade(dummy)
         bodyPatched = true
-        bodyPatchSource = "Ghosted · muerte/ragdoll nativo"
+        bodyPatchSource = "Ghosted · curva nativa capturada"
 
     else
-        -- For other effects, trust the game's own BodyStyle/Adapter.
-        -- Do NOT layer V3 colors/transparency on top.
+        -- Only use the exact config table entry for the SAME effect.
+        -- No guessed getConfig calls and no V3 generic replay.
         bodyPatched, bodyPatchSource =
             scheduleBodyStylePatch(dummy, name, asset)
     end
 
-    -- Keep Gifted/effect-owned V2 clothing authoritative after async native work.
     if clothesV2 > 0 then
         scheduleV2ClothingLock(dummy, asset)
-    end
-
-    -- Jelly has a separate native path.
-    if not ok and string.find(name, "Jelly", 1, true) then
-        local jellyFn = findFunction("spawnJellyCosmetic", "DestroyBody")
-        if jellyFn then
-            ok, result = pcall(jellyFn, dummy, name)
-            if not ok then
-                ok, result = pcall(jellyFn, name, dummy)
-            end
-        end
     end
 
     if not ok then
@@ -1809,9 +2129,9 @@ local function runNative(name, statusLabel)
 
     statusLabel.Text =
         "✓ Nativo ejecutado · " .. name ..
-        "\nSin replay V3 genérico."
+        "\nR7 sin Jelly ni V3 genérico."
 
-    task.delay(.82, function()
+    task.delay(.86, function()
         if not dummy.Parent then return end
 
         local mutations =
@@ -1855,7 +2175,7 @@ local title = Instance.new("TextLabel")
 title.BackgroundTransparency = 1
 title.Position = UDim2.fromOffset(16, 12)
 title.Size = UDim2.new(1,-32,0,22)
-title.Text = "XERO · DEATH EFFECT · NATIVE DUMMY R6"
+title.Text = "XERO · DEATH EFFECT · NATIVE DUMMY R7"
 title.TextColor3 = Color3.fromRGB(245,245,245)
 title.Font = Enum.Font.GothamBold
 title.TextSize = 14

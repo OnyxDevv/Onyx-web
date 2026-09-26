@@ -1,5 +1,5 @@
 --[[
-XeroHub | DUELS Death Effects · Native Dummy Bridge R7 FullVictim
+XeroHub | DUELS Death Effects · Native Dummy Bridge R8 Targeted Fidelity
 Kev
 
 Objetivo:
@@ -64,7 +64,7 @@ end
 -- ============================================================
 -- Repo / cache
 -- ============================================================
-local CACHE_FOLDER = "XeroHub/DeathEffectsNativeDummyR7"
+local CACHE_FOLDER = "XeroHub/DeathEffectsNativeDummyR8"
 
 local function ensureFolder(path)
     if type(makefolder) ~= "function" then return end
@@ -1894,9 +1894,35 @@ local function playGhostedCapturedNativeFade(dummy)
 
     prepareGhostedBody(dummy)
 
-    -- Timings/alpha values are taken from the captured real Ghosted death.
-    -- We interpolate between the observed native frames instead of using an
-    -- invented single tween.
+    local root = dummy:FindFirstChild("HumanoidRootPart")
+    if root then
+        -- V3 captured the real fade but did not store CFrame/velocity.
+        -- Rebuild the missing "fly away" motion as one continuous corpse move
+        -- so the entire victim rises together instead of only fading in place.
+        pcall(function()
+            root.Anchored = true
+        end)
+
+        local startCF = root.CFrame
+        local targetCF =
+            startCF
+            * CFrame.new(0, 11.5, -1.25)
+            * CFrame.Angles(math.rad(-12), 0, math.rad(4))
+
+        pcall(function()
+            TweenService:Create(
+                root,
+                TweenInfo.new(
+                    1.48,
+                    Enum.EasingStyle.Quad,
+                    Enum.EasingDirection.In
+                ),
+                {CFrame = targetCF}
+            ):Play()
+        end)
+    end
+
+    -- Transparency samples come from the real Ghosted capture.
     local points = {
         {0.000, 0.3000000},
         {0.209, 0.4036046},
@@ -1949,6 +1975,166 @@ local function playGhostedCapturedNativeFade(dummy)
     end
 end
 
+-- ============================================================
+-- Explicit body effects that Preview.play does not faithfully reproduce.
+-- ============================================================
+
+local function forceWholeAvatarSolid(dummy, color, material, transparency)
+    if not dummy or not dummy.Parent then return end
+
+    removeClassicClothes(dummy)
+
+    for _, part in ipairs(allBaseParts(dummy)) do
+        forceSolidPart(
+            part,
+            color,
+            material or Enum.Material.SmoothPlastic,
+            0
+        )
+
+        pcall(function()
+            part.Transparency = transparency or 0
+        end)
+    end
+
+    -- Tint any face/decal that survived forceSolidPart.
+    for _, obj in ipairs(dummy:GetDescendants()) do
+        if obj:IsA("Decal") or obj:IsA("Texture") then
+            pcall(function()
+                obj.Color3 = color
+                if transparency ~= nil then
+                    obj.Transparency = transparency
+                end
+            end)
+        end
+    end
+end
+
+local function scheduleSpiritOverloadReal(dummy)
+    -- V2 root color = RGB(36,75,26), SmoothPlastic.
+    local spiritColor = Color3.fromRGB(36,75,26)
+
+    for _, delayTime in ipairs({0, .05, .16, .34, .70, 1.15}) do
+        task.delay(delayTime, function()
+            forceWholeAvatarSolid(
+                dummy,
+                spiritColor,
+                Enum.Material.SmoothPlastic,
+                0
+            )
+        end)
+    end
+
+    local conn
+    conn = dummy.DescendantAdded:Connect(function()
+        task.defer(function()
+            forceWholeAvatarSolid(
+                dummy,
+                spiritColor,
+                Enum.Material.SmoothPlastic,
+                0
+            )
+        end)
+    end)
+
+    task.delay(1.5, function()
+        pcall(function() conn:Disconnect() end)
+    end)
+end
+
+local function setWholeAvatarTransparency(dummy, alpha)
+    if not dummy or not dummy.Parent then return end
+
+    for _, part in ipairs(allBaseParts(dummy)) do
+        pcall(function()
+            part.Transparency = alpha
+        end)
+
+        for _, obj in ipairs(part:GetDescendants()) do
+            if obj:IsA("Decal") or obj:IsA("Texture") then
+                pcall(function()
+                    obj.Transparency = alpha
+                end)
+            end
+        end
+    end
+end
+
+local function playSoulReaperCapturedBody(dummy)
+    if not dummy or not dummy.Parent then return end
+
+    -- Real V3 capture: lime green Neon body followed by a progressive fade.
+    local soulColor = Color3.fromRGB(32,255,69)
+
+    forceWholeAvatarSolid(
+        dummy,
+        soulColor,
+        Enum.Material.Neon,
+        .30
+    )
+
+    local hum = dummy:FindFirstChildOfClass("Humanoid")
+    if hum then
+        pcall(function()
+            hum.AutoRotate = false
+            hum.PlatformStand = true
+            hum:ChangeState(Enum.HumanoidStateType.Ragdoll)
+        end)
+    end
+
+    -- Real captured SoulReaper timing, normalized to the full avatar.
+    local points = {
+        {0.000, 0.3000000},
+        {0.240, 0.3929472},
+        {0.319, 0.4399051},
+        {0.600, 0.6155688},
+        {0.932, 0.8830000},
+        {1.495, 1.0000000},
+    }
+
+    for i = 2, #points do
+        local prev = points[i-1]
+        local current = points[i]
+
+        task.delay(prev[1], function()
+            if not dummy or not dummy.Parent then return end
+
+            local duration = math.max(.01, current[1] - prev[1])
+            local alpha = current[2]
+
+            for _, part in ipairs(allBaseParts(dummy)) do
+                pcall(function()
+                    TweenService:Create(
+                        part,
+                        TweenInfo.new(
+                            duration,
+                            Enum.EasingStyle.Linear,
+                            Enum.EasingDirection.Out
+                        ),
+                        {Transparency = alpha}
+                    ):Play()
+                end)
+
+                for _, obj in ipairs(part:GetDescendants()) do
+                    if obj:IsA("Decal") or obj:IsA("Texture") then
+                        pcall(function()
+                            TweenService:Create(
+                                obj,
+                                TweenInfo.new(
+                                    duration,
+                                    Enum.EasingStyle.Linear,
+                                    Enum.EasingDirection.Out
+                                ),
+                                {Transparency = alpha}
+                            ):Play()
+                        end)
+                    end
+                end
+            end
+        end)
+    end
+end
+
 local function collectInvisibleCarrierNames(asset)
     local names = {}
 
@@ -1979,27 +2165,81 @@ local function collectInvisibleCarrierNames(asset)
     return names
 end
 
-local function enforceInvisibleCarriers(dummy, asset)
+local EXTRA_CARRIER_NAMES = {
+    GhostbringerEffect = {
+        ["ghostbringer VFX"] = true,
+    },
+    Heartbeat = {
+        ["Heartbeat"] = true,
+        ["EmitterGround"] = true,
+    },
+    SpiritOverload = {
+        ["SpiritOverload"] = true,
+        ["EmitterGround"] = true,
+    },
+    SoulReaper = {
+        ["SoulReaper"] = true,
+        ["EmitterGround"] = true,
+    },
+    Ghosted = {
+        ["Ghosted"] = true,
+        ["EmitterGround"] = true,
+    },
+}
+
+local function enforceInvisibleCarriers(dummy, asset, effectName)
     local names = collectInvisibleCarrierNames(asset)
+
+    for name in pairs(EXTRA_CARRIER_NAMES[effectName] or {}) do
+        names[name] = true
+    end
+
     if not next(names) then return end
 
     local root = dummy and dummy:FindFirstChild("HumanoidRootPart")
+    local locked = setmetatable({}, {__mode="k"})
+    local propertyConnections = setmetatable({}, {__mode="k"})
 
     local function nearDummy(part)
         if not root or not part:IsA("BasePart") then return true end
-        return (part.Position - root.Position).Magnitude <= 40
+        return (part.Position - root.Position).Magnitude <= 45
+    end
+
+    local function forceHidden(part)
+        if not part or not part.Parent or not part:IsA("BasePart") then return end
+
+        pcall(function()
+            part.Transparency = 1
+            part.LocalTransparencyModifier = 1
+            part.CanCollide = false
+            part.CanTouch = false
+            part.CanQuery = false
+        end)
+
+        if not propertyConnections[part] then
+            local ok, conn = pcall(function()
+                return part:GetPropertyChangedSignal("Transparency"):Connect(function()
+                    if part.Parent and part.Transparency < .999 then
+                        pcall(function()
+                            part.Transparency = 1
+                            part.LocalTransparencyModifier = 1
+                        end)
+                    end
+                end)
+            end)
+
+            if ok and conn then
+                propertyConnections[part] = conn
+            end
+        end
     end
 
     local function inspect(obj)
         if obj:IsA("BasePart")
             and names[obj.Name]
             and nearDummy(obj) then
-            pcall(function()
-                obj.Transparency = 1
-                obj.CanCollide = false
-                obj.CanTouch = false
-                obj.CanQuery = false
-            end)
+            locked[obj] = true
+            forceHidden(obj)
         end
     end
 
@@ -2020,6 +2260,14 @@ local function enforceInvisibleCarriers(dummy, asset)
             inspect(obj)
         end
 
+        local cameraNow = Workspace.CurrentCamera
+        if cameraNow then
+            for _, obj in ipairs(cameraNow:GetDescendants()) do
+                inspect(obj)
+            end
+        end
+
+        -- Selected effect only; short scan window.
         for _, obj in ipairs(Workspace:GetDescendants()) do
             if obj:IsA("BasePart")
                 and names[obj.Name]
@@ -2027,16 +2275,26 @@ local function enforceInvisibleCarriers(dummy, asset)
                 inspect(obj)
             end
         end
+
+        for part in pairs(locked) do
+            forceHidden(part)
+        end
     end
 
-    task.delay(.04, rescan)
-    task.delay(.18, rescan)
-    task.delay(.48, rescan)
-    task.delay(.95, rescan)
+    for _, delayTime in ipairs({
+        0, .03, .08, .16, .28, .45, .70, 1.0, 1.35, 1.75, 2.20
+    }) do
+        task.delay(delayTime, rescan)
+    end
 
-    task.delay(1.55, function()
+    task.delay(2.45, function()
         for _, conn in ipairs(conns) do
             pcall(function() conn:Disconnect() end)
+        end
+
+        for part, conn in pairs(propertyConnections) do
+            pcall(function() conn:Disconnect() end)
+            propertyConnections[part] = nil
         end
     end)
 end
@@ -2074,9 +2332,10 @@ local function runNative(name, statusLabel)
     local before = snapshotDummyState(dummy)
 
     observeNativeParticles(dummy)
-    enforceInvisibleCarriers(dummy, asset)
 
-    -- V2 remains authoritative for effect-owned clothes and 3D cosmetics.
+    -- Start before Preview.play so carrier parts are never visible for a frame.
+    enforceInvisibleCarriers(dummy, asset, name)
+
     local clothesV2 = applyV2Clothing(dummy, asset)
     local hatsV2 = attachV2HatIfNeeded(dummy, asset)
 
@@ -2107,16 +2366,29 @@ local function runNative(name, statusLabel)
     elseif name == "Ghosted" then
         playGhostedCapturedNativeFade(dummy)
         bodyPatched = true
-        bodyPatchSource = "Ghosted · curva nativa capturada"
+        bodyPatchSource = "Ghosted · fade capturado + vuelo"
+
+    elseif name == "SpiritOverload" then
+        scheduleSpiritOverloadReal(dummy)
+        bodyPatched = true
+        bodyPatchSource = "SpiritOverload · TODO RGB 36,75,26"
+
+    elseif name == "SoulReaper" then
+        playSoulReaperCapturedBody(dummy)
+        bodyPatched = true
+        bodyPatchSource = "SoulReaper · lime Neon + fade capturado"
 
     else
-        -- Only use the exact config table entry for the SAME effect.
-        -- No guessed getConfig calls and no V3 generic replay.
         bodyPatched, bodyPatchSource =
             scheduleBodyStylePatch(dummy, name, asset)
     end
 
-    if clothesV2 > 0 then
+    if clothesV2 > 0
+        and name ~= "Freeze"
+        and name ~= "Frostbite"
+        and name ~= "Ghosted"
+        and name ~= "SpiritOverload"
+        and name ~= "SoulReaper" then
         scheduleV2ClothingLock(dummy, asset)
     end
 
@@ -2129,7 +2401,7 @@ local function runNative(name, statusLabel)
 
     statusLabel.Text =
         "✓ Nativo ejecutado · " .. name ..
-        "\nR7 sin Jelly ni V3 genérico."
+        "\nR8 · fidelity dirigido."
 
     task.delay(.86, function()
         if not dummy.Parent then return end
@@ -2175,7 +2447,7 @@ local title = Instance.new("TextLabel")
 title.BackgroundTransparency = 1
 title.Position = UDim2.fromOffset(16, 12)
 title.Size = UDim2.new(1,-32,0,22)
-title.Text = "XERO · DEATH EFFECT · NATIVE DUMMY R7"
+title.Text = "XERO · DEATH EFFECT · NATIVE DUMMY R8"
 title.TextColor3 = Color3.fromRGB(245,245,245)
 title.Font = Enum.Font.GothamBold
 title.TextSize = 14

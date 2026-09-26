@@ -1,5 +1,5 @@
 --[[
-XeroHub | DUELS Death Effects · Stable Base R23 · Local Kills + Dummy Bridge
+XeroHub | DUELS Death Effects · Stable Base R26 · Local Kills + Dummy Bridge
 Kev
 
 Objetivo:
@@ -29,9 +29,9 @@ local PlayerGui = LP:WaitForChild("PlayerGui")
 
 local ENV = (getgenv and getgenv()) or _G
 
--- R33 lifecycle: every new execution cleans the PREVIOUS R33 execution completely.
+-- R34 lifecycle: every new execution cleans the PREVIOUS R33 execution completely.
 -- Older R29-R32 builds did not own a global runtime, so one fresh server/rejoin is
--- recommended once when migrating to R33; after that re-execution is self-cleaning.
+-- recommended once when migrating to R34; after that re-execution is self-cleaning.
 if ENV.__XERO_DEATH_BRIDGE_RUNTIME
     and type(ENV.__XERO_DEATH_BRIDGE_RUNTIME.Cleanup) == "function" then
     pcall(ENV.__XERO_DEATH_BRIDGE_RUNTIME.Cleanup)
@@ -258,7 +258,8 @@ for _, entry in ipairs(manifest.effects) do
         and entry.name ~= "BlackvalkEffect"
         and entry.name ~= "GhostbringerEffect"
         and entry.name ~= "Decorated"
-        and entry.name ~= "ClanFlagEffect" then
+        and entry.name ~= "ClanFlagEffect"
+        and not string.find(string.lower(entry.name), "confetti", 1, true) then
         EFFECTS[#EFFECTS + 1] = entry.name
         BY_NAME[entry.name] = entry
     end
@@ -3292,7 +3293,7 @@ end
 
 
 -- ============================================================
--- R33 · CURRENTCAMERA SINGLE-PLAY + LOCAL HIDE
+-- R34 · CURRENTCAMERA PHYSICS + HARD SESSION CLEANUP
 -- Same principle as XeroHub ESP: the real enemy is only a reference.
 -- We NEVER parent effect objects into the real Character and NEVER mutate
 -- its body properties. DeathEffectPreview runs on a CurrentCamera-local cloned proxy.
@@ -3309,6 +3310,8 @@ ENV.__XERO_DEATH_PROXY = {
     TemplateByHumanoid = setmetatable({}, {__mode = "k"}),
     TemplateBuilding = setmetatable({}, {__mode = "k"}),
     LastMakeByHumanoid = setmetatable({}, {__mode = "k"}),
+    PhysicsConnections = setmetatable({}, {__mode = "k"}),
+    KillSerial = 0,
 }
 
 ENV.__XERO_DEATH_PROXY.EnsureRoot = function()
@@ -3348,6 +3351,11 @@ end
 ENV.__XERO_DEATH_PROXY.DestroyProxy = function(proxy)
     if not proxy then return end
     ENV.__XERO_DEATH_PROXY.DisconnectFollow(proxy)
+    local physicsConn = ENV.__XERO_DEATH_PROXY.PhysicsConnections[proxy]
+    if physicsConn then
+        pcall(function() physicsConn:Disconnect() end)
+        ENV.__XERO_DEATH_PROXY.PhysicsConnections[proxy] = nil
+    end
     local source = ENV.__XERO_DEATH_PROXY.SourceByProxy[proxy]
     ENV.__XERO_DEATH_PROXY.SourceByProxy[proxy] = nil
     cleanVictim(proxy)
@@ -3389,6 +3397,7 @@ ENV.__XERO_DEATH_PROXY.Cleanup = function()
         pcall(function() root:Destroy() end)
     end
     ENV.__XERO_DEATH_PROXY.Root = nil
+    ENV.__XERO_DEATH_PROXY.PhysicsConnections = setmetatable({}, {__mode = "k"})
 end
 
 ENV.__XERO_DEATH_PROXY.Sanitize = function(model)
@@ -3563,6 +3572,150 @@ ENV.__XERO_DEATH_PROXY.BuildTemplate = function(player, character, hum)
     end)
 end
 
+ENV.__XERO_DEATH_PROXY.EffectKeepsRigidBody = function(effectName)
+    local lower = string.lower(tostring(effectName or ""))
+    return string.find(lower, "ufo", 1, true) ~= nil
+        or string.find(lower, "venom", 1, true) ~= nil
+        or string.find(lower, "ghost", 1, true) ~= nil
+        or string.find(lower, "freeze", 1, true) ~= nil
+        or string.find(lower, "frost", 1, true) ~= nil
+        or string.find(lower, "hypo", 1, true) ~= nil
+end
+
+ENV.__XERO_DEATH_PROXY.CopySourceMotion = function(proxy, source, effectName)
+    if not proxy or not proxy.Parent then return end
+
+    local proxyRoot = proxy:FindFirstChild("HumanoidRootPart")
+        or proxy:FindFirstChild("UpperTorso")
+        or proxy:FindFirstChild("Torso")
+    if not proxyRoot or not proxyRoot:IsA("BasePart") then return end
+
+    local sourceRoot = source and (
+        source:FindFirstChild("HumanoidRootPart")
+        or source:FindFirstChild("UpperTorso")
+        or source:FindFirstChild("Torso")
+    ) or nil
+
+    local inheritedLinear = Vector3.zero
+    local inheritedAngular = Vector3.zero
+    if sourceRoot and sourceRoot:IsA("BasePart") then
+        pcall(function() inheritedLinear = sourceRoot.AssemblyLinearVelocity end)
+        pcall(function() inheritedAngular = sourceRoot.AssemblyAngularVelocity end)
+    end
+
+    local shooterOrigin
+    local localChar = LP.Character
+    local localRoot = localChar and localChar:FindFirstChild("HumanoidRootPart")
+    if localRoot and localRoot:IsA("BasePart") then
+        shooterOrigin = localRoot.Position
+    elseif Workspace.CurrentCamera then
+        shooterOrigin = Workspace.CurrentCamera.CFrame.Position
+    end
+
+    local shotDirection = Vector3.new(0, 0, -1)
+    if shooterOrigin then
+        local delta = proxyRoot.Position - shooterOrigin
+        if delta.Magnitude > 0.01 then
+            shotDirection = delta.Unit
+        end
+    end
+
+    local lateral = shotDirection:Cross(Vector3.new(0, 1, 0))
+    if lateral.Magnitude < 0.01 then
+        lateral = Vector3.new(1, 0, 0)
+    else
+        lateral = lateral.Unit
+    end
+
+    -- Animated effects need their original Motor6D rig intact. They still inherit
+    -- the victim's real movement plus a short bullet impulse before the animation owns it.
+    local keepRigid = ENV.__XERO_DEATH_PROXY.EffectKeepsRigidBody(effectName)
+
+    if not keepRigid then
+        -- Local-only ragdoll. Everything is created INSIDE the CurrentCamera proxy.
+        -- Root/RootJoint stays enabled so the invisible root remains part of the body assembly.
+        for _, motor in ipairs(proxy:GetDescendants()) do
+            if motor:IsA("Motor6D")
+                and motor.Part0 and motor.Part1
+                and motor.Name ~= "Root"
+                and motor.Name ~= "RootJoint" then
+
+                local a0 = Instance.new("Attachment")
+                a0.Name = "XeroDeathRagdollA0"
+                a0.CFrame = motor.C0
+                a0.Parent = motor.Part0
+
+                local a1 = Instance.new("Attachment")
+                a1.Name = "XeroDeathRagdollA1"
+                a1.CFrame = motor.C1
+                a1.Parent = motor.Part1
+
+                local socket = Instance.new("BallSocketConstraint")
+                socket.Name = "XeroDeathRagdollSocket"
+                socket.Attachment0 = a0
+                socket.Attachment1 = a1
+                socket.LimitsEnabled = true
+                socket.UpperAngle = 55
+                socket.TwistLimitsEnabled = true
+                socket.TwistLowerAngle = -45
+                socket.TwistUpperAngle = 45
+                socket.Parent = motor.Part0
+
+                pcall(function() motor.Enabled = false end)
+            end
+        end
+    end
+
+    for _, part in ipairs(proxy:GetDescendants()) do
+        if part:IsA("BasePart") then
+            pcall(function()
+                part.Anchored = false
+                part.CanTouch = false
+                part.CanQuery = false
+                if keepRigid then
+                    part.CanCollide = false
+                else
+                    part.CanCollide = part.Name ~= "HumanoidRootPart"
+                        and part:FindFirstAncestorOfClass("Accessory") == nil
+                end
+            end)
+        end
+    end
+
+    local hum = proxy:FindFirstChildOfClass("Humanoid")
+    if hum then
+        pcall(function()
+            hum.AutoRotate = false
+            hum.PlatformStand = true
+            hum:ChangeState(Enum.HumanoidStateType.Physics)
+        end)
+    end
+
+    -- Preserve actual victim momentum, then add a small local bullet reaction.
+    local push = shotDirection * (keepRigid and 12 or 20) + Vector3.new(0, keepRigid and 2.5 or 5, 0)
+    local spin = inheritedAngular + lateral * (keepRigid and 1.2 or 3.5)
+
+    for _, part in ipairs(proxy:GetDescendants()) do
+        if part:IsA("BasePart") then
+            pcall(function()
+                part.AssemblyLinearVelocity = inheritedLinear + push
+                part.AssemblyAngularVelocity = spin
+            end)
+        end
+    end
+end
+
+ENV.__XERO_DEATH_PROXY.BeginKillSession = function()
+    local state = ENV.__XERO_DEATH_PROXY
+    state.KillSerial = (state.KillSerial or 0) + 1
+
+    -- Hard isolation: an old Preview.play/cleaner/proxy may not survive into the
+    -- next kill or next round. This prevents the previous animation from replaying
+    -- at LocalPlayer or at a stale world position.
+    state.Clear()
+    return state.KillSerial
+end
+
 ENV.__XERO_DEATH_PROXY.Make = function(source, effectName, hum, player, deathPosition)
     -- Global one-death gate. This sits in ENV intentionally: if two local kill
     -- signals arrive for the same Humanoid, only the first caller gets a proxy.
@@ -3630,6 +3783,10 @@ ENV.__XERO_DEATH_PROXY.Make = function(source, effectName, hum, player, deathPos
         pcall(ENV.__XERO_DEATH_BRIDGE_RUNTIME.HideCharacterLocal, source)
     end
 
+    -- R34: copy the victim's actual movement and add local bullet reaction BEFORE
+    -- the death effect takes control of the CurrentCamera proxy.
+    ENV.__XERO_DEATH_PROXY.CopySourceMotion(proxy, source, effectName)
+
     -- Only the detached proxy receives death state / effect physics.
     local proxyHumanoid = proxy:FindFirstChildOfClass("Humanoid")
     if proxyHumanoid then
@@ -3658,6 +3815,7 @@ ENV.__XERO_DEATH_PROXY.OwnsMotion = function(effectName, proxy)
     -- Known effects whose native behavior intentionally controls the body's
     -- position/anchoring. Do not force them to follow the DUELS corpse.
     if string.find(lower, "ufo", 1, true)
+        or string.find(lower, "venom", 1, true)
         or string.find(lower, "abduct", 1, true)
         or string.find(lower, "ghost", 1, true)
         or string.find(lower, "freeze", 1, true) then
@@ -3757,6 +3915,11 @@ local function runNativeOnVictim(name, victim, statusLabel)
 
     if isJellyEffect(name) then
         if statusLabel then statusLabel.Text = "Jelly eliminado del renderer." end
+        return false
+    end
+
+    if string.find(string.lower(tostring(name)), "confetti", 1, true) then
+        if statusLabel then statusLabel.Text = "Confetti eliminado del renderer." end
         return false
     end
 
@@ -4360,6 +4523,10 @@ local function triggerVictim(player, character, hum, proof)
         tostring(effectName) .. " → " .. tostring(player.Name) ..
         (proof and ("\n" .. tostring(proof)) or "")
 
+    -- R34 hard session boundary: completely clean the previous local death visual
+    -- before starting this kill. Old animation/audio cannot leak into another round.
+    ENV.__XERO_DEATH_PROXY.BeginKillSession()
+
     -- Make() first builds the CurrentCamera replacement from the still-visible
     -- Character, then locally hides the original only via LocalTransparencyModifier.
     local proxy, proxyErr =
@@ -4837,7 +5004,13 @@ end)
 
 for _, propertyName in ipairs({"Team", "TeamColor", "Neutral"}) do
     localTeamConnections[#localTeamConnections + 1] =
-        LP:GetPropertyChangedSignal(propertyName):Connect(refreshAllTracked)
+        LP:GetPropertyChangedSignal(propertyName):Connect(function()
+            -- Round transition = hard cleanup of all previous death animation state.
+            if ENV.__XERO_DEATH_PROXY and ENV.__XERO_DEATH_PROXY.Clear then
+                pcall(ENV.__XERO_DEATH_PROXY.Clear)
+            end
+            refreshAllTracked()
+        end)
 end
 
 ENV.__XERO_DEATH_BRIDGE_RUNTIME.PlayerAddedConnection = Players.PlayerAdded:Connect(hookPlayer)
@@ -4937,7 +5110,7 @@ UserInputService.InputChanged:Connect(function(input)
 end)
 
 print(
-    "[Xero Death Effects R33 CurrentCamera]",
+    "[Xero Death Effects R34 CurrentCamera Physics]",
     #EFFECTS,
     "efectos ·",
     PRELOAD_STATS.loaded,

@@ -1,0 +1,723 @@
+[
+  {
+    "rootName": "JuanNNN18y",
+    "source": "workspace",
+    "reason": "humanoid_or_character",
+    "nodes": 169,
+    "effectName": "1x1x1x1Effect"
+  },
+  {
+    "rootName": "TouchInterest",
+    "source": "body",
+    "reason": "non_visual_root",
+    "nodes": 1,
+    "effectName": "BlackheartEffect"
+  },
+  {
+    "rootName": "Pepitoclchiquito7774",
+    "source": "workspace",
+    "reason": "humanoid_or_character",
+    "nodes": 180,
+    "effectName": "CandyCane"
+  },
+  {
+    "rootName": "irenesita546",
+    "source": "workspace",
+    "reason": "humanoid_or_character",
+    "nodes": 174,
+    "effectName": "CandyCane"
+  },
+  {
+    "rootName": "ST4R_CURY",
+    "source": "workspace",
+    "reason": "humanoid_or_character",
+    "nodes": 170,
+    "effectName": "CandyCane"
+  },
+  {
+    "rootName": "Part",
+    "source": "workspace",
+    "reason": "generic_non_vfx",
+    "nodes": 2,
+    "effectName": "ClanEmblemEffect"
+  },
+  {
+    "rootName": "Part",
+    "source": "workspace",
+    "reason": "generic_non_vfx",
+    "nodes": 2,
+    "effectName": "ClanEmblemEffect"
+  },
+  {
+    "rootName": "Part",
+    "source": "workspace",
+    "reason": "generic_non_vfx",
+    "nodes": 2,
+    "effectName": "ClanEmblemEffect"
+  },
+  {
+    "rootName": "Part",
+    "source": "workspace",
+    "reason": "generic_non_vfx",
+    "nodes": 2,
+    "effectName": "ClanEmblemEffect"
+  },
+  {
+    "rootName": "Part",
+    "source": "workspace",
+    "reason": "generic_non_vfx",
+    "nodes": 2,
+    "effectName": "Decorated"
+  },
+  {
+    "rootName": "Part",
+    "source": "workspace",
+    "reason": "generic_non_vfx",
+    "nodes": 2,
+    "effectName": "Decorated"
+  },
+  {
+    "rootName": "Part",
+    "source": "workspace",
+    "reason": "generic_non_vfx",
+    "nodes": 2,
+    "effectName": "Decorated"
+  },
+  {
+    "rootName": "Part",
+    "source": "workspace",
+    "reason": "generic_non_vfx",
+    "nodes": 2,
+    "effectName": "Decorated"
+  },
+  {
+    "rootName": "Part",
+    "source": "workspace",
+    "reason": "generic_non_vfx",
+    "nodes": 2,
+    "effectName": "DragonBlossom"
+  },
+  {
+    "rootName": "Part",
+    "source": "workspace",
+    "reason": "generic_non_vfx",
+    "nodes": 2,
+    "effectName": "DragonBlossom"
+  },
+  {
+    "rootName": "HandleBeamAttach",
+    "source": "workspace",
+    "reason": "non_visual_root",
+    "nodes": 1,
+    "effectName": "DreamwalkerEffect"
+  },
+  {
+    "rootName": "Part",
+    "source": "workspace",
+    "reason": "generic_non_vfx",
+    "nodes": 1,
+    "effectName": "DreamwalkerEffect"
+  },
+  {
+    "rootName": "Part",
+    "source": "workspace",
+    "reason": "generic_non_vfx",
+    "nodes": 2,
+    "effectName": "DreamwalkerEffect"
+  },
+  {
+    "rootName": "Part",
+    "source": "workspace",
+    "reason": "generic_non_vfx",
+    "nodes": 2,
+    "effectName": "DreamwalkerEffect"
+  },
+  {
+    "rootName": "ThrowingLocalKnife",
+    "source": "workspace",
+    "reason": "combat_object_name",
+    "nodes": 31,
+    "effectName": "Egged"
+  },
+  {
+    "rootName": "ThrowingServerKnife",
+    "source": "workspace",
+    "reason": "combat_object_name",
+    "nodes": 32,
+    "effectName": "Egged"
+  },
+  {
+    "rootName": "ThrowingKnifeServer",
+    "source": "workspace",
+    "reason": "combat_object_name",
+    "nodes": 1,
+    "effectName": "Egged"
+  },
+  {
+    "rootName": "Part",
+    "source": "workspace",
+    "reason": "generic_non_vfx",
+    "nodes": 2,
+    "effectName": "Egged"
+  },
+  {
+    "rootName": "Part",
+    "source": "workspace",
+    "reason": "generic_non_vfx",
+    "nodes": 2,
+    "effectName": "Egged"
+  },
+  {
+    "rootName": "ThrowingLocalKnife",
+    "source": "workspace",
+    "reason": "combat_object_name",
+    "nodes": 31,
+    "effectName": "Egged"
+  },
+  {
+    "rootName": "Part",
+    "source": "workspace",
+    "reason": "generic_non_vfx",
+    "nodes": 2,
+    "effectName": "GhostbringerEffect"
+  },
+  {
+    "rootName": "Part",
+    "source": "workspace",
+    "reason": "generic_non_vfx",
+    "nodes": 2,
+    "effectName": "GhostbringerEffect"
+  },
+  {
+    "rootName": "ThrowingKnifeServer",
+    "source": "workspace",
+    "reason": "combat_object_name",
+    "nodes": 25,
+    "effectName": "Ghosted"
+  },
+  {
+    "rootName": "ThrowingServerKnife",
+    "source": "workspace",
+    "reason": "combat_object_name",
+    "nodes": 25,
+    "effectName": "Ghosted"
+  },
+  {
+    "rootName": "Part",
+    "source": "workspace",
+    "reason": "generic_non_vfx",
+    "nodes": 2,
+    "effectName": "Gifted"
+  },
+  {
+    "rootName": "Part",
+    "source": "workspace",
+    "reason": "generic_non_vfx",
+    "nodes": 2,
+    "effectName": "Gifted"
+  },
+  {
+    "rootName": "ThrowingServerKnife",
+    "source": "workspace",
+    "reason": "combat_object_name",
+    "nodes": 32,
+    "effectName": "GreenIce"
+  },
+  {
+    "rootName": "ThrowingKnifeServer",
+    "source": "workspace",
+    "reason": "combat_object_name",
+    "nodes": 32,
+    "effectName": "GreenIce"
+  },
+  {
+    "rootName": "RibsGun",
+    "source": "body",
+    "reason": "tool",
+    "nodes": 21,
+    "effectName": "GreenIce"
+  },
+  {
+    "rootName": "Part",
+    "source": "workspace",
+    "reason": "generic_non_vfx",
+    "nodes": 2,
+    "effectName": "GreenIce"
+  },
+  {
+    "rootName": "Part",
+    "source": "workspace",
+    "reason": "generic_non_vfx",
+    "nodes": 2,
+    "effectName": "GreenIce"
+  },
+  {
+    "rootName": "Part",
+    "source": "workspace",
+    "reason": "generic_non_vfx",
+    "nodes": 2,
+    "effectName": "GreenJelly"
+  },
+  {
+    "rootName": "Part",
+    "source": "workspace",
+    "reason": "generic_non_vfx",
+    "nodes": 2,
+    "effectName": "GreenJelly"
+  },
+  {
+    "rootName": "HandleBeamAttach",
+    "source": "workspace",
+    "reason": "non_visual_root",
+    "nodes": 1,
+    "effectName": "GreenJelly"
+  },
+  {
+    "rootName": "Part",
+    "source": "workspace",
+    "reason": "generic_non_vfx",
+    "nodes": 1,
+    "effectName": "GreenJelly"
+  },
+  {
+    "rootName": "Part",
+    "source": "workspace",
+    "reason": "generic_non_vfx",
+    "nodes": 2,
+    "effectName": "GreenJelly"
+  },
+  {
+    "rootName": "Part",
+    "source": "workspace",
+    "reason": "generic_non_vfx",
+    "nodes": 2,
+    "effectName": "Heartbeat"
+  },
+  {
+    "rootName": "Part",
+    "source": "workspace",
+    "reason": "generic_non_vfx",
+    "nodes": 2,
+    "effectName": "Heartbeat"
+  },
+  {
+    "rootName": "ThrowingKnifeServer",
+    "source": "workspace",
+    "reason": "combat_object_name",
+    "nodes": 29,
+    "effectName": "HexaKill"
+  },
+  {
+    "rootName": "ThrowingServerKnife",
+    "source": "workspace",
+    "reason": "combat_object_name",
+    "nodes": 29,
+    "effectName": "HexaKill"
+  },
+  {
+    "rootName": "Part",
+    "source": "workspace",
+    "reason": "generic_non_vfx",
+    "nodes": 2,
+    "effectName": "MoneyMaker"
+  },
+  {
+    "rootName": "Part",
+    "source": "workspace",
+    "reason": "generic_non_vfx",
+    "nodes": 2,
+    "effectName": "MoneyMaker"
+  },
+  {
+    "rootName": "Part",
+    "source": "workspace",
+    "reason": "generic_non_vfx",
+    "nodes": 2,
+    "effectName": "MoneyMaker"
+  },
+  {
+    "rootName": "Part",
+    "source": "workspace",
+    "reason": "generic_non_vfx",
+    "nodes": 2,
+    "effectName": "MoneyMaker"
+  },
+  {
+    "rootName": "ximelovers60",
+    "source": "workspace",
+    "reason": "humanoid_or_character",
+    "nodes": 180,
+    "effectName": "PhoenixEffect"
+  },
+  {
+    "rootName": "Part",
+    "source": "workspace",
+    "reason": "generic_non_vfx",
+    "nodes": 2,
+    "effectName": "PurpleGrass"
+  },
+  {
+    "rootName": "Part",
+    "source": "workspace",
+    "reason": "generic_non_vfx",
+    "nodes": 2,
+    "effectName": "PurpleGrass"
+  },
+  {
+    "rootName": "soy_athena0",
+    "source": "workspace",
+    "reason": "humanoid_or_character",
+    "nodes": 180,
+    "effectName": "PurpleIce"
+  },
+  {
+    "rootName": "Latakis2coral1",
+    "source": "workspace",
+    "reason": "humanoid_or_character",
+    "nodes": 180,
+    "effectName": "PurpleIce"
+  },
+  {
+    "rootName": "kakakkakna",
+    "source": "workspace",
+    "reason": "humanoid_or_character",
+    "nodes": 180,
+    "effectName": "RedIce"
+  },
+  {
+    "rootName": "Part",
+    "source": "workspace",
+    "reason": "generic_non_vfx",
+    "nodes": 2,
+    "effectName": "RedSmoke"
+  },
+  {
+    "rootName": "Part",
+    "source": "workspace",
+    "reason": "generic_non_vfx",
+    "nodes": 2,
+    "effectName": "RedSmoke"
+  },
+  {
+    "rootName": "Eli13vale",
+    "source": "workspace",
+    "reason": "humanoid_or_character",
+    "nodes": 180,
+    "effectName": "RedSmoke"
+  },
+  {
+    "rootName": "Part",
+    "source": "workspace",
+    "reason": "generic_non_vfx",
+    "nodes": 2,
+    "effectName": "SantaClaus"
+  },
+  {
+    "rootName": "Part",
+    "source": "workspace",
+    "reason": "generic_non_vfx",
+    "nodes": 2,
+    "effectName": "SantaClaus"
+  },
+  {
+    "rootName": "ThrowingKnifeServer",
+    "source": "workspace",
+    "reason": "combat_object_name",
+    "nodes": 32,
+    "effectName": "SantaClaus"
+  },
+  {
+    "rootName": "ThrowingServerKnife",
+    "source": "workspace",
+    "reason": "combat_object_name",
+    "nodes": 32,
+    "effectName": "SantaClaus"
+  },
+  {
+    "rootName": "ThrowingKnifeServer",
+    "source": "workspace",
+    "reason": "combat_object_name",
+    "nodes": 32,
+    "effectName": "SantaClaus"
+  },
+  {
+    "rootName": "ThrowingServerKnife",
+    "source": "workspace",
+    "reason": "combat_object_name",
+    "nodes": 32,
+    "effectName": "SantaClaus"
+  },
+  {
+    "rootName": "Part",
+    "source": "workspace",
+    "reason": "generic_non_vfx",
+    "nodes": 2,
+    "effectName": "ShadowcrestEffect"
+  },
+  {
+    "rootName": "Part",
+    "source": "workspace",
+    "reason": "generic_non_vfx",
+    "nodes": 2,
+    "effectName": "ShadowcrestEffect"
+  },
+  {
+    "rootName": "ThrowingServerKnife",
+    "source": "workspace",
+    "reason": "combat_object_name",
+    "nodes": 21,
+    "effectName": "ShadowcrestEffect"
+  },
+  {
+    "rootName": "HandleBeamAttach",
+    "source": "workspace",
+    "reason": "non_visual_root",
+    "nodes": 1,
+    "effectName": "ShadowcrestEffect"
+  },
+  {
+    "rootName": "Part",
+    "source": "workspace",
+    "reason": "generic_non_vfx",
+    "nodes": 1,
+    "effectName": "ShadowcrestEffect"
+  },
+  {
+    "rootName": "ThrowingLocalKnife",
+    "source": "workspace",
+    "reason": "combat_object_name",
+    "nodes": 31,
+    "effectName": "SlimeEffect"
+  },
+  {
+    "rootName": "Part",
+    "source": "workspace",
+    "reason": "generic_non_vfx",
+    "nodes": 2,
+    "effectName": "SlimeEffect"
+  },
+  {
+    "rootName": "Part",
+    "source": "workspace",
+    "reason": "generic_non_vfx",
+    "nodes": 2,
+    "effectName": "SlimeEffect"
+  },
+  {
+    "rootName": "ThrowingKnifeServer",
+    "source": "workspace",
+    "reason": "combat_object_name",
+    "nodes": 19,
+    "effectName": "SnowMan"
+  },
+  {
+    "rootName": "ThrowingServerKnife",
+    "source": "workspace",
+    "reason": "combat_object_name",
+    "nodes": 19,
+    "effectName": "SnowMan"
+  },
+  {
+    "rootName": "ThrowingServerKnife",
+    "source": "workspace",
+    "reason": "combat_object_name",
+    "nodes": 19,
+    "effectName": "SnowMan"
+  },
+  {
+    "rootName": "ThrowingKnifeServer",
+    "source": "workspace",
+    "reason": "combat_object_name",
+    "nodes": 19,
+    "effectName": "SnowMan"
+  },
+  {
+    "rootName": "ThrowingServerKnife",
+    "source": "workspace",
+    "reason": "combat_object_name",
+    "nodes": 19,
+    "effectName": "SnowMan"
+  },
+  {
+    "rootName": "ThrowingKnifeServer",
+    "source": "workspace",
+    "reason": "combat_object_name",
+    "nodes": 19,
+    "effectName": "SnowMan"
+  },
+  {
+    "rootName": "Part",
+    "source": "workspace",
+    "reason": "generic_non_vfx",
+    "nodes": 2,
+    "effectName": "SoulReaper"
+  },
+  {
+    "rootName": "Part",
+    "source": "workspace",
+    "reason": "generic_non_vfx",
+    "nodes": 2,
+    "effectName": "SoulReaper"
+  },
+  {
+    "rootName": "blackholekilleffect",
+    "source": "body",
+    "reason": "non_visual_root",
+    "nodes": 1,
+    "effectName": "SpiderEffect"
+  },
+  {
+    "rootName": "enable3",
+    "source": "body",
+    "reason": "non_visual_root",
+    "nodes": 1,
+    "effectName": "SpiderEffect"
+  },
+  {
+    "rootName": "enable1",
+    "source": "body",
+    "reason": "non_visual_root",
+    "nodes": 1,
+    "effectName": "SpiderEffect"
+  },
+  {
+    "rootName": "cutoguadalupe87",
+    "source": "workspace",
+    "reason": "humanoid_or_character",
+    "nodes": 180,
+    "effectName": "SplashEffect"
+  },
+  {
+    "rootName": "ThrowingKnifeServer",
+    "source": "workspace",
+    "reason": "combat_object_name",
+    "nodes": 28,
+    "effectName": "StarwingEffect"
+  },
+  {
+    "rootName": "ThrowingServerKnife",
+    "source": "workspace",
+    "reason": "combat_object_name",
+    "nodes": 28,
+    "effectName": "StarwingEffect"
+  },
+  {
+    "rootName": "Carreongrijalvasanti",
+    "source": "workspace",
+    "reason": "humanoid_or_character",
+    "nodes": 180,
+    "effectName": "YellowFire"
+  },
+  {
+    "rootName": "Part",
+    "source": "workspace",
+    "reason": "generic_non_vfx",
+    "nodes": 2,
+    "effectName": "YellowIce"
+  },
+  {
+    "rootName": "Part",
+    "source": "workspace",
+    "reason": "generic_non_vfx",
+    "nodes": 2,
+    "effectName": "YellowIce"
+  },
+  {
+    "rootName": "Part",
+    "source": "workspace",
+    "reason": "generic_non_vfx",
+    "nodes": 2,
+    "effectName": "YellowIce"
+  },
+  {
+    "rootName": "Part",
+    "source": "workspace",
+    "reason": "generic_non_vfx",
+    "nodes": 2,
+    "effectName": "YellowIce"
+  },
+  {
+    "rootName": "HandleBeamAttach",
+    "source": "workspace",
+    "reason": "non_visual_root",
+    "nodes": 1,
+    "effectName": "YellowSmoke"
+  },
+  {
+    "rootName": "Part",
+    "source": "workspace",
+    "reason": "generic_non_vfx",
+    "nodes": 1,
+    "effectName": "YellowSmoke"
+  },
+  {
+    "rootName": "Part",
+    "source": "workspace",
+    "reason": "generic_non_vfx",
+    "nodes": 2,
+    "effectName": "YellowSmoke"
+  },
+  {
+    "rootName": "Part",
+    "source": "workspace",
+    "reason": "generic_non_vfx",
+    "nodes": 2,
+    "effectName": "YellowSmoke"
+  },
+  {
+    "rootName": "ThrowingServerKnife",
+    "source": "workspace",
+    "reason": "combat_object_name",
+    "nodes": 21,
+    "effectName": "IceEffect"
+  },
+  {
+    "rootName": "ThrowingKnifeServer",
+    "source": "workspace",
+    "reason": "combat_object_name",
+    "nodes": 21,
+    "effectName": "IceEffect"
+  },
+  {
+    "rootName": "Part",
+    "source": "workspace",
+    "reason": "generic_non_vfx",
+    "nodes": 2,
+    "effectName": "IceEffect"
+  },
+  {
+    "rootName": "Part",
+    "source": "workspace",
+    "reason": "generic_non_vfx",
+    "nodes": 2,
+    "effectName": "IceEffect"
+  },
+  {
+    "rootName": "Alexia_2013700",
+    "source": "workspace",
+    "reason": "humanoid_or_character",
+    "nodes": 146,
+    "effectName": "LumenburstEffect"
+  },
+  {
+    "rootName": "snyder1382",
+    "source": "workspace",
+    "reason": "humanoid_or_character",
+    "nodes": 180,
+    "effectName": "RainbowEffect"
+  },
+  {
+    "rootName": "ThrowingKnifeServer",
+    "source": "workspace",
+    "reason": "combat_object_name",
+    "nodes": 28,
+    "effectName": "StardustCollapseEffect"
+  },
+  {
+    "rootName": "ThrowingServerKnife",
+    "source": "workspace",
+    "reason": "combat_object_name",
+    "nodes": 28,
+    "effectName": "StardustCollapseEffect"
+  }
+]

@@ -1,0 +1,59 @@
+XeroHub · FINAL BASE AUDIT
+
+V3 detectados: 91/101
+V3 fuertes (Quality V4 >= 120): 83
+V3 débiles: 8
+Faltantes V3: 10
+
+CORE listo V2 + V3 fuerte: 72
+  - best V3.4: 29
+  - best legacy: 43
+Behavior fuerte sin V2: 11
+
+Modos del CORE:
+  - v2_primary: 10
+  - v3_body_timeline: 61
+  - v3_runtime_filtered: 1
+
+Runtime roots removidos offline: 103
+
+V3 DÉBILES (no entran al core):
+  - BubbleDeathEffect: Q0
+  - RedJelly: Q0
+  - BlueJelly: Q9
+  - IcemanEffect: Q9
+  - LavaEffect: Q38
+  - InfernalEffect: Q76
+  - LEffect: Q76
+  - Frostbite: Q86
+
+FALTANTES V3:
+  - CheckmateEffect
+  - LightningEffect
+  - RankedBronzeEffect
+  - RankedChampionEffect
+  - RankedDiamondEffect
+  - RankedEmeraldEffect
+  - RankedGoldEffect
+  - RankedGrandmasterEffect
+  - RankedSilverEffect
+  - Water
+
+FUERTES SIN V2 (guardados como behavior_only):
+  - BlueNature
+  - EclipseEffect
+  - FishDeathEffect
+  - IceEffect
+  - LumenburstEffect
+  - MatchaEffect
+  - PumpkinCurse
+  - RainbowEffect
+  - StardustCollapseEffect
+  - ValkyrieEffect
+  - YellowGrass
+
+NOTA:
+El ZIP original NO se modifica. Este paquete es una base separada.
+Los runtime roots sospechosos se filtran sólo en las copias renderer_base/v3.
+Los efectos con behaviorMode=v2_primary conservan el V3 para referencia,
+pero el renderer no debería aplicar automáticamente ese timeline.

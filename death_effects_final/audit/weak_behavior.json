@@ -1,0 +1,138 @@
+[
+  {
+    "name": "BlueJelly",
+    "qualityV4": 9,
+    "collectorVersion": "3.1-lowlag-r2",
+    "quality": {
+      "qualityVersion": 4,
+      "score": 9,
+      "meaningfulPropertyChanges": 1,
+      "meaningfulAdded": 0,
+      "meaningfulRemoved": 0,
+      "usefulRuntimeRoots": 0,
+      "runtimeVfxNodes": 0,
+      "runtimeVisualNodes": 0,
+      "suspiciousRuntimeRoots": 0,
+      "timelineFrames": 1
+    }
+  },
+  {
+    "name": "BubbleDeathEffect",
+    "qualityV4": 0,
+    "collectorVersion": "3.4-lowlag-runtime-filtered",
+    "quality": {
+      "qualityVersion": 4,
+      "score": 0,
+      "meaningfulPropertyChanges": 0,
+      "meaningfulAdded": 0,
+      "meaningfulRemoved": 0,
+      "usefulRuntimeRoots": 0,
+      "runtimeVfxNodes": 0,
+      "runtimeVisualNodes": 0,
+      "suspiciousRuntimeRoots": 0,
+      "timelineFrames": 0
+    }
+  },
+  {
+    "name": "Frostbite",
+    "qualityV4": 86,
+    "collectorVersion": "3.1-lowlag-r2",
+    "quality": {
+      "qualityVersion": 4,
+      "score": 86,
+      "meaningfulPropertyChanges": 0,
+      "meaningfulAdded": 8,
+      "meaningfulRemoved": 10,
+      "usefulRuntimeRoots": 0,
+      "runtimeVfxNodes": 0,
+      "runtimeVisualNodes": 0,
+      "suspiciousRuntimeRoots": 0,
+      "timelineFrames": 1
+    }
+  },
+  {
+    "name": "IcemanEffect",
+    "qualityV4": 9,
+    "collectorVersion": "3.4-lowlag-runtime-filtered",
+    "quality": {
+      "qualityVersion": 4,
+      "score": 9,
+      "meaningfulPropertyChanges": 1,
+      "meaningfulAdded": 0,
+      "meaningfulRemoved": 0,
+      "usefulRuntimeRoots": 0,
+      "runtimeVfxNodes": 0,
+      "runtimeVisualNodes": 0,
+      "suspiciousRuntimeRoots": 0,
+      "timelineFrames": 1
+    }
+  },
+  {
+    "name": "InfernalEffect",
+    "qualityV4": 76,
+    "collectorVersion": "3.4-lowlag-runtime-filtered",
+    "quality": {
+      "qualityVersion": 4,
+      "score": 76,
+      "meaningfulPropertyChanges": 0,
+      "meaningfulAdded": 0,
+      "meaningfulRemoved": 0,
+      "usefulRuntimeRoots": 4,
+      "runtimeVfxNodes": 4,
+      "runtimeVisualNodes": 0,
+      "suspiciousRuntimeRoots": 0,
+      "timelineFrames": 0
+    }
+  },
+  {
+    "name": "LEffect",
+    "qualityV4": 76,
+    "collectorVersion": "3.4-lowlag-runtime-filtered",
+    "quality": {
+      "qualityVersion": 4,
+      "score": 76,
+      "meaningfulPropertyChanges": 0,
+      "meaningfulAdded": 0,
+      "meaningfulRemoved": 0,
+      "usefulRuntimeRoots": 4,
+      "runtimeVfxNodes": 4,
+      "runtimeVisualNodes": 0,
+      "suspiciousRuntimeRoots": 0,
+      "timelineFrames": 0
+    }
+  },
+  {
+    "name": "LavaEffect",
+    "qualityV4": 38,
+    "collectorVersion": "3.1-lowlag-r2",
+    "quality": {
+      "qualityVersion": 4,
+      "score": 38,
+      "meaningfulPropertyChanges": 0,
+      "meaningfulAdded": 0,
+      "meaningfulRemoved": 0,
+      "usefulRuntimeRoots": 2,
+      "runtimeVfxNodes": 2,
+      "runtimeVisualNodes": 0,
+      "suspiciousRuntimeRoots": 0,
+      "timelineFrames": 0
+    }
+  },
+  {
+    "name": "RedJelly",
+    "qualityV4": 0,
+    "collectorVersion": "3.1-lowlag-r2",
+    "quality": {
+      "qualityVersion": 4,
+      "score": 0,
+      "meaningfulPropertyChanges": 0,
+      "meaningfulAdded": 0,
+      "meaningfulRemoved": 0,
+      "usefulRuntimeRoots": 0,
+      "runtimeVfxNodes": 0,
+      "runtimeVisualNodes": 0,
+      "suspiciousRuntimeRoots": 0,
+      "timelineFrames": 0
+    }
+  }
+]

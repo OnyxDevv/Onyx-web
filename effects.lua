@@ -1,5 +1,5 @@
 --[[
-XeroHub | DUELS Death Effects · Native Dummy Bridge R8 Targeted Fidelity
+XeroHub | DUELS Death Effects · Native Dummy Bridge R10 Lightning Black
 Kev
 
 Objetivo:
@@ -64,7 +64,7 @@ end
 -- ============================================================
 -- Repo / cache
 -- ============================================================
-local CACHE_FOLDER = "XeroHub/DeathEffectsNativeDummyR8"
+local CACHE_FOLDER = "XeroHub/DeathEffectsNativeDummyR10"
 
 local function ensureFolder(path)
     if type(makefolder) ~= "function" then return end
@@ -121,7 +121,8 @@ for _, entry in ipairs(manifest.effects) do
     if type(entry) == "table"
         and type(entry.name) == "string"
         and type(entry.v2) == "string"
-        and not isJellyEffect(entry.name) then
+        and not isJellyEffect(entry.name)
+        and entry.name ~= "Heartbeat" then
         EFFECTS[#EFFECTS + 1] = entry.name
         BY_NAME[entry.name] = entry
     end
@@ -1975,6 +1976,450 @@ local function playGhostedCapturedNativeFade(dummy)
     end
 end
 
+
+-- ============================================================
+-- R9 native BodyStyle + external weld helpers
+-- ============================================================
+
+local nativeCaptureBodyAppearance =
+    findFunction("captureBodyAppearance", "DeathEffectPreview")
+
+local nativeApplyBodyStyle =
+    findFunction("applyBodyStyle", "DeathEffectPreview")
+
+local function applyExactNativeBodyStyle(dummy, effectName)
+    local cfg = nativeConfigFor(effectName)
+    if type(cfg) ~= "table" or type(cfg.BodyStyle) ~= "table" then
+        return false, "sin BodyStyle nativo"
+    end
+
+    if type(nativeCaptureBodyAppearance) == "function"
+        and type(nativeApplyBodyStyle) == "function" then
+
+        local okCapture, appearance =
+            pcall(nativeCaptureBodyAppearance, dummy)
+
+        if okCapture and appearance ~= nil then
+            local okApply = pcall(
+                nativeApplyBodyStyle,
+                appearance,
+                cfg.BodyStyle
+            )
+
+            if okApply then
+                return true, "BodyStyle nativo directo"
+            end
+        end
+    end
+
+    -- Safe fallback to our local implementation.
+    local style = cfg.BodyStyle
+    applyBodyStyleOnly(dummy, style, false)
+
+    task.delay(.30, function()
+        if dummy and dummy.Parent then
+            applyBodyStyleOnly(dummy, style, true)
+        end
+    end)
+
+    return true, "BodyStyle nativo fallback"
+end
+
+local function callNativeAdapter(effectName, dummy, asset, cleaner)
+    local cfg = nativeConfigFor(effectName)
+    local adapter = type(cfg) == "table" and cfg.Adapter or nil
+
+    if type(adapter) ~= "function" then
+        return false
+    end
+
+    -- renderOnce already calls Adapter, but this second call is only used
+    -- for effects where the preview has been observed to miss body choreography.
+    local attempts = {
+        {dummy},
+        {dummy, asset},
+        {dummy, asset, cleaner},
+    }
+
+    for _, args in ipairs(attempts) do
+        local ok = pcall(function()
+            adapter(table.unpack(args))
+        end)
+
+        if ok then
+            return true
+        end
+    end
+
+    return false
+end
+
+local function findExternalWeld(root)
+    if not root then return nil end
+
+    for _, obj in ipairs(root:GetDescendants()) do
+        if obj:IsA("Weld") then
+            if obj.Part0 == nil and obj.Part1 ~= nil then
+                return obj, "Part0"
+            elseif obj.Part1 == nil and obj.Part0 ~= nil then
+                return obj, "Part1"
+            end
+        end
+    end
+end
+
+local function attachExternalWeldPiece(dummy, sourcePart, targetPart)
+    if not dummy or not sourcePart or not targetPart then return nil end
+    if not sourcePart:IsA("BasePart") then return nil end
+
+    local templateWeld, missingSide = findExternalWeld(sourcePart)
+    if not templateWeld then return nil end
+
+    local clone = sourcePart:Clone()
+    clone.Name = "XeroEffect_" .. sourcePart.Name
+    clone.Parent = dummy
+
+    local weld = findExternalWeld(clone)
+
+    if weld then
+        if missingSide == "Part0" then
+            weld.Part0 = targetPart
+        else
+            weld.Part1 = targetPart
+        end
+    end
+
+    local function sanitize(obj)
+        if obj:IsA("BasePart") then
+            obj.Anchored = false
+            obj.CanCollide = false
+            obj.CanTouch = false
+            obj.CanQuery = false
+            obj.Massless = true
+        end
+    end
+
+    sanitize(clone)
+    for _, obj in ipairs(clone:GetDescendants()) do
+        sanitize(obj)
+    end
+
+    return clone
+end
+
+local function installDecoratedFullModel(dummy, asset)
+    if not dummy or not asset then return 0 end
+
+    local root =
+        dummy:FindFirstChild("HumanoidRootPart")
+        or dummy:FindFirstChild("UpperTorso")
+        or dummy:FindFirstChild("Torso")
+
+    if not root then return 0 end
+
+    local decoratedRoot = asset:FindFirstChild("WeldToRoot")
+    if not decoratedRoot or not decoratedRoot:IsA("BasePart") then
+        return 0
+    end
+
+    -- Native preview can miss the external Part0 reference because it was
+    -- outside the captured effect folder. Reconnect the whole ornament rig.
+    local existing = dummy:FindFirstChild("XeroEffect_WeldToRoot")
+    if existing then
+        pcall(function() existing:Destroy() end)
+    end
+
+    return attachExternalWeldPiece(dummy, decoratedRoot, root) and 1 or 0
+end
+
+local function forceAllMarkedEmitters(root)
+    if not root then return 0 end
+
+    local count = 0
+
+    local function inspect(obj)
+        if not obj:IsA("ParticleEmitter") then return end
+
+        local emitCount =
+            tonumber(obj:GetAttribute("EmitCount"))
+            or tonumber(obj:GetAttribute("KillEffectEmitCount"))
+
+        local duration =
+            tonumber(obj:GetAttribute("EmitDuration"))
+            or 0
+
+        local delayTime =
+            tonumber(obj:GetAttribute("EmitDelay"))
+            or 0
+
+        if emitCount ~= nil or duration > 0 then
+            count += 1
+
+            task.delay(math.max(0, delayTime), function()
+                if not obj.Parent then return end
+
+                if emitCount and emitCount > 0 then
+                    pcall(function()
+                        obj:Emit(math.max(1, math.floor(emitCount + .5)))
+                    end)
+                end
+
+                if duration > 0 then
+                    pcall(function() obj.Enabled = true end)
+
+                    task.delay(duration, function()
+                        if obj.Parent then
+                            pcall(function() obj.Enabled = false end)
+                        end
+                    end)
+                end
+            end)
+        end
+    end
+
+    inspect(root)
+    for _, obj in ipairs(root:GetDescendants()) do
+        inspect(obj)
+    end
+
+    return count
+end
+
+local function rescanMarkedEmittersNearDummy(dummy, duration)
+    local root = dummy and dummy:FindFirstChild("HumanoidRootPart")
+    if not root then return end
+
+    local seen = setmetatable({}, {__mode="k"})
+    local alive = true
+
+    local function scan()
+        if not alive or not dummy.Parent then return end
+
+        for _, obj in ipairs(Workspace:GetDescendants()) do
+            if obj:IsA("ParticleEmitter") and not seen[obj] then
+                local carrier = nearestPart(obj)
+
+                if carrier
+                    and (carrier.Position - root.Position).Magnitude <= 45 then
+
+                    seen[obj] = true
+
+                    local emitCount =
+                        tonumber(obj:GetAttribute("EmitCount"))
+                        or tonumber(obj:GetAttribute("KillEffectEmitCount"))
+
+                    local emitDuration =
+                        tonumber(obj:GetAttribute("EmitDuration"))
+                        or 0
+
+                    if emitCount ~= nil or emitDuration > 0 then
+                        forceMarkedEmitter(obj)
+                    end
+                end
+            end
+        end
+    end
+
+    for _, delayTime in ipairs({.03, .10, .22, .42, .70, 1.05, 1.45}) do
+        task.delay(delayTime, scan)
+    end
+
+    task.delay(duration or 1.7, function()
+        alive = false
+    end)
+end
+
+local function installGhostbringerAggressiveCarrierGuard(dummy)
+    local root = dummy and dummy:FindFirstChild("HumanoidRootPart")
+    if not root then return end
+
+    local baseline = setmetatable({}, {__mode="k"})
+    for _, obj in ipairs(Workspace:GetDescendants()) do
+        if obj:IsA("BasePart") then
+            baseline[obj] = true
+        end
+    end
+
+    local watched = setmetatable({}, {__mode="k"})
+    local conns = {}
+
+    local function hasVfx(part)
+        for _, d in ipairs(part:GetDescendants()) do
+            if d:IsA("ParticleEmitter")
+                or d:IsA("Beam")
+                or d:IsA("Trail") then
+                return true
+            end
+        end
+        return false
+    end
+
+    local function hide(part)
+        if not part or not part.Parent or not part:IsA("BasePart") then
+            return
+        end
+
+        if part:IsDescendantOf(dummy) then
+            return
+        end
+
+        if (part.Position - root.Position).Magnitude > 50 then
+            return
+        end
+
+        if not hasVfx(part)
+            and part.Name ~= "ghostbringer VFX" then
+            return
+        end
+
+        watched[part] = true
+
+        pcall(function()
+            part.Transparency = 1
+            part.LocalTransparencyModifier = 1
+            part.CanCollide = false
+            part.CanTouch = false
+            part.CanQuery = false
+        end)
+    end
+
+    conns[#conns+1] =
+        Workspace.DescendantAdded:Connect(function(obj)
+            if obj:IsA("BasePart") then
+                task.defer(function() hide(obj) end)
+
+            elseif obj:IsA("ParticleEmitter")
+                or obj:IsA("Beam")
+                or obj:IsA("Trail") then
+
+                task.defer(function()
+                    local carrier = nearestPart(obj)
+                    if carrier then hide(carrier) end
+                end)
+            end
+        end)
+
+    local function rescan()
+        for _, part in ipairs(Workspace:GetDescendants()) do
+            if part:IsA("BasePart")
+                and (not baseline[part] or watched[part]) then
+                hide(part)
+            end
+        end
+
+        for part in pairs(watched) do
+            hide(part)
+        end
+    end
+
+    for _, t in ipairs({0, .02, .06, .12, .22, .38, .62, .95, 1.35, 1.85, 2.35}) do
+        task.delay(t, rescan)
+    end
+
+    task.delay(2.55, function()
+        for _, conn in ipairs(conns) do
+            pcall(function() conn:Disconnect() end)
+        end
+    end)
+end
+
+local function scheduleHeartacheReal(dummy)
+    local red = Color3.fromRGB(255,0,0)
+
+    for _, t in ipairs({0, .04, .12, .30, .58, .95}) do
+        task.delay(t, function()
+            forceWholeAvatarSolid(
+                dummy,
+                red,
+                Enum.Material.SmoothPlastic,
+                0
+            )
+        end)
+    end
+end
+
+
+local function scheduleLightningBlack(dummy)
+    -- Lightning / LightningStrike native victim look:
+    -- whole visible avatar goes black, including hair/accessories.
+    local black = Color3.new(0, 0, 0)
+
+    for _, t in ipairs({0, .03, .09, .18, .34, .58, .90, 1.30}) do
+        task.delay(t, function()
+            if dummy and dummy.Parent then
+                forceWholeAvatarSolid(
+                    dummy,
+                    black,
+                    Enum.Material.SmoothPlastic,
+                    0
+                )
+            end
+        end)
+    end
+
+    -- Native renderers can insert/reparent avatar visuals asynchronously,
+    -- so keep newly-added pieces black too.
+    local conn
+    conn = dummy.DescendantAdded:Connect(function()
+        task.defer(function()
+            if dummy and dummy.Parent then
+                forceWholeAvatarSolid(
+                    dummy,
+                    black,
+                    Enum.Material.SmoothPlastic,
+                    0
+                )
+            end
+        end)
+    end)
+
+    task.delay(1.55, function()
+        pcall(function() conn:Disconnect() end)
+    end)
+end
+
+local function prepareBlackvalkVictim(dummy, asset, cleaner)
+    if not dummy or not dummy.Parent then return false, "sin dummy" end
+
+    local root = dummy:FindFirstChild("HumanoidRootPart")
+    local hum = dummy:FindFirstChildOfClass("Humanoid")
+
+    -- Let native choreography move the victim. R8 kept the dummy root anchored.
+    if root then
+        pcall(function()
+            root.Anchored = false
+            root.AssemblyLinearVelocity = Vector3.zero
+            root.AssemblyAngularVelocity = Vector3.zero
+        end)
+    end
+
+    if hum then
+        pcall(function()
+            hum.AutoRotate = false
+            hum.PlatformStand = true
+        end)
+    end
+
+    local styled, styleSource =
+        applyExactNativeBodyStyle(dummy, "BlackvalkEffect")
+
+    -- Force the exact Adapter once more after unanchoring. If the native
+    -- renderOnce already succeeded this is harmless on the disposable dummy.
+    local adapterRan =
+        callNativeAdapter(
+            "BlackvalkEffect",
+            dummy,
+            asset,
+            cleaner
+        )
+
+    rescanMarkedEmittersNearDummy(dummy, 1.8)
+
+    return styled or adapterRan,
+        (styled and styleSource or "Blackvalk")
+        .. (adapterRan and " + Adapter" or "")
+end
+
 -- ============================================================
 -- Explicit body effects that Preview.play does not faithfully reproduce.
 -- ============================================================
@@ -2317,6 +2762,11 @@ local function runNative(name, statusLabel)
         return
     end
 
+    if name == "Heartbeat" then
+        statusLabel.Text = "Heartbeat eliminado del renderer."
+        return
+    end
+
     local asset, injected, assetStatus = ensureNativeAsset(name)
     if not asset then
         statusLabel.Text = "✕ Asset: " .. tostring(assetStatus)
@@ -2333,11 +2783,20 @@ local function runNative(name, statusLabel)
 
     observeNativeParticles(dummy)
 
-    -- Start before Preview.play so carrier parts are never visible for a frame.
-    enforceInvisibleCarriers(dummy, asset, name)
+    if name == "GhostbringerEffect" then
+        installGhostbringerAggressiveCarrierGuard(dummy)
+    else
+        enforceInvisibleCarriers(dummy, asset, name)
+    end
 
     local clothesV2 = applyV2Clothing(dummy, asset)
     local hatsV2 = attachV2HatIfNeeded(dummy, asset)
+
+    local decorated3D = 0
+    if name == "Decorated" then
+        decorated3D = installDecoratedFullModel(dummy, asset)
+        rescanMarkedEmittersNearDummy(dummy, 1.8)
+    end
 
     local cleaner = makeCleaner()
     activeCleaner = cleaner
@@ -2366,7 +2825,7 @@ local function runNative(name, statusLabel)
     elseif name == "Ghosted" then
         playGhostedCapturedNativeFade(dummy)
         bodyPatched = true
-        bodyPatchSource = "Ghosted · fade capturado + vuelo"
+        bodyPatchSource = "Ghosted · fade + vuelo"
 
     elseif name == "SpiritOverload" then
         scheduleSpiritOverloadReal(dummy)
@@ -2376,11 +2835,32 @@ local function runNative(name, statusLabel)
     elseif name == "SoulReaper" then
         playSoulReaperCapturedBody(dummy)
         bodyPatched = true
-        bodyPatchSource = "SoulReaper · lime Neon + fade capturado"
+        bodyPatchSource = "SoulReaper · lime Neon + fade"
+
+    elseif name == "Heartache" then
+        scheduleHeartacheReal(dummy)
+        bodyPatched = true
+        bodyPatchSource = "Heartache · TODO rojo"
+
+    elseif name == "LightningStrike"
+        or name == "LightningEffect" then
+        scheduleLightningBlack(dummy)
+        bodyPatched = true
+        bodyPatchSource = "Lightning · TODO negro + accesorios"
+
+    elseif name == "BlackvalkEffect" then
+        bodyPatched, bodyPatchSource =
+            prepareBlackvalkVictim(dummy, asset, cleaner)
 
     else
         bodyPatched, bodyPatchSource =
             scheduleBodyStylePatch(dummy, name, asset)
+    end
+
+    if name == "Decorated" then
+        -- The Effect part is handled natively; this second pass catches all
+        -- marked emitters once the native clone is actually in Workspace.
+        rescanMarkedEmittersNearDummy(dummy, 2.0)
     end
 
     if clothesV2 > 0
@@ -2388,7 +2868,11 @@ local function runNative(name, statusLabel)
         and name ~= "Frostbite"
         and name ~= "Ghosted"
         and name ~= "SpiritOverload"
-        and name ~= "SoulReaper" then
+        and name ~= "SoulReaper"
+        and name ~= "Heartache"
+        and name ~= "LightningStrike"
+        and name ~= "LightningEffect" then
+
         scheduleV2ClothingLock(dummy, asset)
     end
 
@@ -2401,9 +2885,9 @@ local function runNative(name, statusLabel)
 
     statusLabel.Text =
         "✓ Nativo ejecutado · " .. name ..
-        "\nR8 · fidelity dirigido."
+        "\nR9 · víctima completa."
 
-    task.delay(.86, function()
+    task.delay(.90, function()
         if not dummy.Parent then return end
 
         local mutations =
@@ -2413,6 +2897,7 @@ local function runNative(name, statusLabel)
             "✓ " .. name ..
             " · body " .. tostring(mutations) ..
             (bodyPatched and (" · " .. tostring(bodyPatchSource)) or "") ..
+            (decorated3D > 0 and " · Decorated 3D" or "") ..
             (clothesV2 > 0 and (" · ropa V2 " .. tostring(clothesV2)) or "") ..
             (hatsV2 > 0 and (" · 3D " .. tostring(hatsV2)) or "") ..
             "\n" .. tostring(assetStatus)
@@ -2447,7 +2932,7 @@ local title = Instance.new("TextLabel")
 title.BackgroundTransparency = 1
 title.Position = UDim2.fromOffset(16, 12)
 title.Size = UDim2.new(1,-32,0,22)
-title.Text = "XERO · DEATH EFFECT · NATIVE DUMMY R8"
+title.Text = "XERO · DEATH EFFECT · NATIVE DUMMY R10"
 title.TextColor3 = Color3.fromRGB(245,245,245)
 title.Font = Enum.Font.GothamBold
 title.TextSize = 14

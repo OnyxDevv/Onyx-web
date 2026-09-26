@@ -1,5 +1,5 @@
 --[[
-XeroHub | DUELS Death Effects · CurrentCamera R36 · Fix duplicados · Base original ghsot
+XeroHub | DUELS Death Effects · CurrentCamera R36 · Fix duplicados · Base original ghsot xd
 Kev
 
 Objetivo:

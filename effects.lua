@@ -1,212 +1,327 @@
--- XeroHub | Team Detector Debug
--- Ejecutar DURANTE una ronda 4v4
+-- XeroHub | DUELS HUD Team Detector
+-- Kev
+-- Ejecutar DURANTE una ronda
 
 local Players = game:GetService("Players")
-local Teams = game:GetService("Teams")
-
 local LP = Players.LocalPlayer
 local PlayerGui = LP:WaitForChild("PlayerGui")
 
-local output = {}
+local lines = {}
 
 local function log(...)
     local args = {...}
+
     for i = 1, #args do
         args[i] = tostring(args[i])
     end
 
-    local text = table.concat(args, " ")
-    print(text)
-    output[#output + 1] = text
+    local msg = table.concat(args, " ")
+    print(msg)
+    lines[#lines + 1] = msg
 end
 
-local function safeTeamName(p)
-    if not p.Team then
-        return "nil"
-    end
-
-    return p.Team.Name
+local function lower(v)
+    return string.lower(tostring(v or ""))
 end
 
-local function interestingAttributeDump(obj)
-    if not obj then
-        return "nil"
+local function contains(haystack, needle)
+    haystack = lower(haystack)
+    needle = lower(needle)
+
+    return needle ~= ""
+        and string.find(haystack, needle, 1, true) ~= nil
+end
+
+-- Busca TODOS los KillsHUD porque DUELS a veces los mete
+-- dentro de estructuras raras del PlayerGui.
+local huds = {}
+
+for _, obj in ipairs(PlayerGui:GetDescendants()) do
+    if obj.Name == "KillsHUD" then
+        huds[#huds + 1] = obj
     end
+end
 
-    local result = {}
+log("")
+log("==========================================")
+log(" XERO | DUELS HUD TEAM DETECTOR")
+log("==========================================")
+log("KillsHUD encontrados:", #huds)
 
-    for name, value in pairs(obj:GetAttributes()) do
-        local lower = string.lower(name)
+if #huds == 0 then
+    log("ERROR: No encontré KillsHUD.")
+    return
+end
 
-        if string.find(lower, "team", 1, true)
-            or string.find(lower, "squad", 1, true)
-            or string.find(lower, "side", 1, true)
-            or string.find(lower, "group", 1, true)
-            or string.find(lower, "faction", 1, true)
-            or string.find(lower, "party", 1, true) then
-
-            result[#result + 1] =
-                tostring(name) .. "=" .. tostring(value)
+local function findNamedDescendant(root, wanted)
+    for _, obj in ipairs(root:GetDescendants()) do
+        if obj.Name == wanted then
+            return obj
         end
     end
-
-    if #result == 0 then
-        return "ninguno"
-    end
-
-    return table.concat(result, ", ")
 end
 
-local function findInterestingValues(root)
+local function scorePlayerInside(root, plr)
     if not root then
-        return {}
+        return 0, {}
     end
 
-    local result = {}
+    local score = 0
+    local evidence = {}
+
+    local name = tostring(plr.Name)
+    local display = tostring(plr.DisplayName)
+    local userId = tostring(plr.UserId)
+
+    local function add(points, reason)
+        score += points
+        evidence[#evidence + 1] =
+            "+" .. tostring(points) .. " " .. reason
+    end
 
     for _, obj in ipairs(root:GetDescendants()) do
-        if obj:IsA("ValueBase") then
-            local lower = string.lower(obj.Name)
+        -- Nombre del Instance
+        if obj.Name == name then
+            add(15, "Instance.Name = username → " .. obj:GetFullName())
 
-            if string.find(lower, "team", 1, true)
-                or string.find(lower, "squad", 1, true)
-                or string.find(lower, "side", 1, true)
-                or string.find(lower, "group", 1, true)
-                or string.find(lower, "faction", 1, true)
-                or string.find(lower, "party", 1, true) then
+        elseif obj.Name == userId then
+            add(15, "Instance.Name = UserId → " .. obj:GetFullName())
+        end
 
-                local ok, value = pcall(function()
-                    return obj.Value
-                end)
+        -- Attributes
+        for attrName, attrValue in pairs(obj:GetAttributes()) do
+            local value = tostring(attrValue)
 
-                if ok then
-                    result[#result + 1] =
-                        obj:GetFullName() .. " = " .. tostring(value)
-                end
+            if value == name then
+                add(18,
+                    "Attribute " .. attrName ..
+                    " = username → " .. obj:GetFullName())
+
+            elseif value == userId then
+                add(20,
+                    "Attribute " .. attrName ..
+                    " = UserId → " .. obj:GetFullName())
+
+            elseif display ~= name and value == display then
+                add(10,
+                    "Attribute " .. attrName ..
+                    " = DisplayName → " .. obj:GetFullName())
             end
         end
-    end
 
-    return result
-end
+        -- ObjectValue directo al Player
+        if obj:IsA("ObjectValue") then
+            local ok, value = pcall(function()
+                return obj.Value
+            end)
 
-local function findPlayerInGui(p)
-    local matches = {}
+            if ok and value == plr then
+                add(30, "ObjectValue → Player → " .. obj:GetFullName())
+            end
+        end
 
-    local targets = {
-        string.lower(p.Name),
-        string.lower(p.DisplayName)
-    }
+        -- Values
+        if obj:IsA("StringValue") then
+            local value = tostring(obj.Value)
 
-    for _, obj in ipairs(PlayerGui:GetDescendants()) do
+            if value == name then
+                add(20, "StringValue=username → " .. obj:GetFullName())
+
+            elseif value == userId then
+                add(20, "StringValue=UserId → " .. obj:GetFullName())
+
+            elseif display ~= name and value == display then
+                add(12, "StringValue=DisplayName → " .. obj:GetFullName())
+            end
+
+        elseif obj:IsA("IntValue") or obj:IsA("NumberValue") then
+            if tonumber(obj.Value) == plr.UserId then
+                add(25, "NumberValue=UserId → " .. obj:GetFullName())
+            end
+        end
+
+        -- Textos
         if obj:IsA("TextLabel")
             or obj:IsA("TextButton")
             or obj:IsA("TextBox") then
 
-            local text = string.lower(tostring(obj.Text or ""))
+            local text = tostring(obj.Text or "")
 
-            for _, target in ipairs(targets) do
-                if target ~= ""
-                    and string.find(text, target, 1, true) then
+            if contains(text, name) then
+                add(12,
+                    "Text contiene username → " ..
+                    obj:GetFullName() ..
+                    " [" .. text .. "]")
 
-                    matches[#matches + 1] = obj:GetFullName()
-                    break
-                end
+            elseif display ~= name and contains(text, display) then
+                add(8,
+                    "Text contiene DisplayName → " ..
+                    obj:GetFullName() ..
+                    " [" .. text .. "]")
+            end
+        end
+
+        -- Thumbnails
+        if obj:IsA("ImageLabel") or obj:IsA("ImageButton") then
+            local image = tostring(obj.Image or "")
+
+            if contains(image, userId) then
+                add(25,
+                    "Imagen contiene UserId → " ..
+                    obj:GetFullName() ..
+                    " [" .. image .. "]")
             end
         end
     end
 
-    return matches
+    return score, evidence
 end
 
-log("")
-log("==========================================")
-log("       XEROHUB TEAM DETECTOR")
-log("==========================================")
-log("LocalPlayer:", LP.Name)
-log("")
+local bestHUD
 
-log("======= TEAMS SERVICE =======")
+for _, hud in ipairs(huds) do
+    local left = findNamedDescendant(hud, "LeftContainer")
+    local right = findNamedDescendant(hud, "RightContainer")
 
-for _, team in ipairs(Teams:GetChildren()) do
-    if team:IsA("Team") then
-        log(
-            "TEAM:",
-            team.Name,
-            "| Color:",
-            team.TeamColor.Name
-        )
+    if left and right then
+        bestHUD = hud
+        break
     end
 end
 
-log("")
-log("======= PLAYERS =======")
+if not bestHUD then
+    log("")
+    log("ERROR: Encontré KillsHUD pero no LeftContainer/RightContainer.")
 
-for _, p in ipairs(Players:GetPlayers()) do
+    for _, hud in ipairs(huds) do
+        log("HUD:", hud:GetFullName())
+    end
+
+    return
+end
+
+local left = findNamedDescendant(bestHUD, "LeftContainer")
+local right = findNamedDescendant(bestHUD, "RightContainer")
+
+log("")
+log("HUD USADO:")
+log(bestHUD:GetFullName())
+
+log("")
+log("LEFT:")
+log(left:GetFullName())
+
+log("")
+log("RIGHT:")
+log(right:GetFullName())
+
+local detectedSides = {}
+
+log("")
+log("============== RESULTADOS ==============")
+
+for _, plr in ipairs(Players:GetPlayers()) do
+    local leftScore, leftEvidence =
+        scorePlayerInside(left, plr)
+
+    local rightScore, rightEvidence =
+        scorePlayerInside(right, plr)
+
+    local side = "UNKNOWN"
+
+    if leftScore > rightScore and leftScore > 0 then
+        side = "LEFT"
+
+    elseif rightScore > leftScore and rightScore > 0 then
+        side = "RIGHT"
+
+    elseif leftScore > 0 and rightScore > 0 then
+        side = "AMBIGUO"
+    end
+
+    detectedSides[plr] = side
+
     log("")
     log("------------------------------------------")
-    log("PLAYER:", p.Name)
-    log("DisplayName:", p.DisplayName)
-
-    if p == LP then
-        log("*** ESTE ERES TÚ ***")
-    end
-
-    log("Team:", safeTeamName(p))
-    log("TeamColor:", p.TeamColor.Name)
-    log("Neutral:", tostring(p.Neutral))
-
     log(
-        "Player Attributes:",
-        interestingAttributeDump(p)
+        plr == LP and "*** LOCALPLAYER ***" or "PLAYER",
+        plr.Name
     )
 
-    if p.Character then
-        log(
-            "Character Attributes:",
-            interestingAttributeDump(p.Character)
-        )
-    else
-        log("Character Attributes: SIN CHARACTER")
-    end
+    log(
+        "Display:",
+        plr.DisplayName,
+        "| UserId:",
+        plr.UserId
+    )
 
-    local playerValues = findInterestingValues(p)
+    log(
+        "LEFT SCORE:",
+        leftScore,
+        "| RIGHT SCORE:",
+        rightScore
+    )
 
-    for _, value in ipairs(playerValues) do
-        log("Player Value:", value)
-    end
+    log("SIDE:", side)
 
-    if p.Character then
-        local characterValues = findInterestingValues(p.Character)
+    if #leftEvidence > 0 then
+        log("LEFT EVIDENCE:")
 
-        for _, value in ipairs(characterValues) do
-            log("Character Value:", value)
+        for i = 1, math.min(#leftEvidence, 5) do
+            log(" ", leftEvidence[i])
         end
     end
 
-    local guiMatches = findPlayerInGui(p)
+    if #rightEvidence > 0 then
+        log("RIGHT EVIDENCE:")
 
-    if #guiMatches > 0 then
-        log("GUI ENTRIES:")
-
-        for i = 1, math.min(#guiMatches, 8) do
-            log("  ", guiMatches[i])
+        for i = 1, math.min(#rightEvidence, 5) do
+            log(" ", rightEvidence[i])
         end
-    else
-        log("GUI ENTRIES: ninguno")
     end
 end
 
+local mySide = detectedSides[LP]
+
 log("")
 log("==========================================")
-log("FIN TEAM DETECTOR")
+log("TU LADO DETECTADO:", mySide)
 log("==========================================")
 
-local finalText = table.concat(output, "\n")
+if mySide == "LEFT" or mySide == "RIGHT" then
+    log("")
+    log("CLASIFICACIÓN:")
+
+    for plr, side in pairs(detectedSides) do
+        if plr ~= LP then
+            if side == mySide then
+                log(
+                    "ALIADO:",
+                    plr.Name,
+                    "(" .. side .. ")"
+                )
+
+            elseif side == "LEFT" or side == "RIGHT" then
+                log(
+                    "ENEMIGO:",
+                    plr.Name,
+                    "(" .. side .. ")"
+                )
+
+            else
+                log(
+                    "SIN RESOLVER:",
+                    plr.Name,
+                    "(" .. side .. ")"
+                )
+            end
+        end
+    end
+end
+
+local result = table.concat(lines, "\n")
 
 if setclipboard then
-    pcall(setclipboard, finalText)
-    log("✓ Resultado copiado al portapapeles.")
-else
-    log("Tu ejecutor no tiene setclipboard.")
+    pcall(setclipboard, result)
+    print("[Xero] Resultado copiado.")
 end

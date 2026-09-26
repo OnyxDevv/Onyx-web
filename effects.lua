@@ -3644,175 +3644,237 @@ local function isCurrentPlayerCharacter(model)
     return false
 end
 
-local function looksLikeBody(model)
-    if not model or not model:IsA("Model") or not model.Parent then return false end
-    local bodyParts, totalParts = 0, 0
-    for _, obj in ipairs(model:GetDescendants()) do
-        if obj:IsA("BasePart") then
-            totalParts += 1
-            local n = normalized(obj.Name)
-            if n == "head" or n == "humanoidrootpart" or n == "torso"
-                or n == "uppertorso" or n == "lowertorso"
-                or string.find(n, "arm", 1, true) or string.find(n, "leg", 1, true)
-                or string.find(n, "hand", 1, true) or string.find(n, "foot", 1, true) then
-                bodyParts += 1
-            end
-        end
-    end
-    return bodyParts >= 3 and totalParts >= 4
-end
-
+-- Kept because the existing Workspace watcher calls it. R31 no longer depends
+-- on "new model" timing, but retaining this avoids changing unrelated plumbing.
 local function rememberDeathModel(model)
     if model and model:IsA("Model") and model.Parent then
         recentDeathModels[model] = os.clock()
     end
 end
 
-local function scoreDeathModel(model, player, originalCharacter, deathPosition, deathAt)
-    if not model or not model.Parent then return nil end
+-- One table keeps the chunk's local count LOWER than R30 while giving the
+-- detector several strategies. Live enemy objects are only READ here.
+local CorpseScan = {}
 
-    local modelHum = model:FindFirstChildOfClass("Humanoid")
+function CorpseScan.Capture(character)
+    local signature = {Parts = {}, Accessories = {}, PartRefs = {}}
+    if not character then return signature end
+    for _, obj in ipairs(character:GetDescendants()) do
+        if obj:IsA("BasePart") then
+            local n = normalized(obj.Name)
+            signature.Parts[n] = (signature.Parts[n] or 0) + 1
+            signature.PartRefs[#signature.PartRefs + 1] = obj
+        elseif obj:IsA("Accessory") then
+            signature.Accessories[normalized(obj.Name)] = true
+        end
+    end
+    return signature
+end
 
-    -- R30: the DUELS corpse can be the SAME Model that was Player.Character.
-    -- It is only eligible once it is actually dead or no longer the player's
-    -- current Character. We never touch a living enemy Character.
-    if model == originalCharacter then
-        local stillCurrent = player and player.Character == model
-        local stillAlive = modelHum and modelHum.Health > 0
-        if stillCurrent and stillAlive then return nil end
-    elseif isCurrentPlayerCharacter(model) then
-        -- Never select another player's live Character as a corpse.
-        if modelHum and modelHum.Health > 0 then return nil end
+function CorpseScan.TrackedHits(model, signature)
+    local hits = 0
+    for _, part in ipairs(signature and signature.PartRefs or {}) do
+        if part and part.Parent then
+            local ok, inside = pcall(function() return part:IsDescendantOf(model) end)
+            if ok and inside then hits += 1 end
+        end
+    end
+    return hits
+end
+
+function CorpseScan.Overlap(model, signature)
+    local partSeen, accessorySeen = {}, {}
+    for _, obj in ipairs(model:GetDescendants()) do
+        if obj:IsA("BasePart") then
+            local n = normalized(obj.Name)
+            partSeen[n] = (partSeen[n] or 0) + 1
+        elseif obj:IsA("Accessory") then
+            accessorySeen[normalized(obj.Name)] = true
+        end
     end
 
-    local createdAt = recentDeathModels[model]
-    if deathAt and createdAt and createdAt < deathAt - 0.20 then return nil end
-    if not looksLikeBody(model) then return nil end
+    local partHits = 0
+    for n, wanted in pairs(signature and signature.Parts or {}) do
+        partHits += math.min(wanted, partSeen[n] or 0)
+    end
+
+    local accessoryHits = 0
+    for n in pairs(signature and signature.Accessories or {}) do
+        if accessorySeen[n] then accessoryHits += 1 end
+    end
+    return partHits, accessoryHits
+end
+
+function CorpseScan.RagdollSignals(model)
+    local n = 0
+    for _, obj in ipairs(model:GetDescendants()) do
+        if obj:IsA("BallSocketConstraint")
+            or obj:IsA("HingeConstraint")
+            or obj:IsA("RodConstraint")
+            or obj:IsA("SpringConstraint")
+            or obj:IsA("AlignPosition")
+            or obj:IsA("AlignOrientation") then
+            n += 1
+            if n >= 12 then break end
+        end
+    end
+    return n
+end
+
+function CorpseScan.Score(model, player, originalCharacter, deathPosition, info)
+    if not model or not model:IsA("Model") or not model.Parent then return nil end
+    if model:GetAttribute("XeroDeathVisualProxy") == true
+        or string.find(tostring(model.Name), "XeroDeathVisual_", 1, true) then
+        return nil
+    end
+
+    local hum = model:FindFirstChildOfClass("Humanoid")
+    if not hum then return nil end
+
+    -- Never mutate/select a living Player.Character.
+    if isCurrentPlayerCharacter(model) then
+        local health = math.huge
+        pcall(function() health = hum.Health end)
+        if health > 0 then return nil end
+    end
 
     local pos = modelPosition(model)
     if not pos or not deathPosition then return nil end
     local distance = (pos - deathPosition).Magnitude
-    if distance > 24 then return nil end
+    if distance > 55 then return nil end
 
-    local score = 80 - distance * 2.5
+    local signature = info and info.signature
+    local trackedHits = CorpseScan.TrackedHits(model, signature)
+    local partHits, accessoryHits = CorpseScan.Overlap(model, signature)
+    local score = math.max(0, 110 - distance * 3.0)
+
+    score += math.min(partHits, 18) * 9
+    score += math.min(accessoryHits, 8) * 22
+    score += math.min(CorpseScan.RagdollSignals(model), 12) * 5
+    if trackedHits > 0 then score += 500 + math.min(trackedHits, 20) * 12 end
+    if model == originalCharacter then score += 280 end
+
+    local health = math.huge
+    pcall(function() health = hum.Health end)
+    if health <= 0 then score += 190 end
+
     local modelName = normalized(model.Name)
     local victimName = normalized(player and player.Name or "")
     local displayName = normalized(player and player.DisplayName or "")
-
     if victimName ~= "" and (modelName == victimName or string.find(modelName, victimName, 1, true)) then
-        score += 80
+        score += 100
     end
     if displayName ~= "" and displayName ~= victimName and string.find(modelName, displayName, 1, true) then
-        score += 35
+        score += 45
     end
     if string.find(modelName, "dummy", 1, true)
         or string.find(modelName, "corpse", 1, true)
         or string.find(modelName, "ragdoll", 1, true)
         or string.find(modelName, "dead", 1, true)
         or string.find(modelName, "body", 1, true) then
-        score += 35
+        score += 55
     end
-    if model:FindFirstChildOfClass("Humanoid") then score += 25 end
-    if createdAt and deathAt and math.abs(createdAt - deathAt) <= 0.90 then score += 45 end
 
-    local okAttrs, attrs = pcall(function() return model:GetAttributes() end)
-    if okAttrs and type(attrs) == "table" and player then
-        for key, value in pairs(attrs) do
-            local k = normalized(key)
-            if (k == "userid" or k == "playerid" or k == "ownerid")
-                and tonumber(value) == player.UserId then
-                score += 120
-            elseif (k == "player" or k == "owner" or k == "username")
-                and normalized(value) == victimName then
-                score += 100
+    if trackedHits == 0 and model ~= originalCharacter and partHits < 5 and accessoryHits == 0 then
+        return nil
+    end
+
+    return score, {
+        distance = distance,
+        trackedHits = trackedHits,
+        partHits = partHits,
+        accessoryHits = accessoryHits,
+        health = health,
+    }
+end
+
+function CorpseScan.Find(player, originalCharacter, deathPosition, info)
+    local best, bestScore, bestMeta = nil, -math.huge, nil
+    local seen = setmetatable({}, {__mode = "k"})
+
+    local function consider(model, bonus)
+        if not model or seen[model] then return end
+        seen[model] = true
+        local score, meta = CorpseScan.Score(model, player, originalCharacter, deathPosition, info)
+        if not score then return end
+        score += bonus or 0
+        if score > bestScore then best, bestScore, bestMeta = model, score, meta end
+    end
+
+    -- A) Same physical parts got reparented into DUELS' ragdoll/corpse.
+    local signature = info and info.signature
+    for _, part in ipairs(signature and signature.PartRefs or {}) do
+        if part and part.Parent then
+            local node = part.Parent
+            while node and node ~= Workspace do
+                if node:IsA("Model") then consider(node, 260) end
+                node = node.Parent
             end
         end
     end
 
-    return score
-end
+    -- B) Same Character became the dead ragdoll.
+    consider(originalCharacter, 180)
 
-local function findBestDeathModel(player, originalCharacter, deathPosition, deathAt)
-    local best, bestScore = nil, -math.huge
-
-    local function consider(model, bonus)
-        if not model or not model.Parent then return end
-        local score = scoreDeathModel(model, player, originalCharacter, deathPosition, deathAt)
-        if not score then return end
-        score += bonus or 0
-        if score > bestScore then
-            best, bestScore = model, score
-        end
-    end
-
-    -- Most important R30 fix: DUELS may keep/reuse the original Character as
-    -- the physical corpse. It was invisible to R29 because recentDeathModels
-    -- only tracked newly-added Models. Only consider it after death/replacement.
-    consider(originalCharacter, 220)
-
-    for model in pairs(recentDeathModels) do
-        consider(model, 0)
-    end
-
-    -- Fallback for corpses built inside/reusing an existing Workspace model.
-    -- This short scan happens only during the kill window, not every frame forever.
+    -- C) DUELS cloned/reused a corpse before GunKill arrived. Scan CURRENT state,
+    -- not only DescendantAdded events after death.
     for _, obj in ipairs(Workspace:GetDescendants()) do
-        if obj:IsA("Model") then
-            consider(obj, 0)
-        end
+        if obj:IsA("Model") then consider(obj, 0) end
     end
-
-    return best, bestScore
+    return best, bestScore, bestMeta
 end
 
-local function nearbyNewModelSummary(deathPosition, deathAt)
-    if not deathPosition then return "ninguno" end
-    local found = {}
-    for model, createdAt in pairs(recentDeathModels) do
-        if model and model.Parent and (not deathAt or createdAt >= deathAt - 0.20) then
-            local pos = modelPosition(model)
-            if pos then
-                local distance = (pos - deathPosition).Magnitude
-                if distance <= 35 then
-                    found[#found + 1] = {
-                        name = tostring(model.Name),
-                        distance = distance,
-                        humanoid = model:FindFirstChildOfClass("Humanoid") ~= nil,
-                    }
+function CorpseScan.Summary(player, originalCharacter, deathPosition, info)
+    local rows, seen = {}, setmetatable({}, {__mode = "k"})
+    local function add(model)
+        if not model or seen[model] then return end
+        seen[model] = true
+        local score, meta = CorpseScan.Score(model, player, originalCharacter, deathPosition, info)
+        if score then rows[#rows + 1] = {model=model, score=score, meta=meta} end
+    end
+    add(originalCharacter)
+    for _, obj in ipairs(Workspace:GetDescendants()) do
+        if obj:IsA("Model") then add(obj) end
+    end
+    table.sort(rows, function(a,b) return a.score > b.score end)
+    if #rows == 0 then return "sin candidatos con Humanoid" end
+    local out = {}
+    for i = 1, math.min(3, #rows) do
+        local x = rows[i]
+        out[#out+1] = string.format(
+            "%s S:%d D:%.1f H:%.0f P:%d A:%d T:%d",
+            tostring(x.model.Name), math.floor(x.score), x.meta.distance,
+            x.meta.health, x.meta.partHits, x.meta.accessoryHits, x.meta.trackedHits
+        )
+    end
+    return table.concat(out, " | ")
+end
+
+local function waitForDeathTarget(player, originalCharacter, deathPosition, deathAt, info)
+    local deadline = os.clock() + 1.20
+    local stableCandidate, stableFrames = nil, 0
+    repeat
+        local best, score, meta = CorpseScan.Find(player, originalCharacter, deathPosition, info)
+        if best and score >= 150 then
+            if stableCandidate == best then stableFrames += 1
+            else stableCandidate, stableFrames = best, 1 end
+
+            -- Reparented parts / the dead original are unambiguous immediately.
+            -- A cloned corpse gets one extra Heartbeat to finish constructing.
+            if (meta and meta.trackedHits > 0) or best == originalCharacter or stableFrames >= 2 then
+                if best == originalCharacter then
+                    return best, "Character muerto/ragdoll real"
+                elseif meta and meta.trackedHits > 0 then
+                    return best, "ragdoll real por partes reparentadas"
+                else
+                    return best, "cadáver real por firma del avatar"
                 end
             end
         end
-    end
-    table.sort(found, function(a, b) return a.distance < b.distance end)
-    if #found == 0 then return "ninguno" end
-    local parts = {}
-    for i = 1, math.min(#found, 4) do
-        local x = found[i]
-        parts[#parts + 1] = string.format("%s %.1fst H:%s", x.name, x.distance, x.humanoid and "sí" or "no")
-    end
-    return table.concat(parts, " | ")
-end
-
-local function waitForDeathTarget(player, originalCharacter, deathPosition, deathAt)
-    -- R30: accept DUELS' real death body whether it is a new dummy OR the
-    -- original Character after it has died/been replaced. Living Characters
-    -- remain strictly read-only and cannot pass scoreDeathModel().
-    local deadline = os.clock() + 0.90
-
-    repeat
-        local best, score = findBestDeathModel(player, originalCharacter, deathPosition, deathAt)
-        if best and score >= 55 then
-            if best == originalCharacter then
-                return best, "Character muerto reutilizado por DUELS"
-            end
-            return best, "dummy/cadáver real separado"
-        end
-
         if os.clock() >= deadline then break end
         RunService.Heartbeat:Wait()
     until false
-
-    return nil, "sin cuerpo de muerte utilizable"
+    return nil, CorpseScan.Summary(player, originalCharacter, deathPosition, info)
 end
 
 local function triggerVictim(player, character, hum, proof)
@@ -3832,7 +3894,7 @@ local function triggerVictim(player, character, hum, proof)
     local deathPosition = info.deathPosition or modelPosition(character)
     local deathAt = info.deathAt or os.clock()
 
-    -- R30: never touch a living enemy Character. Once DUELS has killed/replaced it,
+    -- R31: never touch a living enemy Character. Once DUELS has killed/replaced it,
     -- that same Model may be the native physical corpse and becomes a valid target.
     status.Text =
         "1/3 · TU KILL CONFIRMADO\n" ..
@@ -3841,12 +3903,12 @@ local function triggerVictim(player, character, hum, proof)
 
     task.spawn(function()
         local target, targetKind =
-            waitForDeathTarget(player, character, deathPosition, deathAt)
+            waitForDeathTarget(player, character, deathPosition, deathAt, info)
 
         if not target or not target.Parent then
             status.Text =
-                "✕ Kill confirmado, no encontré el cuerpo muerto utilizable.\n" ..
-                "Nuevos cerca: " .. nearbyNewModelSummary(deathPosition, deathAt)
+                "✕ Kill confirmado, no encontré el cadáver real.\n" ..
+                "Top candidatos: " .. tostring(targetKind)
             return
         end
 
@@ -4074,6 +4136,7 @@ local function hookCharacter(player, character)
             triggered = false,
             connections = {},
         }
+        info.signature = CorpseScan.Capture(character)
         trackedHumanoids[hum] = info
 
         refreshHumanoidDeathMode(player, hum)
@@ -4375,6 +4438,4 @@ print(
     "precargados ·",
     BASE
 )
-
-
 

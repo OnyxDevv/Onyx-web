@@ -256,6 +256,7 @@ for _, entry in ipairs(manifest.effects) do
         and type(entry.name) == "string"
         and type(entry.v2) == "string"
         and not isJellyEffect(entry.name)
+        and not string.find(string.lower(entry.name), "ufo", 1, true)
         and entry.name ~= "Heartbeat"
         and entry.name ~= "SoulReaper"
         and entry.name ~= "BlackvalkEffect"
@@ -3417,11 +3418,12 @@ ENV.__XERO_DEATH_PROXY.DestroyProxy = function(proxy)
     end
     local source = ENV.__XERO_DEATH_PROXY.SourceByProxy[proxy]
     ENV.__XERO_DEATH_PROXY.SourceByProxy[proxy] = nil
+    local consumed = proxy:GetAttribute("XeroVenomConsumed") == true
+    -- Detach first so preview cleanup cannot visibly restore the consumed body.
+    if consumed then pcall(function() proxy.Parent = nil end) end
     cleanVictim(proxy)
-    pcall(function()
-        if proxy.Parent then proxy:Destroy() end
-    end)
-    if source
+    pcall(function() proxy:Destroy() end)
+    if source and not consumed
         and ENV.__XERO_DEATH_BRIDGE_RUNTIME
         and ENV.__XERO_DEATH_BRIDGE_RUNTIME.RestoreCharacter then
         pcall(ENV.__XERO_DEATH_BRIDGE_RUNTIME.RestoreCharacter, source)
@@ -4080,9 +4082,39 @@ local function cleanupLegacyDecoratedArtifacts()
     end
 end
 
+local function lockVenomDisappearance(victim, cleaner)
+    victim:SetAttribute("XeroVenomConsumed", true)
+    local alive = true
+    local connections = {}
+    for _, part in ipairs(victim:GetDescendants()) do
+        if part:IsA("BasePart") and part.Name ~= "HumanoidRootPart"
+            and part.Transparency < 0.99 then
+            local consumed = false
+            local function update()
+                if not alive or not part.Parent then return end
+                if part.Transparency >= 0.99 then consumed = true end
+                if consumed and part.LocalTransparencyModifier ~= 1 then
+                    part.LocalTransparencyModifier = 1
+                end
+            end
+            connections[#connections + 1] = part:GetPropertyChangedSignal("Transparency"):Connect(update)
+            connections[#connections + 1] = part:GetPropertyChangedSignal("LocalTransparencyModifier"):Connect(update)
+        end
+    end
+    cleaner:Add(function()
+        alive = false
+        for _, conn in ipairs(connections) do conn:Disconnect() end
+    end)
+end
+
 local function runNativeOnVictim(name, victim, statusLabel)
     if not victim or not victim.Parent then
         if statusLabel then statusLabel.Text = "✕ La víctima ya no existe." end
+        return false
+    end
+
+    if string.find(string.lower(tostring(name)), "ufo", 1, true) then
+        if statusLabel then statusLabel.Text = "UFO eliminado del selector." end
         return false
     end
 
@@ -4134,6 +4166,9 @@ local function runNativeOnVictim(name, victim, statusLabel)
 
     local cleaner = makeCleaner()
     victimCleaners[victim] = cleaner
+    if string.find(string.lower(tostring(name)), "venom", 1, true) then
+        lockVenomDisappearance(victim, cleaner)
+    end
 
     if statusLabel then
         statusLabel.Text =
@@ -4218,6 +4253,7 @@ local function runNativeOnVictim(name, victim, statusLabel)
         if statusLabel then
             statusLabel.Text = "✕ DeathEffectPreview falló:\n" .. tostring(result)
         end
+        victim:SetAttribute("XeroVenomConsumed", nil)
         cleanVictim(victim)
         return false
     end
@@ -4247,7 +4283,11 @@ local function runNativeOnVictim(name, victim, statusLabel)
     -- kill never cancels the visuals of another kill.
     task.delay(10, function()
         if victimCleaners[victim] == cleaner then
-            cleanVictim(victim)
+            if victim:GetAttribute("XeroVenomConsumed") == true then
+                ENV.__XERO_DEATH_PROXY.DestroyProxy(victim)
+            else
+                cleanVictim(victim)
+            end
         end
     end)
 
@@ -5027,6 +5067,9 @@ local function hookCharacter(player, character)
                 end
             end
             info.lastHealth = health
+            if health > 0 and previous <= 0 then
+                deathRuntime.RestoreCharacter(character)
+            end
             if health <= 0 then
                 queueVictimDeath(player, character, hum)
             end
@@ -5066,6 +5109,11 @@ local function hookPlayer(player)
     playerConnections[player] = conns
 
     conns[#conns + 1] = player.CharacterAdded:Connect(function(character)
+        for _, info in pairs(trackedHumanoids) do
+            if info.player == player and info.character then
+                deathRuntime.RestoreCharacter(info.character)
+            end
+        end
         hookCharacter(player, character)
     end)
 

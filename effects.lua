@@ -3021,17 +3021,160 @@ local function forceFrostbitePass(dummy)
     end
 end
 
-local function scheduleFrostbiteReal(dummy)
-    for _, delayTime in ipairs({0, .04, .12, .28, .52, .86, 1.25, 1.70, 2.15}) do
-        task.delay(delayTime, function()
-            forceFrostbitePass(dummy)
+local function scheduleFrostbiteReal(dummy, cleaner)
+    -- Frostbite/Hipotermia: el cuerpo queda congelado, pero el cabello y los
+    -- accesorios NO deben congelarse como piezas independientes. Si un Handle
+    -- queda Anchored, cualquier ajuste tardío de la pose mueve el cuerpo pero
+    -- deja el cabello en el CFrame anterior (se ve adelantado/despegado).
+    local BLACK = Color3.new(0, 0, 0)
+    local accessoryConnections = {}
+    local watched = setmetatable({}, {__mode = "k"})
+    local pendingAccessory = setmetatable({}, {__mode = "k"})
+    local alive = true
+
+    local function track(conn)
+        if conn then accessoryConnections[#accessoryConnections + 1] = conn end
+        return conn
+    end
+
+    local function enforceAccessory(accessory)
+        if not alive or not dummy or not dummy.Parent
+            or not accessory or not accessory.Parent
+            or not accessory:IsA("Accessory") then
+            return
+        end
+
+        -- Repara el AccessoryWeld si DeathEffectPreview lo tocó/recreó.
+        local state = ENV.__XERO_DEATH_PROXY
+        if state and type(state.RepairAccessoryJoints) == "function" then
+            pcall(state.RepairAccessoryJoints, dummy, nil)
+        end
+
+        blackenAccessory(accessory)
+
+        for _, obj in ipairs(accessory:GetDescendants()) do
+            if obj:IsA("BasePart") then
+                pcall(function()
+                    obj.Anchored = false
+                    obj.Massless = true
+                    obj.CanCollide = false
+                    obj.CanTouch = false
+                    obj.CanQuery = false
+                end)
+            end
+        end
+    end
+
+    local function queueAccessory(accessory)
+        if not alive or pendingAccessory[accessory] then return end
+        pendingAccessory[accessory] = true
+        task.defer(function()
+            pendingAccessory[accessory] = nil
+            enforceAccessory(accessory)
         end)
     end
 
-    local conn
-    conn = dummy.DescendantAdded:Connect(function(obj)
+    local function watchAccessory(accessory)
+        if not accessory or not accessory:IsA("Accessory") or watched[accessory] then return end
+        watched[accessory] = true
+        enforceAccessory(accessory)
+
+        local function watchObject(obj)
+            if not obj or watched[obj] then return end
+            watched[obj] = true
+
+            if obj:IsA("BasePart") then
+                track(obj:GetPropertyChangedSignal("Anchored"):Connect(function()
+                    if alive and obj.Parent and obj.Anchored then
+                        pcall(function() obj.Anchored = false end)
+                    end
+                end))
+                track(obj:GetPropertyChangedSignal("Color"):Connect(function()
+                    if alive and obj.Parent and obj.Color ~= BLACK then
+                        queueAccessory(accessory)
+                    end
+                end))
+                if obj:IsA("MeshPart") then
+                    track(obj:GetPropertyChangedSignal("TextureID"):Connect(function()
+                        if alive and obj.Parent and obj.TextureID ~= "" then
+                            queueAccessory(accessory)
+                        end
+                    end))
+                end
+            elseif obj:IsA("Decal") or obj:IsA("Texture") then
+                track(obj:GetPropertyChangedSignal("Color3"):Connect(function()
+                    if alive and obj.Parent and obj.Color3 ~= BLACK then
+                        queueAccessory(accessory)
+                    end
+                end))
+            elseif obj:IsA("SpecialMesh") then
+                track(obj:GetPropertyChangedSignal("VertexColor"):Connect(function()
+                    if alive and obj.Parent then queueAccessory(accessory) end
+                end))
+                track(obj:GetPropertyChangedSignal("TextureId"):Connect(function()
+                    if alive and obj.Parent and obj.TextureId ~= "" then
+                        queueAccessory(accessory)
+                    end
+                end))
+            elseif obj:IsA("SurfaceAppearance") then
+                for _, prop in ipairs({"ColorMap", "MetalnessMap", "NormalMap", "RoughnessMap"}) do
+                    track(obj:GetPropertyChangedSignal(prop):Connect(function()
+                        if alive and obj.Parent then queueAccessory(accessory) end
+                    end))
+                end
+            elseif obj:IsA("JointInstance") then
+                -- Si el renderer invalida el weld, repáralo en el siguiente slice.
+                track(obj:GetPropertyChangedSignal("Part0"):Connect(function()
+                    if alive and obj.Parent then queueAccessory(accessory) end
+                end))
+                track(obj:GetPropertyChangedSignal("Part1"):Connect(function()
+                    if alive and obj.Parent then queueAccessory(accessory) end
+                end))
+            end
+        end
+
+        for _, obj in ipairs(accessory:GetDescendants()) do watchObject(obj) end
+        track(accessory.DescendantAdded:Connect(function(obj)
+            task.defer(function()
+                if not alive then return end
+                watchObject(obj)
+                queueAccessory(accessory)
+            end)
+        end))
+        track(accessory.DescendantRemoving:Connect(function(obj)
+            if alive and (obj.Name == "AccessoryWeld" or obj:IsA("JointInstance")) then
+                queueAccessory(accessory)
+            end
+        end))
+    end
+
+    for _, accessory in ipairs(dummy:GetChildren()) do
+        if accessory:IsA("Accessory") then watchAccessory(accessory) end
+    end
+
+    track(dummy.ChildAdded:Connect(function(child)
+        if child:IsA("Accessory") then
+            task.defer(function()
+                if alive then watchAccessory(child) end
+            end)
+        end
+    end))
+
+    -- El renderer puede aplicar su BodyStyle de forma asíncrona. El cuerpo sí
+    -- permanece azul; accesorios/cabello se fuerzan a negro durante TODO el clon.
+    for _, delayTime in ipairs({0, .04, .12, .28, .52, .86, 1.25, 1.70, 2.15}) do
+        task.delay(delayTime, function()
+            if not alive or not dummy or not dummy.Parent then return end
+            forceFrostbitePass(dummy)
+            for _, accessory in ipairs(dummy:GetChildren()) do
+                if accessory:IsA("Accessory") then enforceAccessory(accessory) end
+            end
+        end)
+    end
+
+    local bodyConn = dummy.DescendantAdded:Connect(function(obj)
         task.defer(function()
-            if not dummy.Parent then return end
+            if not alive or not dummy.Parent then return end
 
             if obj:IsA("Shirt")
                 or obj:IsA("Pants")
@@ -3040,13 +3183,30 @@ local function scheduleFrostbiteReal(dummy)
                 return
             end
 
-            forceFrostbitePass(dummy)
+            -- No vuelvas a anclar ni recolorear un Handle como si fuera cuerpo.
+            local accessory = obj:FindFirstAncestorOfClass("Accessory")
+            if accessory then
+                watchAccessory(accessory)
+                queueAccessory(accessory)
+            else
+                forceFrostbitePass(dummy)
+            end
         end)
     end)
+    track(bodyConn)
 
-    task.delay(2.35, function()
-        pcall(function() conn:Disconnect() end)
-    end)
+    local function stop()
+        if not alive then return end
+        alive = false
+        for _, conn in ipairs(accessoryConnections) do
+            pcall(function() conn:Disconnect() end)
+        end
+        table.clear(accessoryConnections)
+    end
+
+    if cleaner and type(cleaner.Add) == "function" then
+        cleaner:Add(stop)
+    end
 end
 
 local function setGhostTransparency(dummy, alpha)
@@ -4421,9 +4581,17 @@ ENV.__XERO_DEATH_PROXY.GuardOneShotVFX = function(proxy)
         return table.concat(pieces, "/")
     end
 
-    local function disable(obj)
+    local function disable(obj, hard)
         if not obj or not obj.Parent or not isVisual(obj) then return end
         pcall(function() obj.Enabled = false end)
+        if hard and obj:IsA("ParticleEmitter") then
+            -- Enabled=false does NOT block ParticleEmitter:Emit(). After the
+            -- legitimate first window, Lifetime=0 makes any delayed/repeated
+            -- :Emit() from the native renderer visually inert while particles
+            -- already emitted are allowed to finish naturally.
+            pcall(function() obj.Rate = 0 end)
+            pcall(function() obj.Lifetime = NumberRange.new(0) end)
+        end
     end
 
     local function activationWindow(obj)
@@ -4469,13 +4637,22 @@ ENV.__XERO_DEATH_PROXY.GuardOneShotVFX = function(proxy)
             task.delay(activationWindow(obj), function()
                 if not alive or records[obj] ~= thisRecord then return end
                 thisRecord.Locked = true
-                disable(obj)
+                disable(obj, true)
             end)
         end
 
         if markedBurst then
-            -- :Emit() funciona aun con Enabled=false: garantizamos burst único.
+            -- :Emit() funciona aun con Enabled=false. Dejamos una ventana corta
+            -- para el burst inicial y luego neutralizamos CUALQUIER :Emit() tardío.
             disable(obj)
+            local emitDelay = tonumber(obj:GetAttribute("EmitDelay")) or 0
+            task.delay(math.max(0.10, emitDelay + 0.18), function()
+                if alive and obj and obj.Parent then
+                    rec.Locked = true
+                    usedKeys[key] = true
+                    disable(obj, true)
+                end
+            end)
         else
             connections[#connections+1] = obj:GetPropertyChangedSignal("Enabled"):Connect(onEnabled)
             local currentlyEnabled = false
@@ -4496,7 +4673,7 @@ ENV.__XERO_DEATH_PROXY.GuardOneShotVFX = function(proxy)
     guard.Register = function(obj)
         if not alive or not obj then return end
         if isVisual(obj) then watch(obj) else scan(obj) end
-        if sealed and isVisual(obj) then disable(obj) end
+        if sealed and isVisual(obj) then disable(obj, true) end
     end
     guard.Stop = function()
         if not alive then return end
@@ -4505,14 +4682,14 @@ ENV.__XERO_DEATH_PROXY.GuardOneShotVFX = function(proxy)
         for _, conn in ipairs(connections) do
             pcall(function() conn:Disconnect() end)
         end
-        for obj in pairs(seen) do disable(obj) end
+        for obj in pairs(seen) do disable(obj, true) end
     end
 
     state.TransientGuards[proxy] = guard
     connections[#connections+1] = proxy.DescendantAdded:Connect(function(obj)
         if isVisual(obj) then
             watch(obj)
-            if sealed then disable(obj) end
+            if sealed then disable(obj, true) end
         end
     end)
     scan(proxy)
@@ -4522,7 +4699,7 @@ ENV.__XERO_DEATH_PROXY.GuardOneShotVFX = function(proxy)
     task.delay(3.0, function()
         if not alive or not proxy.Parent then return end
         sealed = true
-        for obj in pairs(seen) do disable(obj) end
+        for obj in pairs(seen) do disable(obj, true) end
     end)
 end
 
@@ -4878,13 +5055,20 @@ ENV.__XERO_DEATH_PROXY.CopySourceMotion = function(proxy, source, effectName, in
         pcall(function() proxy:SetAttribute("XeroDeathFrostbitePivot", proxy:GetPivot()) end)
         for _, part in ipairs(proxy:GetDescendants()) do
             if part:IsA("BasePart") then
+                local accessoryPart = part:FindFirstAncestorOfClass("Accessory") ~= nil
                 pcall(function()
                     part.AssemblyLinearVelocity = Vector3.zero
                     part.AssemblyAngularVelocity = Vector3.zero
                     part.CanCollide = false
                     part.CanTouch = false
                     part.CanQuery = false
-                    part.Anchored = true
+                    if accessoryPart then
+                        -- El cuerpo congelado arrastra el cabello mediante su weld.
+                        part.Anchored = false
+                        part.Massless = true
+                    else
+                        part.Anchored = true
+                    end
                 end)
             end
         end
@@ -5039,10 +5223,16 @@ ENV.__XERO_DEATH_PROXY.ReapplyReaction = function(proxy, effectName)
         end
         for _, part in ipairs(proxy:GetDescendants()) do
             if part:IsA("BasePart") then
+                local accessoryPart = part:FindFirstAncestorOfClass("Accessory") ~= nil
                 pcall(function()
                     part.AssemblyLinearVelocity = Vector3.zero
                     part.AssemblyAngularVelocity = Vector3.zero
-                    part.Anchored = true
+                    if accessoryPart then
+                        part.Anchored = false
+                        part.Massless = true
+                    else
+                        part.Anchored = true
+                    end
                     part.CanCollide = false
                     part.CanTouch = false
                     part.CanQuery = false
@@ -5535,7 +5725,7 @@ local function runNativeOnVictim(name, victim, statusLabel)
         bodyPatchSource = "Freeze · TODO sólido"
 
     elseif name == "Frostbite" then
-        scheduleFrostbiteReal(victim)
+        scheduleFrostbiteReal(victim, cleaner)
         bodyPatched = true
         bodyPatchSource = "Frostbite · sin cara/ropa + accesorios negros"
 
@@ -6901,9 +7091,9 @@ local function selectEffect(value)
         state.Selecting = false
     end)
 end
-Tabs.Efectos:Paragraph({Title = "Efectos de muerte", Desc = "Elige un efecto para tus eliminaciones. Algunos efectos pueden estar incompletos y se irán mejorando. Hipotermia, corazón, congelar y piña conservan el cuerpo hasta cambiar de ronda."})
+Tabs.Efectos:Paragraph({Title = "Efectos de muerte", Desc = "Elige un efecto de muerte. Algunos efectos pueden estar incompletos y se irán mejorando."})
 dropdown = Tabs.Efectos:Dropdown({Title = "Efecto", Values = choices, Value = state.Selected, Callback = selectEffect})
-toggle = Tabs.Efectos:Toggle({Title = "Cambiar efecto de muerte", Desc = "Aplica el efecto seleccionado a tus eliminaciones.", Value = false, Callback = function(value)
+toggle = Tabs.Efectos:Toggle({Title = "Cambiar efecto de muerte", Desc = "Aplica el efecto seleccionado.", Value = false, Callback = function(value)
     if not state.Syncing then setEnabled(value == true) end
 end})
 runtime.DeathEffectsArm = function(character, tool)

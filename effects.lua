@@ -1,5 +1,5 @@
 --[[
-XeroHub | DUELS Death Effects · CurrentCamera R38 · Confirmed Removal + One Effect Per Kill
+XeroHub | DUELS Death Effects · CurrentCamera R36 · Fix duplicados · Base original
 Kev
 
 Objetivo:
@@ -141,7 +141,6 @@ ENV.__XERO_DEATH_BRIDGE_RUNTIME.Cleanup = function()
     for _, info in pairs(rt.TrackedHumanoids or {}) do
         disconnectList(info.connections)
     end
-    if rt.ResetDeathSession then pcall(rt.ResetDeathSession) end
 
     for _, list in pairs(rt.PlayerConnections or {}) do
         disconnectList(list)
@@ -954,17 +953,10 @@ local function makeCleaner()
     local cleaner = {
         _objects = {},
         _cleaning = false,
-        _cleaned = false,
     }
 
     function cleaner:Add(object, method)
         if object == nil then return object end
-        if self._cleaned then
-            local late = makeCleaner()
-            late:Add(object, method)
-            late:Clean()
-            return object
-        end
         self._objects[#self._objects + 1] = {
             Object = object,
             Method = method,
@@ -988,9 +980,8 @@ local function makeCleaner()
     end
 
     function cleaner:Clean()
-        if self._cleaning or self._cleaned then return end
+        if self._cleaning then return end
         self._cleaning = true
-        self._cleaned = true
 
         for i = #self._objects, 1, -1 do
             local entry = self._objects[i]
@@ -3376,14 +3367,11 @@ ENV.__XERO_DEATH_PROXY = {
     SourceByProxy = setmetatable({}, {__mode = "k"}),
     TemplateByHumanoid = setmetatable({}, {__mode = "k"}),
     TemplateBuilding = setmetatable({}, {__mode = "k"}),
-    -- Shared across re-execution; a dead life never becomes a new kill after a timeout.
-    LastMakeByHumanoid = ENV.__XERO_DEATH_CONSUMED_HUMANOIDS
-        or setmetatable({}, {__mode = "k"}),
+    LastMakeByHumanoid = setmetatable({}, {__mode = "k"}),
+    LastMakeByCharacter = setmetatable({}, {__mode = "k"}),
     PhysicsConnections = setmetatable({}, {__mode = "k"}),
     KillSerial = 0,
 }
-
-ENV.__XERO_DEATH_CONSUMED_HUMANOIDS = ENV.__XERO_DEATH_PROXY.LastMakeByHumanoid
 
 ENV.__XERO_DEATH_PROXY.EnsureRoot = function()
     local camera = Workspace.CurrentCamera
@@ -3897,13 +3885,13 @@ ENV.__XERO_DEATH_PROXY.Make = function(source, effectName, hum, player, deathPos
     -- Global one-death gate. This sits in ENV intentionally: if two local kill
     -- signals arrive for the same Humanoid, only the first caller gets a proxy.
     -- It also blocks duplicate R32-style listeners that call this shared Make().
-    if hum then
-        local previous = ENV.__XERO_DEATH_PROXY.LastMakeByHumanoid[hum]
-        if previous then
-            return nil, "death visual ya creado para esta muerte"
-        end
-        ENV.__XERO_DEATH_PROXY.LastMakeByHumanoid[hum] = true
+    local state = ENV.__XERO_DEATH_PROXY
+    if (hum and state.LastMakeByHumanoid[hum])
+        or (source and state.LastMakeByCharacter[source]) then
+        return nil, "death visual ya creado para esta muerte"
     end
+    if hum then state.LastMakeByHumanoid[hum] = true end
+    if source then state.LastMakeByCharacter[source] = true end
 
     local proxy
     local reason
@@ -3935,8 +3923,6 @@ ENV.__XERO_DEATH_PROXY.Make = function(source, effectName, hum, player, deathPos
         pcall(function() proxy:Destroy() end)
         return nil, "CurrentCamera no disponible"
     end
-    proxy:SetAttribute("XeroDeathVisualProxy", true)
-    proxy:SetAttribute("XeroDeathSession", ENV.__XERO_DEATH_BRIDGE_RUNTIME.DeathSession or 0)
     proxy.Parent = cameraRoot
 
     local positioned = false
@@ -3949,9 +3935,8 @@ ENV.__XERO_DEATH_PROXY.Make = function(source, effectName, hum, player, deathPos
     if freezeAtLastHit and info and typeof(info.lastHitPivot) == "CFrame" then
         positioned = pcall(function() proxy:PivotTo(info.lastHitPivot) end)
     end
-    -- Use the death snapshot even if the original body has already teleported.
-    if not positioned and info and typeof(info.deathPivot) == "CFrame" then
-        positioned = pcall(function() proxy:PivotTo(info.deathPivot) end)
+    if not positioned and source and source.Parent then
+        positioned = pcall(function() proxy:PivotTo(source:GetPivot()) end)
     end
     if not positioned and deathPosition then
         pcall(function()
@@ -4122,13 +4107,7 @@ local function runNativeOnVictim(name, victim, statusLabel)
         return false
     end
 
-    local renderRuntime = ENV.__XERO_DEATH_BRIDGE_RUNTIME
-    local renderSession = renderRuntime.DeathSession or 0
     local asset, injected, assetStatus = ensureNativeAsset(name)
-    -- Asset loading can yield across a respawn, round change or re-execution.
-    if not renderRuntime.Alive or ENV.__XERO_DEATH_BRIDGE_RUNTIME ~= renderRuntime
-        or renderSession ~= (renderRuntime.DeathSession or 0)
-        or not victim.Parent then return false end
     if not asset then
         if statusLabel then statusLabel.Text = "✕ Asset: " .. tostring(assetStatus) end
         return false
@@ -4369,7 +4348,6 @@ end
 
 local enabled = false
 local deathRuntime = ENV.__XERO_DEATH_BRIDGE_RUNTIME
-deathRuntime.DeathSession = 0
 local trackedHumanoids = setmetatable({}, {__mode = "k"})
 deathRuntime.TrackedHumanoids = trackedHumanoids
 local playerConnections = {}
@@ -4395,28 +4373,6 @@ local lastAppliedAt = 0
 local PENDING_LIFETIME = 1.35
 local CREDIT_LIFETIME = 0.85
 local SIGNAL_DEDUPE_WINDOW = 0.28
-
--- Cancel confirmations as well as visuals; clearing only the camera leaves
--- delayed death/tag callbacks able to recreate the previous victim at respawn.
-deathRuntime.ResetDeathSession = function()
-    deathRuntime.DeathSession += 1
-    for _, entry in ipairs(pendingDeaths) do entry.removed = true end
-    table.clear(pendingDeaths)
-    table.clear(pendingByHumanoid)
-    table.clear(recentKillCredits)
-    table.clear(recentDeathModels)
-    for _, info in pairs(trackedHumanoids) do
-        if info.deathAt then info.expired = true end
-    end
-    lastAcceptedSignalAt = -math.huge
-    lastAppliedAt = -math.huge
-    deathRuntime.RecentMelee = nil
-    deathRuntime.RecentMeleeAttackAt = 0
-    if ENV.__XERO_DEATH_BRIDGE_RUNTIME == deathRuntime then
-        ENV.__XERO_DEATH_PROXY.KillSerial += 1
-        ENV.__XERO_DEATH_PROXY.Clear()
-    end
-end
 
 local function selectedEffect()
     return EFFECTS[index]
@@ -4739,9 +4695,15 @@ local function triggerVictim(player, character, hum, proof)
     local info = trackedHumanoids[hum]
     if not deathRuntime.Alive or ENV.__XERO_DEATH_BRIDGE_RUNTIME ~= deathRuntime then return false end
     if not info or info.triggered or info.expired then return false end
-    if not enabled or LP.Neutral or info.deathEligible ~= true
-        or not (info.deathObserved or info.removedAt) or not info.deathAt
-        or os.clock() - info.deathAt > PENDING_LIFETIME then return false end
+    if not enabled or info.deathEligible ~= true then return false end
+
+    -- Reject before BeginKillSession: duplicate callbacks must not clear the
+    -- legitimate effect either. Keep R36's original kill attribution unchanged.
+    local state = ENV.__XERO_DEATH_PROXY
+    if state.LastMakeByHumanoid[hum] or state.LastMakeByCharacter[character] then
+        info.triggered = true
+        return false
+    end
 
     info.triggered = true
     local pending = pendingByHumanoid[hum]
@@ -4827,8 +4789,7 @@ local function queueMostLikelyDeadEnemy()
 
     for hum, info in pairs(trackedHumanoids) do
         if hum and info and not info.triggered and not info.expired
-            and (info.deathObserved or info.removedAt) and info.deathEligible == true
-            and info.deathAt and now - info.deathAt <= PENDING_LIFETIME then
+            and (not info.deathAt or now - info.deathAt <= PENDING_LIFETIME) then
             local p = info.player
             local model = info.character or hum.Parent
 
@@ -4892,7 +4853,7 @@ local function consumeFreshCredit(player, character, hum)
 end
 
 local function recordLocalKillSignal(source, count)
-    if not enabled or LP.Neutral or not deathRuntime.Alive
+    if not enabled or not deathRuntime.Alive
         or ENV.__XERO_DEATH_BRIDGE_RUNTIME ~= deathRuntime then return end
     count = math.max(1, math.floor(tonumber(count) or 1))
     local now = os.clock()
@@ -4904,8 +4865,7 @@ local function recordLocalKillSignal(source, count)
     -- R33 hard dedupe: Played + Playing + counter + killer tag can all describe
     -- the SAME elimination. During this tiny window accept exactly one signal,
     -- regardless of source text, so audio/VFX cannot be scheduled twice.
-    if count == 1 and now - lastAcceptedSignalAt <= SIGNAL_DEDUPE_WINDOW
-        and not newestPending() then
+    if now - lastAcceptedSignalAt <= SIGNAL_DEDUPE_WINDOW then
         return
     end
 
@@ -4941,27 +4901,16 @@ queueVictimDeath = function(player, character, hum)
     local info = trackedHumanoids[hum]
     if not deathRuntime.Alive or ENV.__XERO_DEATH_BRIDGE_RUNTIME ~= deathRuntime then return end
     if not info or info.triggered or info.expired then return end
-    -- CharacterRemoving/AncestryChanged also fire for respawns and round resets.
-    -- They are not death evidence on their own.
-    if not info.deathObserved and hum.Health > 0 and not info.removedAt then return end
-    if info.deathAt and os.clock() - info.deathAt > PENDING_LIFETIME then
-        info.expired = true
-        return
-    end
-    info.deathObserved = info.deathObserved or hum.Health <= 0
     local eligibleNow = enabled and (info.deathEligible == true or isEnemyPlayer(player))
     if not eligibleNow then return end
     if not character or pendingByHumanoid[hum] then return end
 
     info.deathAt = info.deathAt or os.clock()
     info.deathPosition = info.deathPosition or modelPosition(character)
-    if not info.deathPivot then
-        pcall(function() info.deathPivot = character:GetPivot() end)
-    end
     info.deathEligible = true
 
     -- Best case: the game already stamped the killer/creator on the Humanoid.
-    if info.deathObserved and hasLocalKillerTag(character, hum) then
+    if hasLocalKillerTag(character, hum) then
         triggerVictim(player, character, hum, "killer/creator nativo")
         return
     end
@@ -4971,7 +4920,7 @@ queueVictimDeath = function(player, character, hum)
     -- effect. This removes the extra kill-counter delay for knives.
     local rt = ENV.__XERO_DEATH_BRIDGE_RUNTIME
     local melee = rt and rt.RecentMelee
-    if info.deathObserved and melee and melee.Humanoid == hum and os.clock() - (melee.At or 0) <= 1.05 then
+    if melee and melee.Humanoid == hum and os.clock() - (melee.At or 0) <= 1.05 then
         rt.RecentMelee = nil
         triggerVictim(player, character, hum, "cuchillo local confirmado por muerte")
         return
@@ -5001,7 +4950,7 @@ queueVictimDeath = function(player, character, hum)
         for _, delayTime in ipairs({0.03, 0.09, 0.18, 0.32}) do
             task.wait(delayTime)
             if info.triggered or entry.removed then return end
-            if info.deathObserved and hasLocalKillerTag(character, hum) then
+            if hasLocalKillerTag(character, hum) then
                 removePending(entry)
                 triggerVictim(player, character, hum, "killer/creator nativo")
                 return
@@ -5012,6 +4961,7 @@ queueVictimDeath = function(player, character, hum)
     task.delay(PENDING_LIFETIME + 0.05, function()
         if entry.removed or info.triggered then return end
         removePending(entry)
+        info.expired = true
         if enabled then
             status.Text = "Muerte ignorada: no se confirmó que el kill fuera tuyo."
         end
@@ -5022,11 +4972,9 @@ local function hookCharacter(player, character)
     if player == LP or not character then return end
 
     task.spawn(function()
-        if not deathRuntime.Alive or ENV.__XERO_DEATH_BRIDGE_RUNTIME ~= deathRuntime then return end
         local hum = character:FindFirstChildOfClass("Humanoid")
             or character:WaitForChild("Humanoid", 10)
-        if not deathRuntime.Alive or ENV.__XERO_DEATH_BRIDGE_RUNTIME ~= deathRuntime
-            or player.Character ~= character then return end
+        if not deathRuntime.Alive or ENV.__XERO_DEATH_BRIDGE_RUNTIME ~= deathRuntime then return end
         if not hum or trackedHumanoids[hum] then return end
 
         local info = {
@@ -5047,14 +4995,12 @@ local function hookCharacter(player, character)
         -- This avoids touching/cloning the real Character after DUELS removes it.
         ENV.__XERO_DEATH_PROXY.BuildTemplate(player, character, hum)
         task.delay(0.75, function()
-            if deathRuntime.Alive and ENV.__XERO_DEATH_BRIDGE_RUNTIME == deathRuntime
-                and hum and hum.Parent and not ENV.__XERO_DEATH_PROXY.TemplateByHumanoid[hum] then
+            if hum and hum.Parent and not ENV.__XERO_DEATH_PROXY.TemplateByHumanoid[hum] then
                 ENV.__XERO_DEATH_PROXY.BuildTemplate(player, character, hum)
             end
         end)
         task.delay(1.80, function()
-            if deathRuntime.Alive and ENV.__XERO_DEATH_BRIDGE_RUNTIME == deathRuntime
-                and hum and hum.Parent and not ENV.__XERO_DEATH_PROXY.TemplateByHumanoid[hum] then
+            if hum and hum.Parent and not ENV.__XERO_DEATH_PROXY.TemplateByHumanoid[hum] then
                 ENV.__XERO_DEATH_PROXY.BuildTemplate(player, character, hum)
             end
         end)
@@ -5062,7 +5008,6 @@ local function hookCharacter(player, character)
         refreshHumanoidDeathMode(player, hum)
 
         info.connections[#info.connections + 1] = hum.Died:Connect(function()
-            info.deathObserved = true
             queueVictimDeath(player, character, hum)
         end)
 
@@ -5092,7 +5037,6 @@ local function hookCharacter(player, character)
                 -- Fallback for games that replace the Character without exposing
                 -- Humanoid.Died locally. Queue it while we still have its last body data.
                 if not info.triggered and enabled and isEnemyPlayer(player) then
-                    info.removedAt = info.removedAt or os.clock()
                     info.deathAt = info.deathAt or os.clock()
                     info.deathPosition = info.deathPosition or modelPosition(character)
                     info.deathEligible = true
@@ -5103,7 +5047,7 @@ local function hookCharacter(player, character)
                 -- Character first and spawn the visible death dummy immediately after.
                 cleanVictim(character)
                 task.delay(PENDING_LIFETIME + 0.25, function()
-                    if trackedHumanoids[hum] == info then
+                    if trackedHumanoids[hum] == info and not info.triggered then
                         for _, conn in ipairs(info.connections) do
                             pcall(function() conn:Disconnect() end)
                         end
@@ -5132,7 +5076,6 @@ local function hookPlayer(player)
         local hum = character and character:FindFirstChildOfClass("Humanoid")
         local info = hum and trackedHumanoids[hum]
         if hum and info and not info.triggered then
-            info.removedAt = info.removedAt or os.clock()
             info.deathAt = info.deathAt or os.clock()
             info.deathPosition = info.deathPosition or modelPosition(character)
             info.deathEligible = enabled and isEnemyPlayer(player)
@@ -5228,33 +5171,23 @@ local function hookKillSound(sound)
     if not isKillConfirmSound(sound) or hookedKillSounds[sound] then return end
     hookedKillSounds[sound] = true
 
-    local playing = false
-    local ownerCharacter = LP.Character
     local wasLocal = localOwnsKillSound(sound)
     local function confirm()
-        local active = sound.Playing or sound.IsPlaying
-        if not active then playing = false; return end
-        if playing then return end
-        playing = true
-        local camera = Workspace.CurrentCamera
-        if camera and sound:IsDescendantOf(camera) then return end
         wasLocal = wasLocal or localOwnsKillSound(sound)
-        if enabled and wasLocal and LP.Character == ownerCharacter then
+        if enabled and wasLocal then
             recordLocalKillSignal("sonido " .. tostring(sound.Name), 1)
         end
     end
+
     killSignalConnections[#killSignalConnections + 1] = sound.AncestryChanged:Connect(function()
-        if LP.Character == ownerCharacter then
-            wasLocal = wasLocal or localOwnsKillSound(sound)
-        end
+        wasLocal = wasLocal or localOwnsKillSound(sound)
     end)
     killSignalConnections[#killSignalConnections + 1] = sound.Played:Connect(confirm)
-    killSignalConnections[#killSignalConnections + 1] = sound:GetPropertyChangedSignal("Playing"):Connect(confirm)
-    killSignalConnections[#killSignalConnections + 1] = sound.Ended:Connect(function() playing = false end)
-    killSignalConnections[#killSignalConnections + 1] = sound.Stopped:Connect(function() playing = false end)
-    -- Native GunKill may be inserted after playback has already started.
-    if sound.Playing or sound.IsPlaying then confirm() end
+    killSignalConnections[#killSignalConnections + 1] = sound:GetPropertyChangedSignal("Playing"):Connect(function()
+        if sound.Playing then confirm() end
+    end)
 
+    if sound.Playing or sound.IsPlaying then confirm() end
 end
 
 local function scanLocalKillSignals(root)
@@ -5404,13 +5337,18 @@ killSignalConnections[#killSignalConnections + 1] = LP.DescendantAdded:Connect(f
     if obj:IsA("Tool") then ENV.__XERO_DEATH_BRIDGE_RUNTIME.HookMeleeTool(obj) end
 end)
 
-killSignalConnections[#killSignalConnections + 1] = LP.CharacterRemoving:Connect(function()
-    deathRuntime.ResetDeathSession()
-end)
 killSignalConnections[#killSignalConnections + 1] = LP.CharacterAdded:Connect(function(character)
-    deathRuntime.ResetDeathSession()
+    for _, entry in ipairs(pendingDeaths) do
+        removePending(entry)
+        local info = trackedHumanoids[entry.hum]
+        if info then info.expired = true end
+    end
+    table.clear(pendingDeaths)
+    table.clear(recentKillCredits)
+    table.clear(recentDeathModels)
+    deathRuntime.RecentMelee = nil
+    ENV.__XERO_DEATH_PROXY.Clear()
     task.defer(function()
-        if not deathRuntime.Alive or ENV.__XERO_DEATH_BRIDGE_RUNTIME ~= deathRuntime then return end
         scanLocalKillSignals(character)
         ENV.__XERO_DEATH_BRIDGE_RUNTIME.ScanMeleeTools(character)
     end)
@@ -5419,7 +5357,12 @@ end)
 for _, propertyName in ipairs({"Team", "TeamColor", "Neutral"}) do
     localTeamConnections[#localTeamConnections + 1] =
         LP:GetPropertyChangedSignal(propertyName):Connect(function()
-            deathRuntime.ResetDeathSession()
+            -- Round transition = hard cleanup of all previous death animation state.
+            if ENV.__XERO_DEATH_PROXY and ENV.__XERO_DEATH_PROXY.Clear then
+                pcall(ENV.__XERO_DEATH_PROXY.Clear)
+            end
+            ENV.__XERO_DEATH_BRIDGE_RUNTIME.RecentMelee = nil
+            ENV.__XERO_DEATH_BRIDGE_RUNTIME.RecentMeleeAttackAt = 0
             refreshAllTracked()
         end)
 end
@@ -5469,7 +5412,6 @@ toggle.MouseButton1Click:Connect(function()
             "\nPlantillas visuales exactas: " .. tostring(readyTemplates) .. "/" .. tostring(trackedCount) ..
             " · enemigo read-only · sin avatar genérico"
     else
-        deathRuntime.ResetDeathSession()
         for _, entry in ipairs(pendingDeaths) do
             removePending(entry)
         end

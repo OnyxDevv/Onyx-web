@@ -1,6 +1,6 @@
 --[[
 XeroHub | DUELS Death Effects · CurrentCamera R36 · Fix duplicados · Base original
-Kev testssss
+Kev
 
 Objetivo:
 - VOLVER al comportamiento que ya funcionaba.
@@ -3379,6 +3379,55 @@ ENV.__XERO_DEATH_PROXY = {
     KillSerial = 0,
 }
 
+ENV.__XERO_DEATH_PROXY.PersistsForRound = function(name)
+    return name == "Frostbite" or name == "Heartache"
+        or name == "Freeze" or name == "PineappleEffect"
+end
+ENV.__XERO_DEATH_PROXY.SoundGuards = setmetatable({}, {__mode = "k"})
+ENV.__XERO_DEATH_PROXY.GuardEffectSounds = function(proxy)
+    local state = ENV.__XERO_DEATH_PROXY
+    if state.SoundGuards[proxy] then return end
+    local connections, seen, played = {}, setmetatable({}, {__mode="k"}), {}
+    local alive = true
+    local function watch(sound)
+        if not sound:IsA("Sound") or seen[sound] then return end
+        seen[sound] = true
+        local started = false
+        local function silence()
+            sound.Volume = 0
+            sound:Stop()
+        end
+        local function key()
+            local path, node = {}, sound
+            while node and node ~= proxy do
+                table.insert(path, 1, node.Name)
+                node = node.Parent
+            end
+            return table.concat(path, "/") .. ":" .. tostring(sound.SoundId)
+        end
+        local function onPlay()
+            if not alive then return end
+            if started or played[key()] then silence(); return end
+            started = true
+            played[key()] = true
+            sound.Looped = false
+        end
+        sound.Looped = false
+        connections[#connections+1] = sound:GetPropertyChangedSignal("Looped"):Connect(function()
+            if alive and sound.Looped then sound.Looped = false end
+        end)
+        connections[#connections+1] = sound.Played:Connect(onPlay)
+        if sound.Playing or sound.IsPlaying then onPlay() end
+    end
+    connections[#connections+1] = proxy.DescendantAdded:Connect(watch)
+    for _, obj in ipairs(proxy:GetDescendants()) do watch(obj) end
+    state.SoundGuards[proxy] = function()
+        alive = false
+        for _, conn in ipairs(connections) do conn:Disconnect() end
+        for sound in pairs(seen) do pcall(function() sound:Stop() end) end
+    end
+end
+
 ENV.__XERO_DEATH_PROXY.EnsureRoot = function()
     local camera = Workspace.CurrentCamera
     if not camera then return nil end
@@ -3415,6 +3464,11 @@ end
 
 ENV.__XERO_DEATH_PROXY.DestroyProxy = function(proxy)
     if not proxy then return end
+    local stopSounds = ENV.__XERO_DEATH_PROXY.SoundGuards[proxy]
+    if stopSounds then
+        stopSounds()
+        ENV.__XERO_DEATH_PROXY.SoundGuards[proxy] = nil
+    end
     ENV.__XERO_DEATH_PROXY.DisconnectFollow(proxy)
     local physicsConn = ENV.__XERO_DEATH_PROXY.PhysicsConnections[proxy]
     if physicsConn then
@@ -3896,8 +3950,72 @@ ENV.__XERO_DEATH_PROXY.BeginKillSession = function()
     -- Hard isolation: an old Preview.play/cleaner/proxy may not survive into the
     -- next kill or next round. This prevents the previous animation from replaying
     -- at LocalPlayer or at a stale world position.
-    state.Clear()
+    if state.Root and state.Root.Parent then
+        for _, proxy in ipairs(state.Root:GetChildren()) do
+            if proxy:GetAttribute("XeroPersistForRound") ~= true then
+                state.DestroyProxy(proxy)
+            end
+        end
+    end
     return state.KillSerial
+end
+
+ENV.__XERO_DEATH_PROXY.RepairAccessoryJoints = function(proxy, template)
+    local repaired = 0
+    for _, accessory in ipairs(proxy:GetChildren()) do
+        if accessory:IsA("Accessory") then
+            local handle = accessory:FindFirstChild("Handle")
+            if handle and handle:IsA("BasePart") then
+                local connected = false
+                for _, joint in ipairs(handle:GetChildren()) do
+                    if (joint:IsA("JointInstance") or joint:IsA("WeldConstraint"))
+                        and joint.Part0 and joint.Part1
+                        and joint.Part0:IsDescendantOf(proxy) and joint.Part1:IsDescendantOf(proxy) then
+                        connected = true
+                        break
+                    end
+                end
+                if not connected then
+                    local body, c0, c1
+                    for _, attachment in ipairs(handle:GetChildren()) do
+                        if attachment:IsA("Attachment") then
+                            for _, part in ipairs(proxy:GetChildren()) do
+                                if part:IsA("BasePart") then
+                                    local match = part:FindFirstChild(attachment.Name)
+                                    if match and match:IsA("Attachment") then
+                                        body, c0, c1 = part, attachment.CFrame, match.CFrame
+                                        break
+                                    end
+                                end
+                            end
+                        end
+                        if body then break end
+                    end
+                    if not body and template then
+                        local original = template:FindFirstChild(accessory.Name)
+                        local originalHandle = original and original:FindFirstChild("Handle")
+                        local weld = originalHandle and originalHandle:FindFirstChild("AccessoryWeld")
+                        if weld and weld:IsA("JointInstance") and weld.Part1 then
+                            body = proxy:FindFirstChild(weld.Part1.Name)
+                            c0, c1 = weld.C0, weld.C1
+                        end
+                    end
+                    if body and body:IsA("BasePart") then
+                        local broken = handle:FindFirstChild("AccessoryWeld")
+                        if broken then broken:Destroy() end
+                        handle.CFrame = body.CFrame * c1 * c0:Inverse()
+                        local weld = Instance.new("Weld")
+                        weld.Name = "AccessoryWeld"
+                        weld.Part0, weld.Part1 = handle, body
+                        weld.C0, weld.C1 = c0, c1
+                        weld.Parent = handle
+                        repaired += 1
+                    end
+                end
+            end
+        end
+    end
+    return repaired
 end
 
 ENV.__XERO_DEATH_PROXY.Make = function(source, effectName, hum, player, deathPosition, info)
@@ -3945,6 +4063,9 @@ ENV.__XERO_DEATH_PROXY.Make = function(source, effectName, hum, player, deathPos
     end
 
     ENV.__XERO_DEATH_PROXY.Sanitize(proxy)
+    proxy:SetAttribute("XeroRepairedAccessories", state.RepairAccessoryJoints(
+        proxy, hum and state.TemplateByHumanoid[hum] or nil
+    ))
     proxy.Name = "XeroDeathVisual_" .. tostring(player and player.Name or (source and source.Name) or "Enemy")
     local cameraRoot = ENV.__XERO_DEATH_PROXY.EnsureRoot()
     if not cameraRoot then
@@ -3999,10 +4120,11 @@ ENV.__XERO_DEATH_PROXY.Make = function(source, effectName, hum, player, deathPos
 
     proxy:SetAttribute("XeroDeathVisualProxy", true)
     proxy:SetAttribute("XeroDeathEffect", tostring(effectName or ""))
+    proxy:SetAttribute("XeroPersistForRound", state.PersistsForRound(effectName))
     ENV.__XERO_DEATH_PROXY.SourceByProxy[proxy] = source
 
     task.delay(10.35, function()
-        if proxy and proxy.Parent then
+        if proxy and proxy.Parent and proxy:GetAttribute("XeroPersistForRound") ~= true then
             ENV.__XERO_DEATH_PROXY.DestroyProxy(proxy)
         end
     end)
@@ -4230,6 +4352,7 @@ local function runNativeOnVictim(name, victim, statusLabel)
     local clothesV2 = applyV2Clothing(victim, asset)
     local hatsV2 = attachV2HatIfNeeded(victim, asset)
 
+    ENV.__XERO_DEATH_PROXY.GuardEffectSounds(victim)
     local cleaner = makeCleaner()
     victimCleaners[victim] = cleaner
     if name == "Ghosted" or string.find(string.lower(tostring(name)), "venom", 1, true) then
@@ -4346,13 +4469,14 @@ local function runNativeOnVictim(name, victim, statusLabel)
             " · body " .. tostring(mutations) ..
             (bodyPatched and (" · " .. tostring(bodyPatchSource)) or "") ..
             (clothesV2 > 0 and (" · ropa V2 " .. tostring(clothesV2)) or "") ..
-            (hatsV2 > 0 and (" · 3D " .. tostring(hatsV2)) or "")
+            (hatsV2 > 0 and (" · 3D " .. tostring(hatsV2)) or "") ..
+            (victim:GetAttribute("XeroTiming") and ("\n" .. victim:GetAttribute("XeroTiming")) or "")
     end)
 
     -- Death effects are short-lived. Keep cleanup isolated per victim so one
     -- kill never cancels the visuals of another kill.
     task.delay(10, function()
-        if victimCleaners[victim] == cleaner then
+        if victimCleaners[victim] == cleaner and victim:GetAttribute("XeroPersistForRound") ~= true then
             if victim:GetAttribute("XeroVenomConsumed") == true then
                 ENV.__XERO_DEATH_PROXY.DestroyProxy(victim)
             else
@@ -4378,8 +4502,8 @@ gui.Parent = PlayerGui
 ENV.__XERO_DEATH_BRIDGE_RUNTIME.Gui = gui
 
 local frame = Instance.new("Frame")
-frame.Size = UDim2.fromOffset(430, 220)
-frame.Position = UDim2.new(.5, -215, .72, -110)
+frame.Size = UDim2.fromOffset(430, 370)
+frame.Position = UDim2.new(.5, -215, .5, -185)
 frame.BackgroundColor3 = Color3.fromRGB(12,12,12)
 frame.BorderSizePixel = 0
 frame.Parent = gui
@@ -4428,6 +4552,26 @@ status.TextWrapped = true
 status.TextXAlignment = Enum.TextXAlignment.Left
 status.TextYAlignment = Enum.TextYAlignment.Top
 status.Parent = frame
+
+-- Dedicated last-kill diagnostics, untouched by progress/selection messages.
+ENV.__XERO_DEATH_BRIDGE_RUNTIME.TimingLabel = Instance.new("TextLabel")
+do
+    local label = ENV.__XERO_DEATH_BRIDGE_RUNTIME.TimingLabel
+    label.Name = "LastKillTiming"
+    label.Position = UDim2.fromOffset(16, 215)
+    label.Size = UDim2.new(1, -32, 0, 139)
+    label.BackgroundColor3 = Color3.fromRGB(24,24,24)
+    label.BorderSizePixel = 0
+    label.TextColor3 = Color3.fromRGB(235,235,235)
+    label.TextSize = 13
+    label.Font = Enum.Font.Gotham
+    label.TextWrapped = true
+    label.TextXAlignment = Enum.TextXAlignment.Left
+    label.TextYAlignment = Enum.TextYAlignment.Top
+    label.Text = "ÚLTIMA KILL · TIEMPOS\nAquí quedarán los datos hasta tu siguiente kill."
+    label.Parent = frame
+    Instance.new("UICorner", label).CornerRadius = UDim.new(0,8)
+end
 
 local function mkButton(txt, x, w)
     local b = Instance.new("TextButton")
@@ -4826,6 +4970,8 @@ local function triggerVictim(player, character, hum, proof)
     if not effectName then return false end
 
     lastAppliedAt = os.clock()
+    info.confirmedAt = lastAppliedAt
+    info.proof = proof
     local deathPosition = info.deathPosition or modelPosition(character)
 
     status.Text =
@@ -4839,6 +4985,7 @@ local function triggerVictim(player, character, hum, proof)
 
     -- Make() first builds the CurrentCamera replacement from the still-visible
     -- Character, then locally hides the original only via LocalTransparencyModifier.
+    info.cloneStartedAt = os.clock()
     local proxy, proxyErr =
         ENV.__XERO_DEATH_PROXY.Make(
             character, effectName, hum, player, deathPosition, info
@@ -4861,9 +5008,11 @@ local function triggerVictim(player, character, hum, proof)
         "2/3 · CLON CURRENTCAMERA + ORIGINAL OCULTO\n" ..
         tostring(effectName) .. " · sólo LocalTransparencyModifier"
 
+    info.cloneReadyAt = os.clock()
     local ok, result = pcall(function()
         return runNativeOnVictim(effectName, proxy, status)
     end)
+    info.rendererReturnedAt = os.clock()
 
     if not ok or result ~= true then
         ENV.__XERO_DEATH_PROXY.DestroyProxy(proxy)
@@ -4873,9 +5022,19 @@ local function triggerVictim(player, character, hum, proof)
         return false
     end
 
-    status.Text =
-        "3/3 · SOLO CLON VISIBLE\n" ..
-        tostring(effectName) .. " · efecto ejecutado una sola vez"
+    proxy:SetAttribute("XeroTiming", string.format(
+        "Confirmación %.0f ms | Clon %.0f ms | Inicio %.0f ms\n%s | Uniones reparadas: %d",
+        math.max(0, info.confirmedAt - (info.deathAt or info.confirmedAt)) * 1000,
+        (info.cloneReadyAt - info.cloneStartedAt) * 1000,
+        (info.rendererReturnedAt - info.cloneReadyAt) * 1000,
+        tostring(proof or "sin fuente"), proxy:GetAttribute("XeroRepairedAccessories") or 0
+    ))
+    status.Text = tostring(effectName) .. "\n" .. proxy:GetAttribute("XeroTiming")
+    if deathRuntime.TimingLabel then
+        deathRuntime.TimingLabel.Text = "ÚLTIMA KILL · " .. tostring(player.Name)
+            .. " · " .. tostring(effectName) .. "\n" .. proxy:GetAttribute("XeroTiming")
+    end
+    warn("[Xero Death Timing] " .. tostring(player.Name) .. " | " .. proxy:GetAttribute("XeroTiming"))
 
     return true
 end

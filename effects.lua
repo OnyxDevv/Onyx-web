@@ -28,6 +28,135 @@ local LP = Players.LocalPlayer
 local PlayerGui = LP:WaitForChild("PlayerGui")
 
 local ENV = (getgenv and getgenv()) or _G
+
+-- R33 lifecycle: every new execution cleans the PREVIOUS R33 execution completely.
+-- Older R29-R32 builds did not own a global runtime, so one fresh server/rejoin is
+-- recommended once when migrating to R33; after that re-execution is self-cleaning.
+if ENV.__XERO_DEATH_BRIDGE_RUNTIME
+    and type(ENV.__XERO_DEATH_BRIDGE_RUNTIME.Cleanup) == "function" then
+    pcall(ENV.__XERO_DEATH_BRIDGE_RUNTIME.Cleanup)
+end
+
+ENV.__XERO_DEATH_BRIDGE_RUNTIME = {
+    Alive = true,
+    KillSignalConnections = nil,
+    LocalTeamConnections = nil,
+    PlayerConnections = nil,
+    PlayerAddedConnection = nil,
+    PlayerRemovingConnection = nil,
+    Gui = nil,
+    HiddenParts = setmetatable({}, {__mode = "k"}),
+    HiddenCharacters = setmetatable({}, {__mode = "k"}),
+    HideConnections = setmetatable({}, {__mode = "k"}),
+}
+
+ENV.__XERO_DEATH_BRIDGE_RUNTIME.RestoreCharacter = function(character)
+    local rt = ENV.__XERO_DEATH_BRIDGE_RUNTIME
+    local parts = rt.HiddenCharacters[character]
+    if parts then
+        for part in pairs(parts) do
+            local oldLTM = rt.HiddenParts[part]
+            if oldLTM ~= nil and part and part.Parent and part:IsA("BasePart") then
+                pcall(function() part.LocalTransparencyModifier = oldLTM end)
+            end
+            rt.HiddenParts[part] = nil
+        end
+        rt.HiddenCharacters[character] = nil
+    end
+
+    local conn = rt.HideConnections[character]
+    if conn then
+        pcall(function() conn:Disconnect() end)
+        rt.HideConnections[character] = nil
+    end
+end
+
+ENV.__XERO_DEATH_BRIDGE_RUNTIME.RestoreHidden = function()
+    local rt = ENV.__XERO_DEATH_BRIDGE_RUNTIME
+    local chars = {}
+    for character in pairs(rt.HiddenCharacters) do
+        chars[#chars + 1] = character
+    end
+    for _, character in ipairs(chars) do
+        rt.RestoreCharacter(character)
+    end
+
+    -- Fallback for a part whose Character disappeared before bookkeeping finished.
+    for part, oldLTM in pairs(rt.HiddenParts) do
+        if part and part.Parent and part:IsA("BasePart") then
+            pcall(function() part.LocalTransparencyModifier = oldLTM end)
+        end
+        rt.HiddenParts[part] = nil
+    end
+end
+
+ENV.__XERO_DEATH_BRIDGE_RUNTIME.HideCharacterLocal = function(character)
+    if not character or not character:IsA("Model") then return 0 end
+    local rt = ENV.__XERO_DEATH_BRIDGE_RUNTIME
+    local parts = rt.HiddenCharacters[character]
+    if not parts then
+        parts = setmetatable({}, {__mode = "k"})
+        rt.HiddenCharacters[character] = parts
+    end
+
+    local function hidePart(obj)
+        if not obj or not obj:IsA("BasePart") then return false end
+        if rt.HiddenParts[obj] == nil then
+            rt.HiddenParts[obj] = obj.LocalTransparencyModifier
+        end
+        parts[obj] = true
+        pcall(function() obj.LocalTransparencyModifier = 1 end)
+        return true
+    end
+
+    local count = 0
+    for _, obj in ipairs(character:GetDescendants()) do
+        if hidePart(obj) then count += 1 end
+    end
+
+    if not rt.HideConnections[character] then
+        rt.HideConnections[character] = character.DescendantAdded:Connect(function(obj)
+            if rt.Alive and character.Parent then
+                hidePart(obj)
+            end
+        end)
+    end
+
+    return count
+end
+
+ENV.__XERO_DEATH_BRIDGE_RUNTIME.Cleanup = function()
+    local rt = ENV.__XERO_DEATH_BRIDGE_RUNTIME
+    if not rt or rt.Alive == false then return end
+    rt.Alive = false
+
+    local function disconnectList(list)
+        for _, conn in ipairs(list or {}) do
+            pcall(function() conn:Disconnect() end)
+        end
+    end
+
+    disconnectList(rt.KillSignalConnections)
+    disconnectList(rt.LocalTeamConnections)
+
+    for _, list in pairs(rt.PlayerConnections or {}) do
+        disconnectList(list)
+    end
+
+    pcall(function() if rt.PlayerAddedConnection then rt.PlayerAddedConnection:Disconnect() end end)
+    pcall(function() if rt.PlayerRemovingConnection then rt.PlayerRemovingConnection:Disconnect() end end)
+
+    if rt.RestoreHidden then pcall(rt.RestoreHidden) end
+
+    if ENV.__XERO_DEATH_PROXY
+        and type(ENV.__XERO_DEATH_PROXY.Cleanup) == "function" then
+        pcall(ENV.__XERO_DEATH_PROXY.Cleanup)
+    end
+
+    local g = rt.Gui
+    rt.Gui = nil
+    if g and g.Parent then pcall(function() g:Destroy() end) end
+end
 local BASE = ENV.XERO_DEATH_FINAL_ROOT
     or "https://raw.githubusercontent.com/OnyxDevv/Onyx-web/main/death_effects_final"
 
@@ -3163,7 +3292,7 @@ end
 
 
 -- ============================================================
--- R32 · CURRENTCAMERA READ-ONLY VISUAL PROXY
+-- R33 · CURRENTCAMERA SINGLE-PLAY + LOCAL HIDE
 -- Same principle as XeroHub ESP: the real enemy is only a reference.
 -- We NEVER parent effect objects into the real Character and NEVER mutate
 -- its body properties. DeathEffectPreview runs on a CurrentCamera-local cloned proxy.
@@ -3179,6 +3308,7 @@ ENV.__XERO_DEATH_PROXY = {
     SourceByProxy = setmetatable({}, {__mode = "k"}),
     TemplateByHumanoid = setmetatable({}, {__mode = "k"}),
     TemplateBuilding = setmetatable({}, {__mode = "k"}),
+    LastMakeByHumanoid = setmetatable({}, {__mode = "k"}),
 }
 
 ENV.__XERO_DEATH_PROXY.EnsureRoot = function()
@@ -3218,11 +3348,17 @@ end
 ENV.__XERO_DEATH_PROXY.DestroyProxy = function(proxy)
     if not proxy then return end
     ENV.__XERO_DEATH_PROXY.DisconnectFollow(proxy)
+    local source = ENV.__XERO_DEATH_PROXY.SourceByProxy[proxy]
     ENV.__XERO_DEATH_PROXY.SourceByProxy[proxy] = nil
     cleanVictim(proxy)
     pcall(function()
         if proxy.Parent then proxy:Destroy() end
     end)
+    if source
+        and ENV.__XERO_DEATH_BRIDGE_RUNTIME
+        and ENV.__XERO_DEATH_BRIDGE_RUNTIME.RestoreCharacter then
+        pcall(ENV.__XERO_DEATH_BRIDGE_RUNTIME.RestoreCharacter, source)
+    end
 end
 
 ENV.__XERO_DEATH_PROXY.Clear = function()
@@ -3428,6 +3564,18 @@ ENV.__XERO_DEATH_PROXY.BuildTemplate = function(player, character, hum)
 end
 
 ENV.__XERO_DEATH_PROXY.Make = function(source, effectName, hum, player, deathPosition)
+    -- Global one-death gate. This sits in ENV intentionally: if two local kill
+    -- signals arrive for the same Humanoid, only the first caller gets a proxy.
+    -- It also blocks duplicate R32-style listeners that call this shared Make().
+    if hum then
+        local now = os.clock()
+        local previous = ENV.__XERO_DEATH_PROXY.LastMakeByHumanoid[hum]
+        if previous and now - previous < 2.0 then
+            return nil, "death visual ya creado para esta muerte"
+        end
+        ENV.__XERO_DEATH_PROXY.LastMakeByHumanoid[hum] = now
+    end
+
     local proxy
     local reason
 
@@ -3469,6 +3617,17 @@ ENV.__XERO_DEATH_PROXY.Make = function(source, effectName, hum, player, deathPos
             local pivot = proxy:GetPivot()
             proxy:PivotTo(CFrame.new(deathPosition) * (pivot - pivot.Position))
         end)
+    end
+
+    -- R33: once the replacement visual is already present at the exact pose, hide
+    -- the real Character ONLY through LocalTransparencyModifier. We do not touch
+    -- Transparency, CFrame, Humanoid, joints, physics, parenting, or server state.
+    -- This is the minimum local visibility write Roblox exposes; CurrentCamera
+    -- itself has no per-Character 3D masking API.
+    if source and source.Parent
+        and ENV.__XERO_DEATH_BRIDGE_RUNTIME
+        and ENV.__XERO_DEATH_BRIDGE_RUNTIME.HideCharacterLocal then
+        pcall(ENV.__XERO_DEATH_BRIDGE_RUNTIME.HideCharacterLocal, source)
     end
 
     -- Only the detached proxy receives death state / effect physics.
@@ -3757,6 +3916,7 @@ gui.Name = "XeroDeathNativeBridge"
 gui.ResetOnSpawn = false
 gui.IgnoreGuiInset = true
 gui.Parent = PlayerGui
+ENV.__XERO_DEATH_BRIDGE_RUNTIME.Gui = gui
 
 local frame = Instance.new("Frame")
 frame.Size = UDim2.fromOffset(430, 220)
@@ -3774,7 +3934,7 @@ local title = Instance.new("TextLabel")
 title.BackgroundTransparency = 1
 title.Position = UDim2.fromOffset(16, 12)
 title.Size = UDim2.new(1,-32,0,22)
-title.Text = "XERO · DEATH EFFECTS · CURRENTCAMERA R32"
+title.Text = "XERO · DEATH EFFECTS · CURRENTCAMERA R33"
 title.TextColor3 = Color3.fromRGB(245,245,245)
 title.Font = Enum.Font.GothamBold
 title.TextSize = 14
@@ -3840,7 +4000,9 @@ end
 local enabled = false
 local trackedHumanoids = setmetatable({}, {__mode = "k"})
 local playerConnections = {}
+ENV.__XERO_DEATH_BRIDGE_RUNTIME.PlayerConnections = playerConnections
 local localTeamConnections = {}
+ENV.__XERO_DEATH_BRIDGE_RUNTIME.LocalTeamConnections = localTeamConnections
 
 -- A death is NOT enough anymore. We keep it pending until we can attribute
 -- the elimination to LocalPlayer through a native killer tag, a local kill
@@ -3848,6 +4010,7 @@ local localTeamConnections = {}
 local pendingDeaths = {}
 local pendingByHumanoid = setmetatable({}, {__mode = "k"})
 local killSignalConnections = {}
+ENV.__XERO_DEATH_BRIDGE_RUNTIME.KillSignalConnections = killSignalConnections
 local hookedKillValues = setmetatable({}, {__mode = "k"})
 local hookedKillSounds = setmetatable({}, {__mode = "k"})
 local recentKillCredits = {}
@@ -4197,14 +4360,20 @@ local function triggerVictim(player, character, hum, proof)
         tostring(effectName) .. " → " .. tostring(player.Name) ..
         (proof and ("\n" .. tostring(proof)) or "")
 
-    -- Source is READ-ONLY. Make() copies current visuals or falls back to the
-    -- detached template captured while alive. No property is written to source.
+    -- Make() first builds the CurrentCamera replacement from the still-visible
+    -- Character, then locally hides the original only via LocalTransparencyModifier.
     local proxy, proxyErr =
         ENV.__XERO_DEATH_PROXY.Make(
             character, effectName, hum, player, deathPosition
         )
 
     if not proxy or not proxy.Parent then
+        if tostring(proxyErr or ""):find("ya creado", 1, true) then
+            status.Text =
+                "✓ Kill duplicado bloqueado\n" ..
+                tostring(effectName) .. " · no se repite VFX/sonido"
+            return true
+        end
         status.Text =
             "✕ Kill confirmado, no pude crear visual CurrentCamera.\n" ..
             tostring(proxyErr or "proxy no disponible")
@@ -4212,8 +4381,8 @@ local function triggerVictim(player, character, hum, proof)
     end
 
     status.Text =
-        "2/3 · VISUAL CURRENTCAMERA\n" ..
-        tostring(effectName) .. " · enemigo real intacto"
+        "2/3 · CLON CURRENTCAMERA + ORIGINAL OCULTO\n" ..
+        tostring(effectName) .. " · sólo LocalTransparencyModifier"
 
     local ok, result = pcall(function()
         return runNativeOnVictim(effectName, proxy, status)
@@ -4228,8 +4397,8 @@ local function triggerVictim(player, character, hum, proof)
     end
 
     status.Text =
-        "3/3 · EFECTO LOCAL EN CURRENTCAMERA\n" ..
-        tostring(effectName) .. " · 0 escrituras al enemigo"
+        "3/3 · SOLO CLON VISIBLE\n" ..
+        tostring(effectName) .. " · efecto ejecutado una sola vez"
 
     return true
 end
@@ -4327,10 +4496,10 @@ local function recordLocalKillSignal(source, count)
         "1/3 · TU KILL CONFIRMADO\n" ..
         tostring(source) .. " · buscando víctima/cuerpo..."
 
-    -- GunKill + Kills counter often fire for the same elimination. Do not
-    -- convert the second native confirmation into a credit for the next death.
-    if lastAcceptedSignalSource ~= source
-        and now - lastAcceptedSignalAt <= SIGNAL_DEDUPE_WINDOW then
+    -- R33 hard dedupe: Played + Playing + counter + killer tag can all describe
+    -- the SAME elimination. During this tiny window accept exactly one signal,
+    -- regardless of source text, so audio/VFX cannot be scheduled twice.
+    if now - lastAcceptedSignalAt <= SIGNAL_DEDUPE_WINDOW then
         return
     end
 
@@ -4671,8 +4840,8 @@ for _, propertyName in ipairs({"Team", "TeamColor", "Neutral"}) do
         LP:GetPropertyChangedSignal(propertyName):Connect(refreshAllTracked)
 end
 
-Players.PlayerAdded:Connect(hookPlayer)
-Players.PlayerRemoving:Connect(function(player)
+ENV.__XERO_DEATH_BRIDGE_RUNTIME.PlayerAddedConnection = Players.PlayerAdded:Connect(hookPlayer)
+ENV.__XERO_DEATH_BRIDGE_RUNTIME.PlayerRemovingConnection = Players.PlayerRemoving:Connect(function(player)
     local conns = playerConnections[player]
     if conns then
         for _, conn in ipairs(conns) do
@@ -4723,13 +4892,18 @@ toggle.MouseButton1Click:Connect(function()
         table.clear(recentKillCredits)
         table.clear(recentDeathModels)
         ENV.__XERO_DEATH_PROXY.Clear()
-        status.Text = "Desactivado · proxies locales limpiados."
+        if ENV.__XERO_DEATH_BRIDGE_RUNTIME.RestoreHidden then
+            pcall(ENV.__XERO_DEATH_BRIDGE_RUNTIME.RestoreHidden)
+        end
+        status.Text = "Desactivado · visuales locales limpiados y enemigo restaurado."
     end
 end)
 
 gui.Destroying:Connect(function()
-    if ENV.__XERO_DEATH_PROXY then
-        ENV.__XERO_DEATH_PROXY.Clear()
+    local rt = ENV.__XERO_DEATH_BRIDGE_RUNTIME
+    if rt and rt.Alive then
+        rt.Gui = nil
+        pcall(rt.Cleanup)
     end
 end)
 
@@ -4763,7 +4937,7 @@ UserInputService.InputChanged:Connect(function(input)
 end)
 
 print(
-    "[Xero Death Effects R32 CurrentCamera]",
+    "[Xero Death Effects R33 CurrentCamera]",
     #EFFECTS,
     "efectos ·",
     PRELOAD_STATS.loaded,

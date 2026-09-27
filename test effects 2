@@ -1,4 +1,4 @@
--- XeroHub | DUELS MURDERS VS SHERIFF | R56 CONSERVATIVE
+-- XeroHub | DUELS MURDERS VS SHERIFF | R58 CONSERVATIVE
 
 local SoundCatalogCore = {
     TARGET_SOUND_ID = "10209603",
@@ -7727,22 +7727,36 @@ ENV.__XERO_DEATH_BRIDGE_RUNTIME.HookMeleeTool = function(tool)
         rt.RecentMeleeAttackAt = os.clock()
         attackSerial += 1
         local serial = attackSerial
-        -- Touched may be absent for an already-overlapping knife. Query its actual
-        -- parts only during this attack, at most 20 times/sec; never scan players/frame.
+        -- Touched may be absent for an already-overlapping knife. Sample once in
+        -- the SAME Activated callback so HealthChanged(0) cannot arrive before local
+        -- melee attribution just because the monitoring thread was scheduled later.
+        -- Follow-up samples keep the original 20 Hz cadence during the short attack.
         local params = OverlapParams.new()
         params.FilterType = Enum.RaycastFilterType.Exclude
         params.FilterDescendantsInstances = {LP.Character, Workspace.CurrentCamera}
+
+        local function sampleKnifeOverlap()
+            if not rt.Alive or not enabled or serial ~= attackSerial
+                or tool.Parent ~= LP.Character then return end
+            for part in pairs(parts) do
+                if part.Parent and part:IsDescendantOf(tool) then
+                    local ok, hits = pcall(Workspace.GetPartsInPart, Workspace, part, params)
+                    if ok then
+                        for _, hit in ipairs(hits) do observe(hit) end
+                    end
+                end
+            end
+        end
+
+        -- Only latency fix: same-tick contact attribution for manual knife attacks.
+        sampleKnifeOverlap()
+
         task.spawn(function()
             while rt.Alive and enabled and serial == attackSerial
                 and tool.Parent == LP.Character
                 and os.clock() - rt.RecentMeleeAttackAt <= .95 do
-                for part in pairs(parts) do
-                    if part.Parent and part:IsDescendantOf(tool) then
-                        local ok, hits = pcall(Workspace.GetPartsInPart, Workspace, part, params)
-                        if ok then for _, hit in ipairs(hits) do observe(hit) end end
-                    end
-                end
                 task.wait(.05)
+                sampleKnifeOverlap()
             end
         end)
     end)
@@ -11997,6 +12011,17 @@ runtime.TargetPartCache = {
     SilentAim = setmetatable({}, {__mode = "k"}),
 }
 
+-- R58 CONSERVATIVE: el rig invalida este caché por eventos (ChildAdded/ChildRemoved).
+-- Así CollectTargetParts no tiene que recorrer y validar cada referencia ~33 veces/s.
+-- No añade listeners: reutiliza los que getCharCore ya mantiene por Character.
+function runtime.InvalidateTargetPartCache(char)
+    if not char then return end
+    local autoCache = runtime.TargetPartCache.AutoShoot
+    local silentCache = runtime.TargetPartCache.SilentAim
+    if autoCache then autoCache[char] = nil end
+    if silentCache then silentCache[char] = nil end
+end
+
 function runtime.RebuildTargetPartNameCache(mode)
     local selected = runtime.TargetSelections[mode] or {}
     local result = runtime.TargetPartNameCache[mode] or {}
@@ -12074,19 +12099,9 @@ function runtime.CollectTargetParts(char, mode)
     local version = runtime.TargetSelectionVersion[mode] or 1
     local cached = modeCache and modeCache[char]
     if cached and cached.Version == version then
-        local parts = cached.Parts
-        local valid = parts and #parts > 0
-        if valid then
-            for i = 1, #parts do
-                local part = parts[i]
-                if not part or part.Parent ~= char then
-                    valid = false
-                    break
-                end
-            end
-        end
-        if valid then return parts end
-        modeCache[char] = nil
+        -- R58: validez garantizada por invalidación event-driven del Character.
+        -- Eliminamos el recorrido de todas las partes del hot path de Silent Aim.
+        return cached.Parts
     end
 
     -- Cache miss sólo ocurre al cambiar selección o cuando Duels reconstruye el rig.
@@ -20686,10 +20701,16 @@ local function getCharCore(char)
     -- en ESP/Aimbot varias veces por frame.
     core.ForceFieldAddedConnection = runtime.Track(char.ChildAdded:Connect(function(child)
         if child:IsA("ForceField") then core.HasForceField = true end
+        if child:IsA("BasePart") and runtime.InvalidateTargetPartCache then
+            runtime.InvalidateTargetPartCache(char)
+        end
     end))
     core.ForceFieldRemovedConnection = runtime.Track(char.ChildRemoved:Connect(function(child)
         if child:IsA("ForceField") then
             core.HasForceField = char:FindFirstChildOfClass("ForceField") ~= nil
+        end
+        if child:IsA("BasePart") and runtime.InvalidateTargetPartCache then
+            runtime.InvalidateTargetPartCache(char)
         end
     end))
     core.AncestryConnection = runtime.Track(char.AncestryChanged:Connect(function(_, parent)

@@ -1,4 +1,4 @@
--- XeroHub | DUELS MURDERS VS SHERIFF | Kevin tests
+-- XeroHub | DUELS MURDERS VS SHERIFF | Kevin test
 
 local SoundCatalogCore = {
     TARGET_SOUND_ID = "10209603",
@@ -361,9 +361,13 @@ runtimeEnv.__ILUNX_RUNTIME = runtime
 runtime.TeamCorpseCache = setmetatable({}, {__mode = "k"})
 runtime.RecentTeammateDeaths = {}
 runtime.TeamCorpseGeneration = 0
+runtime.TeamCorpseProtectionUntil = 0
+runtime.TeamCorpseProtectionSerial = 0
 
 runtime.ClearTeamCorpseCache = function()
     runtime.TeamCorpseGeneration = (runtime.TeamCorpseGeneration or 0) + 1
+    runtime.TeamCorpseProtectionSerial = (runtime.TeamCorpseProtectionSerial or 0) + 1
+    runtime.TeamCorpseProtectionUntil = 0
 
     for model, entry in pairs(runtime.TeamCorpseCache or {}) do
         if entry then
@@ -441,6 +445,10 @@ runtime.RegisterTeamCorpse = function(model, userId)
     local existing = runtime.TeamCorpseCache[model]
     if existing then
         existing.UserId = userId
+        existing.ActiveUntil = math.max(
+            existing.ActiveUntil or 0,
+            runtime.TeamCorpseProtectionUntil or 0
+        )
         return existing
     end
 
@@ -448,48 +456,110 @@ runtime.RegisterTeamCorpse = function(model, userId)
         Model = model,
         UserId = userId,
         Generation = runtime.TeamCorpseGeneration or 0,
-        ActiveUntil = 0,
+        ActiveUntil = runtime.TeamCorpseProtectionUntil or 0,
         Parts = setmetatable({}, {__mode = "k"}),
         Meshes = setmetatable({}, {__mode = "k"}),
         Images = setmetatable({}, {__mode = "k"}),
         Sounds = setmetatable({}, {__mode = "k"}),
         MutedSounds = setmetatable({}, {__mode = "k"}),
+        Restoring = setmetatable({}, {__mode = "k"}),
         Connections = {},
     }
 
     local function active()
         return runtime.Alive
             and entry.Generation == (runtime.TeamCorpseGeneration or 0)
-            and os.clock() <= (entry.ActiveUntil or 0)
+            and os.clock() <= math.max(
+                entry.ActiveUntil or 0,
+                runtime.TeamCorpseProtectionUntil or 0
+            )
+    end
+
+    local function withRestoreLock(obj, fn)
+        if entry.Restoring[obj] then return end
+        entry.Restoring[obj] = true
+        pcall(fn)
+        entry.Restoring[obj] = nil
+    end
+
+    local function restorePart(part, data)
+        if not active() or not part or not part.Parent or entry.Restoring[part] then return end
+        withRestoreLock(part, function()
+            part.Color = data.Color
+            part.Material = data.Material
+            part.Transparency = data.Transparency
+            part.Reflectance = data.Reflectance
+            part.Size = data.Size
+            if part:IsA("MeshPart") and data.TextureID ~= nil then
+                part.TextureID = data.TextureID
+            end
+        end)
+    end
+
+    local function restoreMesh(mesh, data)
+        if not active() or not mesh or not mesh.Parent or entry.Restoring[mesh] then return end
+        withRestoreLock(mesh, function()
+            mesh.MeshId = data.MeshId
+            mesh.TextureId = data.TextureId
+            mesh.Scale = data.Scale
+            mesh.VertexColor = data.VertexColor
+        end)
+    end
+
+    local function restoreImage(obj, data)
+        if not active() or not obj or not obj.Parent or entry.Restoring[obj] then return end
+        withRestoreLock(obj, function()
+            obj.Texture = data.Texture
+            obj.Transparency = data.Transparency
+            obj.Color3 = data.Color3
+        end)
     end
 
     local function watchSound(sound)
         if not sound or not sound:IsA("Sound") or entry.Sounds[sound] ~= nil then return end
 
-        local volume = 1
-        pcall(function() volume = sound.Volume end)
-        entry.Sounds[sound] = volume
+        local originalVolume = 1
+        pcall(function() originalVolume = sound.Volume end)
+        entry.Sounds[sound] = originalVolume
 
-        local conn = sound.Played:Connect(function()
-            if not active() or not sound.Parent then return end
-            local wasPlaying = false
-            pcall(function() wasPlaying = sound.Playing or sound.IsPlaying end)
-
-            -- During OUR effect window, any new/replayed audio from an old teammate
-            -- corpse is foreign spill. Silence it immediately.
-            if wasPlaying then
-                if entry.MutedSounds[sound] == nil then
-                    entry.MutedSounds[sound] = entry.Sounds[sound] or volume
-                end
-                pcall(function()
-                    sound.Volume = 0
-                    sound.Looped = false
-                    sound:Stop()
-                end)
+        -- If this corpse appears LATE while our current death effect is already
+        -- running, silence idle corpse audio immediately before it can replay.
+        if active() then
+            local playing = false
+            pcall(function() playing = sound.Playing or sound.IsPlaying end)
+            if not playing then
+                entry.MutedSounds[sound] = originalVolume
+                pcall(function() sound.Volume = 0 end)
             end
+        end
+
+        entry.Connections[#entry.Connections + 1] = sound.Played:Connect(function()
+            if not active() or not sound.Parent then return end
+
+            if entry.MutedSounds[sound] == nil then
+                entry.MutedSounds[sound] = entry.Sounds[sound] or originalVolume
+            end
+
+            pcall(function()
+                sound.Volume = 0
+                sound.Looped = false
+                sound:Stop()
+            end)
         end)
 
-        entry.Connections[#entry.Connections + 1] = conn
+        entry.Connections[#entry.Connections + 1] =
+            sound:GetPropertyChangedSignal("Volume"):Connect(function()
+                if active() and sound.Parent and not entry.Restoring[sound] then
+                    if entry.MutedSounds[sound] == nil then
+                        entry.MutedSounds[sound] = entry.Sounds[sound] or originalVolume
+                    end
+                    if sound.Volume ~= 0 then
+                        entry.Restoring[sound] = true
+                        pcall(function() sound.Volume = 0 end)
+                        entry.Restoring[sound] = nil
+                    end
+                end
+            end)
     end
 
     local function capture(obj)
@@ -505,6 +575,20 @@ runtime.RegisterTeamCorpse = function(model, userId)
                     if obj:IsA("MeshPart") then data.TextureID = obj.TextureID end
                 end)
                 entry.Parts[obj] = data
+
+                -- Event-driven restore: zero scheduled full-corpse passes.
+                for _, prop in ipairs({"Color","Material","Transparency","Reflectance","Size"}) do
+                    entry.Connections[#entry.Connections + 1] =
+                        obj:GetPropertyChangedSignal(prop):Connect(function()
+                            restorePart(obj, data)
+                        end)
+                end
+                if obj:IsA("MeshPart") then
+                    entry.Connections[#entry.Connections + 1] =
+                        obj:GetPropertyChangedSignal("TextureID"):Connect(function()
+                            restorePart(obj, data)
+                        end)
+                end
             end
 
         elseif obj:IsA("SpecialMesh") then
@@ -517,6 +601,13 @@ runtime.RegisterTeamCorpse = function(model, userId)
                     data.VertexColor = obj.VertexColor
                 end)
                 entry.Meshes[obj] = data
+
+                for _, prop in ipairs({"MeshId","TextureId","Scale","VertexColor"}) do
+                    entry.Connections[#entry.Connections + 1] =
+                        obj:GetPropertyChangedSignal(prop):Connect(function()
+                            restoreMesh(obj, data)
+                        end)
+                end
             end
 
         elseif obj:IsA("Decal") or obj:IsA("Texture") then
@@ -528,6 +619,13 @@ runtime.RegisterTeamCorpse = function(model, userId)
                     data.Color3 = obj.Color3
                 end)
                 entry.Images[obj] = data
+
+                for _, prop in ipairs({"Texture","Transparency","Color3"}) do
+                    entry.Connections[#entry.Connections + 1] =
+                        obj:GetPropertyChangedSignal(prop):Connect(function()
+                            restoreImage(obj, data)
+                        end)
+                end
             end
 
         elseif obj:IsA("Sound") then
@@ -535,7 +633,7 @@ runtime.RegisterTeamCorpse = function(model, userId)
         end
     end
 
-    -- One single snapshot when the teammate corpse enters the cache.
+    -- One snapshot when the corpse is cached. After that, all protection is event-driven.
     for _, obj in ipairs(model:GetDescendants()) do
         capture(obj)
     end
@@ -555,8 +653,6 @@ runtime.RegisterTeamCorpse = function(model, userId)
             return
         end
 
-        -- Outside our effect window, update baseline normally. This lets DUELS finish
-        -- constructing/reparenting the corpse without us fighting the game.
         capture(obj)
     end)
 
@@ -565,6 +661,13 @@ runtime.RegisterTeamCorpse = function(model, userId)
             for _, conn in ipairs(entry.Connections) do
                 pcall(function() conn:Disconnect() end)
             end
+
+            for sound, volume in pairs(entry.MutedSounds) do
+                if sound and sound.Parent then
+                    pcall(function() sound.Volume = volume end)
+                end
+            end
+
             runtime.TeamCorpseCache[model] = nil
         end
     end)
@@ -676,17 +779,25 @@ end
 
 runtime.ArmTeamCorpseProtection = function(duration)
     duration = math.max(0.25, tonumber(duration) or 2.70)
-    local untilAt = os.clock() + duration
-    local activeEntries = {}
 
+    local now = os.clock()
+    local untilAt = now + duration
+    runtime.TeamCorpseProtectionUntil = math.max(
+        runtime.TeamCorpseProtectionUntil or 0,
+        untilAt
+    )
+    runtime.TeamCorpseProtectionSerial = (runtime.TeamCorpseProtectionSerial or 0) + 1
+    local serial = runtime.TeamCorpseProtectionSerial
+
+    -- Cheap pass over the small teammate-corpse cache only.
     for model, entry in pairs(runtime.TeamCorpseCache or {}) do
         if model and model.Parent and entry
             and entry.Generation == (runtime.TeamCorpseGeneration or 0) then
 
             entry.ActiveUntil = math.max(entry.ActiveUntil or 0, untilAt)
-            activeEntries[#activeEntries + 1] = entry
 
-            -- Existing idle sounds are muted BEFORE Preview.play. No world scan.
+            -- Pre-mute idle corpse sounds so delayed Preview spill cannot leak even
+            -- one frame. Property listeners handle everything else on demand.
             for sound, originalVolume in pairs(entry.Sounds) do
                 if sound and sound.Parent then
                     local playing = false
@@ -702,67 +813,18 @@ runtime.ArmTeamCorpseProtection = function(duration)
         end
     end
 
-    if #activeEntries == 0 then return end
-
-    local function restoreAppearance()
-        for _, entry in ipairs(activeEntries) do
-            local model = entry.Model
-            if model and model.Parent then
-                for part, data in pairs(entry.Parts) do
-                    if part and part.Parent then
-                        pcall(function()
-                            part.Color = data.Color
-                            part.Material = data.Material
-                            part.Transparency = data.Transparency
-                            part.Reflectance = data.Reflectance
-                            part.Size = data.Size
-                            if part:IsA("MeshPart") and data.TextureID ~= nil then
-                                part.TextureID = data.TextureID
-                            end
-                        end)
-                    end
-                end
-
-                for mesh, data in pairs(entry.Meshes) do
-                    if mesh and mesh.Parent then
-                        pcall(function()
-                            mesh.MeshId = data.MeshId
-                            mesh.TextureId = data.TextureId
-                            mesh.Scale = data.Scale
-                            mesh.VertexColor = data.VertexColor
-                        end)
-                    end
-                end
-
-                for imageObj, data in pairs(entry.Images) do
-                    if imageObj and imageObj.Parent then
-                        pcall(function()
-                            imageObj.Texture = data.Texture
-                            imageObj.Transparency = data.Transparency
-                            imageObj.Color3 = data.Color3
-                        end)
-                    end
-                end
-            end
-        end
-    end
-
-    -- No CFrame/velocity restore: corpse physics remains native.
-    for _, delayTime in ipairs({0, .05, .16, .38, .78, 1.35, 2.10}) do
-        if delayTime <= duration then
-            task.delay(delayTime, function()
-                if runtime.Alive then restoreAppearance() end
-            end)
-        end
-    end
-
-    task.delay(duration + .05, function()
+    task.delay(duration + .06, function()
         if not runtime.Alive then return end
-        restoreAppearance()
 
-        local now = os.clock()
-        for _, entry in ipairs(activeEntries) do
-            if now >= (entry.ActiveUntil or 0) then
+        -- A newer kill extended/restarted the window; let that newer timer own restore.
+        if serial ~= runtime.TeamCorpseProtectionSerial then return end
+        if os.clock() < (runtime.TeamCorpseProtectionUntil or 0) then return end
+
+        runtime.TeamCorpseProtectionUntil = 0
+
+        for model, entry in pairs(runtime.TeamCorpseCache or {}) do
+            if model and model.Parent and entry then
+                entry.ActiveUntil = 0
                 for sound, volume in pairs(entry.MutedSounds) do
                     if sound and sound.Parent then
                         pcall(function() sound.Volume = volume end)

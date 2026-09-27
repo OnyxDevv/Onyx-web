@@ -1,4 +1,4 @@
--- XeroHub | DUELS MURDERS VS SHERIFF | Kevin PRUEBAS
+-- XeroHub | DUELS MURDERS VS SHERIFF | Kevin pruebas
 
 local SoundCatalogCore = {
     TARGET_SOUND_ID = "10209603",
@@ -5423,46 +5423,36 @@ end
 -- R44 · READY PROXY POOL
 -- El clone pesado ocurre mientras el enemigo sigue vivo. En el kill sólo consumimos
 -- un proxy detached ya sanitizado y sincronizamos transforms baratos.
+-- R53: resolve the pose graph during template preparation, never per frame.
 ENV.__XERO_DEATH_PROXY.SyncReadyProxyPose = function(proxy, source, info)
     if not proxy or not source then return end
-
-    local byKey, counts = {}, {}
-    local function key(obj)
-        return tostring(obj.ClassName) .. "\0" .. tostring(obj.Name)
+    local state = ENV.__XERO_DEATH_PROXY
+    local meta = state.ReadyProxyMeta[proxy]
+    if not meta or meta.PoseSource ~= source then
+        meta = state.BuildReadyMeta(proxy, source)
     end
-
-    for _, child in ipairs(source:GetChildren()) do
-        local k = key(child)
-        counts[k] = (counts[k] or 0) + 1
-        byKey[k .. "#" .. tostring(counts[k])] = child
-    end
-
-    local proxyCounts = {}
-    for _, child in ipairs(proxy:GetChildren()) do
-        local k = key(child)
-        proxyCounts[k] = (proxyCounts[k] or 0) + 1
-        local src = byKey[k .. "#" .. tostring(proxyCounts[k])]
-
-        if src and child:IsA("BasePart") and src:IsA("BasePart") then
+    for _, pair in ipairs(meta.PosePairs) do
+        local dst, src = pair[1], pair[2]
+        if dst.Parent and src.Parent and dst:IsDescendantOf(proxy)
+            and src:IsDescendantOf(source) then
             pcall(function()
-                child.CFrame = src.CFrame
-                child.AssemblyLinearVelocity = src.AssemblyLinearVelocity
-                child.AssemblyAngularVelocity = src.AssemblyAngularVelocity
+                if dst:IsA("BasePart") then
+                    dst.CFrame = src.CFrame
+                    dst.AssemblyLinearVelocity = src.AssemblyLinearVelocity
+                    dst.AssemblyAngularVelocity = src.AssemblyAngularVelocity
+                elseif dst:IsA("Motor6D") then
+                    dst.C0 = src.C0
+                    dst.C1 = src.C1
+                    dst.Transform = src.Transform
+                elseif dst:IsA("Weld") then
+                    dst.C0 = src.C0
+                    dst.C1 = src.C1
+                end
             end)
-
-        elseif src and child:IsA("Accessory") and src:IsA("Accessory") then
-            local sh = src:FindFirstChild("Handle")
-            local dh = child:FindFirstChild("Handle")
-            if sh and dh and sh:IsA("BasePart") and dh:IsA("BasePart") then
-                pcall(function()
-                    dh.CFrame = sh.CFrame
-                    dh.AssemblyLinearVelocity = sh.AssemblyLinearVelocity
-                    dh.AssemblyAngularVelocity = sh.AssemblyAngularVelocity
-                end)
-            end
         end
     end
-
+    -- Apply grips now, without waiting for a physics step under lag.
+    state.AlignNestedVisuals(proxy)
     if info and typeof(info.lastHitPivot) == "CFrame" then
         pcall(function() proxy:PivotTo(info.lastHitPivot) end)
     elseif source.Parent then
@@ -5470,34 +5460,111 @@ ENV.__XERO_DEATH_PROXY.SyncReadyProxyPose = function(proxy, source, info)
     end
 end
 
+ENV.__XERO_DEATH_PROXY.AlignNestedVisuals = function(proxy)
+    local meta = ENV.__XERO_DEATH_PROXY.ReadyProxyMeta[proxy]
+    if not meta then return end
+    table.clear(meta.AttachedParts)
+    local queue, visited = {}, {}
+    for _, part in ipairs(meta.Roots) do
+        if part.Parent == proxy then
+            visited[part] = true
+            queue[#queue + 1] = part
+        end
+    end
+    local i = 1
+    while i <= #queue do
+        local anchor = queue[i]
+        i = i + 1
+        for _, edge in ipairs(meta.Edges[anchor] or {}) do
+            local part, joint = edge.Part, edge.Joint
+            if not visited[part] and part.Parent and joint.Parent
+                and part:IsDescendantOf(proxy) and joint:IsDescendantOf(proxy)
+                and joint.Part0 == edge.Part0 and joint.Part1 == edge.Part1 then
+                local ok = pcall(function()
+                    local offset = edge.Offset
+                    if joint:IsA("Motor6D") then
+                        offset = joint.C0 * joint.Transform * joint.C1:Inverse()
+                    elseif joint:IsA("JointInstance") then
+                        offset = joint.C0 * joint.C1:Inverse()
+                    end
+                    if edge.Reverse then offset = offset:Inverse() end
+                    part.CFrame = anchor.CFrame * offset
+                end)
+                if ok then
+                    visited[part] = true
+                    meta.AttachedParts[part] = true
+                    queue[#queue + 1] = part
+                end
+            end
+        end
+    end
+end
 
--- R45 · conservative ready-proxy metadata cache.
--- Only caches references to descendants already present in the detached ready proxy.
--- No timings, physics or visual behavior are changed.
-ENV.__XERO_DEATH_PROXY.BuildReadyMeta = function(proxy)
+ENV.__XERO_DEATH_PROXY.BuildReadyMeta = function(proxy, source)
     if not proxy then return nil end
-
     local meta = {
-        Parts = {},
-        Motors = {},
-        Humanoid = nil,
+        Parts = {}, Motors = {}, Humanoid = nil,
+        PoseSource = source, PosePairs = {}, Roots = {}, Edges = {}, AttachedParts = {},
     }
-
+    local bodyNames = {
+        HumanoidRootPart=true, Head=true, Torso=true, UpperTorso=true, LowerTorso=true,
+        LeftUpperArm=true, LeftLowerArm=true, LeftHand=true,
+        RightUpperArm=true, RightLowerArm=true, RightHand=true,
+        LeftUpperLeg=true, LeftLowerLeg=true, LeftFoot=true,
+        RightUpperLeg=true, RightLowerLeg=true, RightFoot=true,
+        ["Left Arm"]=true, ["Right Arm"]=true, ["Left Leg"]=true, ["Right Leg"]=true,
+    }
     local descendants = proxy:GetDescendants()
     for _, obj in ipairs(descendants) do
         if obj:IsA("BasePart") then
             meta.Parts[#meta.Parts + 1] = obj
+            if obj.Parent == proxy and bodyNames[obj.Name] then
+                meta.Roots[#meta.Roots + 1] = obj
+            end
         elseif obj:IsA("Motor6D") then
             meta.Motors[#meta.Motors + 1] = obj
         elseif not meta.Humanoid and obj:IsA("Humanoid") then
             meta.Humanoid = obj
         end
+        if obj:IsA("JointInstance") or obj:IsA("WeldConstraint") then
+            local p0, p1 = obj.Part0, obj.Part1
+            if p0 and p1 and p0:IsDescendantOf(proxy) and p1:IsDescendantOf(proxy) then
+                local offset = p0.CFrame:ToObjectSpace(p1.CFrame)
+                meta.Edges[p0] = meta.Edges[p0] or {}
+                meta.Edges[p1] = meta.Edges[p1] or {}
+                meta.Edges[p0][#meta.Edges[p0] + 1] = {
+                    Part = p1, Joint = obj, Part0 = p0, Part1 = p1, Offset = offset,
+                }
+                meta.Edges[p1][#meta.Edges[p1] + 1] = {
+                    Part = p0, Joint = obj, Part0 = p0, Part1 = p1, Offset = offset, Reverse = true,
+                }
+            end
+        end
     end
-
-    if not meta.Humanoid then
-        meta.Humanoid = proxy:FindFirstChildOfClass("Humanoid")
+    if source then
+        local function pairTrees(dst, src)
+            local sourceByKey, counts = {}, {}
+            for _, child in ipairs(src:GetChildren()) do
+                local key = child.ClassName .. "\0" .. child.Name
+                counts[key] = (counts[key] or 0) + 1
+                sourceByKey[key .. "#" .. counts[key]] = child
+            end
+            local seen = {}
+            for _, child in ipairs(dst:GetChildren()) do
+                local key = child.ClassName .. "\0" .. child.Name
+                seen[key] = (seen[key] or 0) + 1
+                local original = sourceByKey[key .. "#" .. seen[key]]
+                if original then
+                    if child:IsA("BasePart") or child:IsA("Motor6D") or child:IsA("Weld") then
+                        meta.PosePairs[#meta.PosePairs + 1] = {child, original}
+                    end
+                    pairTrees(child, original)
+                end
+            end
+        end
+        pairTrees(proxy, source)
     end
-
+    if not meta.Humanoid then meta.Humanoid = proxy:FindFirstChildOfClass("Humanoid") end
     ENV.__XERO_DEATH_PROXY.ReadyProxyMeta[proxy] = meta
     return meta
 end
@@ -5533,7 +5600,7 @@ ENV.__XERO_DEATH_PROXY.BuildTemplate = function(player, character, hum, forceRef
                 ready.Name = "XeroReadyDeathProxy_" .. tostring(player and player.Name or "Enemy")
                 ready.Parent = nil
                 ENV.__XERO_DEATH_PROXY.Sanitize(ready)
-                ENV.__XERO_DEATH_PROXY.BuildReadyMeta(ready)
+                ENV.__XERO_DEATH_PROXY.BuildReadyMeta(ready, character)
             end
 
             local oldReady = ENV.__XERO_DEATH_PROXY.ReadyProxyByHumanoid[hum]
@@ -5601,7 +5668,9 @@ ENV.__XERO_DEATH_PROXY.CopySourceMotion = function(proxy, source, effectName, in
         pcall(function() proxy:SetAttribute("XeroDeathFrostbitePivot", proxy:GetPivot()) end)
         for _, part in ipairs(cachedParts or proxy:GetDescendants()) do
             if part:IsA("BasePart") then
+                local meta = ENV.__XERO_DEATH_PROXY.ReadyProxyMeta[proxy]
                 local accessoryPart = part:FindFirstAncestorOfClass("Accessory") ~= nil
+                    or (meta and meta.AttachedParts[part] == true)
                 pcall(function()
                     part.AssemblyLinearVelocity = Vector3.zero
                     part.AssemblyAngularVelocity = Vector3.zero
@@ -5763,13 +5832,17 @@ ENV.__XERO_DEATH_PROXY.ReapplyReaction = function(proxy, effectName)
     local lower = string.lower(tostring(effectName or ""))
     if string.find(lower, "frostbite", 1, true)
         or string.find(lower, "hypo", 1, true) then
+        -- One post-render pass restores grips if native body pose changed.
+        ENV.__XERO_DEATH_PROXY.AlignNestedVisuals(proxy)
         local lockedPivot = proxy:GetAttribute("XeroDeathFrostbitePivot")
         if typeof(lockedPivot) == "CFrame" then
             pcall(function() proxy:PivotTo(lockedPivot) end)
         end
         for _, part in ipairs(proxy:GetDescendants()) do
             if part:IsA("BasePart") then
+                local meta = ENV.__XERO_DEATH_PROXY.ReadyProxyMeta[proxy]
                 local accessoryPart = part:FindFirstAncestorOfClass("Accessory") ~= nil
+                    or (meta and meta.AttachedParts[part] == true)
                 pcall(function()
                     part.AssemblyLinearVelocity = Vector3.zero
                     part.AssemblyAngularVelocity = Vector3.zero
@@ -5943,13 +6016,14 @@ ENV.__XERO_DEATH_PROXY.Make = function(source, effectName, hum, player, deathPos
     if ready and not ready.Parent then
         state.ReadyProxyByHumanoid[hum] = nil
         proxy = ready
-        if source and source.Parent then
-            state.SyncReadyProxyPose(proxy, source, info)
-        end
     end
 
-    -- Venom needs an intact rig; a melee death can already have removed joints.
-    if not proxy and string.find(string.lower(tostring(effectName)), "venom", 1, true) then
+    -- Frozen effects need the pre-death rigid offsets too: after lag, a fresh
+    -- corpse snapshot can already contain a detached weapon/removed grip.
+    local needsIntactPose = effectName == "Freeze" or effectName == "Frostbite"
+        or string.find(string.lower(tostring(effectName)), "hypo", 1, true)
+        or string.find(string.lower(tostring(effectName)), "venom", 1, true)
+    if not proxy and needsIntactPose then
         local template = hum and ENV.__XERO_DEATH_PROXY.TemplateByHumanoid[hum]
         if template then
             local ok, clone = pcall(function() return template:Clone() end)
@@ -5979,6 +6053,13 @@ ENV.__XERO_DEATH_PROXY.Make = function(source, effectName, hum, player, deathPos
 
     if proxy:GetAttribute("XeroDeathSanitized") ~= true then
         ENV.__XERO_DEATH_PROXY.Sanitize(proxy)
+    end
+    -- All paths (ready, fresh and fallback) resolve the same pose once.
+    if source then
+        state.SyncReadyProxyPose(proxy, source, info)
+    elseif not state.ReadyProxyMeta[proxy] then
+        state.BuildReadyMeta(proxy)
+        state.AlignNestedVisuals(proxy)
     end
     proxy:SetAttribute("XeroRepairedAccessories", state.RepairAccessoryJoints(
         proxy, hum and state.TemplateByHumanoid[hum] or nil

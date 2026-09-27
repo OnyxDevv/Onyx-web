@@ -1,4 +1,4 @@
--- XeroHub | DUELS MURDERS VS SHERIFF | Kevin PRUEBAS
+-- XeroHub | DUELS MURDERS VS SHERIFF | Kevin test
 
 local SoundCatalogCore = {
     TARGET_SOUND_ID = "10209603",
@@ -353,57 +353,34 @@ end
 runtimeEnv.__ILUNX_RUNTIME = runtime
 
 -- ==========================================================
--- R50 · ROUND CORPSE CACHE
--- Event-driven cache keyed by the actual corpse Model.
--- Expensive descendant capture happens ONCE when any player corpse appears,
--- not every time LocalPlayer gets a kill.
--- ==========================================================
-runtime.TeamCorpseCache = setmetatable({}, {__mode = "k"})
+-- R52 · ROUND CORPSE METADATA CACHE (READ-ONLY)
+-- We only remember corpse identity/position. We NEVER write properties, attach
+-- listeners that restore properties, mute sounds, or alter physics on old bodies.
+runtime.RoundCorpseCache = setmetatable({}, {__mode = "k"})
+runtime.TeamCorpseCache = runtime.RoundCorpseCache -- compatibility with older code
 runtime.RecentRoundDeaths = {}
-runtime.TeamCorpseGeneration = 0
-runtime.TeamCorpseProtectionUntil = 0
-runtime.TeamCorpseProtectionSerial = 0
 
 runtime.ClearTeamCorpseCache = function()
-    runtime.TeamCorpseGeneration = (runtime.TeamCorpseGeneration or 0) + 1
-    runtime.TeamCorpseProtectionSerial = (runtime.TeamCorpseProtectionSerial or 0) + 1
-    runtime.TeamCorpseProtectionUntil = 0
-    runtime.TeamCorpseProtectionExemptUserId = nil
-
-    for model, entry in pairs(runtime.TeamCorpseCache or {}) do
-        if entry then
-            for _, conn in ipairs(entry.Connections or {}) do
-                pcall(function() conn:Disconnect() end)
-            end
-
-            for sound, volume in pairs(entry.MutedSounds or {}) do
-                if sound and sound.Parent then
-                    pcall(function() sound.Volume = volume end)
-                end
-            end
-        end
-        runtime.TeamCorpseCache[model] = nil
-    end
-
     table.clear(runtime.RecentRoundDeaths)
+    for model in pairs(runtime.RoundCorpseCache) do
+        runtime.RoundCorpseCache[model] = nil
+    end
 end
 
-local ROUND_CORPSE_BLOCK_CLASSES = {
-    ParticleEmitter = true,
-    Beam = true,
-    Trail = true,
-    Smoke = true,
-    Fire = true,
-    Sparkles = true,
-    Highlight = true,
-    Sound = true,
-}
+local function roundCorpsePosition(model)
+    if not model then return nil end
+    local root = model:FindFirstChild("HumanoidRootPart", true)
+        or model:FindFirstChild("UpperTorso", true)
+        or model:FindFirstChild("Torso", true)
+        or model:FindFirstChild("Head", true)
+    if root and root:IsA("BasePart") then return root.Position end
+    local ok, pivot = pcall(function() return model:GetPivot() end)
+    return ok and pivot.Position or nil
+end
 
 local function roundCorpseLooksLikeBody(model)
     if not model or not model:IsA("Model") or not model.Parent then return false end
-
-    local bodyParts = 0
-    local totalParts = 0
+    local bodyParts, totalParts = 0, 0
     for _, obj in ipairs(model:GetDescendants()) do
         if obj:IsA("BasePart") then
             totalParts += 1
@@ -418,281 +395,35 @@ local function roundCorpseLooksLikeBody(model)
             end
         end
     end
-
     return bodyParts >= 3 and totalParts >= 4
-end
-
-local function roundCorpsePosition(model)
-    if not model then return nil end
-    local root = model:FindFirstChild("HumanoidRootPart", true)
-        or model:FindFirstChild("UpperTorso", true)
-        or model:FindFirstChild("Torso", true)
-        or model:FindFirstChild("Head", true)
-
-    if root and root:IsA("BasePart") then return root.Position end
-
-    local ok, pivot = pcall(function() return model:GetPivot() end)
-    return ok and pivot.Position or nil
 end
 
 runtime.RegisterTeamCorpse = function(model, userId)
     if not runtime.Alive or not model or not model:IsA("Model") or not model.Parent then
         return nil
     end
-
     userId = tonumber(userId)
     if not userId then return nil end
 
-    local existing = runtime.TeamCorpseCache[model]
-    if existing then
-        existing.UserId = userId
-        if tonumber(userId) ~= tonumber(runtime.TeamCorpseProtectionExemptUserId) then
-            existing.ActiveUntil = math.max(
-                existing.ActiveUntil or 0,
-                runtime.TeamCorpseProtectionUntil or 0
-            )
-        end
-        return existing
+    local entry = runtime.RoundCorpseCache[model]
+    if entry then
+        entry.UserId = userId
+        return entry
     end
 
-    local entry = {
+    entry = {
         Model = model,
         UserId = userId,
-        Generation = runtime.TeamCorpseGeneration or 0,
-        ActiveUntil = (
-            tonumber(userId) ~= tonumber(runtime.TeamCorpseProtectionExemptUserId)
-            and (runtime.TeamCorpseProtectionUntil or 0)
-            or 0
-        ),
-        Parts = setmetatable({}, {__mode = "k"}),
-        Meshes = setmetatable({}, {__mode = "k"}),
-        Images = setmetatable({}, {__mode = "k"}),
-        Sounds = setmetatable({}, {__mode = "k"}),
-        MutedSounds = setmetatable({}, {__mode = "k"}),
-        Restoring = setmetatable({}, {__mode = "k"}),
-        Connections = {},
+        Position = roundCorpsePosition(model),
+        At = os.clock(),
     }
-
-    local function active()
-        if not runtime.Alive
-            or entry.Generation ~= (runtime.TeamCorpseGeneration or 0) then
-            return false
-        end
-
-        local globalUntil = runtime.TeamCorpseProtectionUntil or 0
-        if tonumber(entry.UserId) == tonumber(runtime.TeamCorpseProtectionExemptUserId) then
-            globalUntil = 0
-        end
-
-        return os.clock() <= math.max(entry.ActiveUntil or 0, globalUntil)
-    end
-
-    local function withRestoreLock(obj, fn)
-        if entry.Restoring[obj] then return end
-        entry.Restoring[obj] = true
-        pcall(fn)
-        entry.Restoring[obj] = nil
-    end
-
-    local function restorePart(part, data)
-        if not active() or not part or not part.Parent or entry.Restoring[part] then return end
-        withRestoreLock(part, function()
-            part.Color = data.Color
-            part.Material = data.Material
-            part.Transparency = data.Transparency
-            part.Reflectance = data.Reflectance
-            part.Size = data.Size
-            if part:IsA("MeshPart") and data.TextureID ~= nil then
-                part.TextureID = data.TextureID
-            end
-        end)
-    end
-
-    local function restoreMesh(mesh, data)
-        if not active() or not mesh or not mesh.Parent or entry.Restoring[mesh] then return end
-        withRestoreLock(mesh, function()
-            mesh.MeshId = data.MeshId
-            mesh.TextureId = data.TextureId
-            mesh.Scale = data.Scale
-            mesh.VertexColor = data.VertexColor
-        end)
-    end
-
-    local function restoreImage(obj, data)
-        if not active() or not obj or not obj.Parent or entry.Restoring[obj] then return end
-        withRestoreLock(obj, function()
-            obj.Texture = data.Texture
-            obj.Transparency = data.Transparency
-            obj.Color3 = data.Color3
-        end)
-    end
-
-    local function watchSound(sound)
-        if not sound or not sound:IsA("Sound") or entry.Sounds[sound] ~= nil then return end
-
-        local originalVolume = 1
-        pcall(function() originalVolume = sound.Volume end)
-        entry.Sounds[sound] = originalVolume
-
-        -- If this corpse appears LATE while our current death effect is already
-        -- running, silence idle corpse audio immediately before it can replay.
-        if active() then
-            local playing = false
-            pcall(function() playing = sound.Playing or sound.IsPlaying end)
-            if not playing then
-                entry.MutedSounds[sound] = originalVolume
-                pcall(function() sound.Volume = 0 end)
-            end
-        end
-
-        entry.Connections[#entry.Connections + 1] = sound.Played:Connect(function()
-            if not active() or not sound.Parent then return end
-
-            if entry.MutedSounds[sound] == nil then
-                entry.MutedSounds[sound] = entry.Sounds[sound] or originalVolume
-            end
-
-            pcall(function()
-                sound.Volume = 0
-                sound.Looped = false
-                sound:Stop()
-            end)
-        end)
-
-        entry.Connections[#entry.Connections + 1] =
-            sound:GetPropertyChangedSignal("Volume"):Connect(function()
-                if active() and sound.Parent and not entry.Restoring[sound] then
-                    if entry.MutedSounds[sound] == nil then
-                        entry.MutedSounds[sound] = entry.Sounds[sound] or originalVolume
-                    end
-                    if sound.Volume ~= 0 then
-                        entry.Restoring[sound] = true
-                        pcall(function() sound.Volume = 0 end)
-                        entry.Restoring[sound] = nil
-                    end
-                end
-            end)
-    end
-
-    local function capture(obj)
-        if obj:IsA("BasePart") then
-            if entry.Parts[obj] == nil then
-                local data = {}
-                pcall(function()
-                    data.Color = obj.Color
-                    data.Material = obj.Material
-                    data.Transparency = obj.Transparency
-                    data.Reflectance = obj.Reflectance
-                    data.Size = obj.Size
-                    if obj:IsA("MeshPart") then data.TextureID = obj.TextureID end
-                end)
-                entry.Parts[obj] = data
-
-                -- Event-driven restore: zero scheduled full-corpse passes.
-                for _, prop in ipairs({"Color","Material","Transparency","Reflectance","Size"}) do
-                    entry.Connections[#entry.Connections + 1] =
-                        obj:GetPropertyChangedSignal(prop):Connect(function()
-                            restorePart(obj, data)
-                        end)
-                end
-                if obj:IsA("MeshPart") then
-                    entry.Connections[#entry.Connections + 1] =
-                        obj:GetPropertyChangedSignal("TextureID"):Connect(function()
-                            restorePart(obj, data)
-                        end)
-                end
-            end
-
-        elseif obj:IsA("SpecialMesh") then
-            if entry.Meshes[obj] == nil then
-                local data = {}
-                pcall(function()
-                    data.MeshId = obj.MeshId
-                    data.TextureId = obj.TextureId
-                    data.Scale = obj.Scale
-                    data.VertexColor = obj.VertexColor
-                end)
-                entry.Meshes[obj] = data
-
-                for _, prop in ipairs({"MeshId","TextureId","Scale","VertexColor"}) do
-                    entry.Connections[#entry.Connections + 1] =
-                        obj:GetPropertyChangedSignal(prop):Connect(function()
-                            restoreMesh(obj, data)
-                        end)
-                end
-            end
-
-        elseif obj:IsA("Decal") or obj:IsA("Texture") then
-            if entry.Images[obj] == nil then
-                local data = {}
-                pcall(function()
-                    data.Texture = obj.Texture
-                    data.Transparency = obj.Transparency
-                    data.Color3 = obj.Color3
-                end)
-                entry.Images[obj] = data
-
-                for _, prop in ipairs({"Texture","Transparency","Color3"}) do
-                    entry.Connections[#entry.Connections + 1] =
-                        obj:GetPropertyChangedSignal(prop):Connect(function()
-                            restoreImage(obj, data)
-                        end)
-                end
-            end
-
-        elseif obj:IsA("Sound") then
-            watchSound(obj)
-        end
-    end
-
-    -- One snapshot when the corpse is cached. After that, all protection is event-driven.
-    for _, obj in ipairs(model:GetDescendants()) do
-        capture(obj)
-    end
-
-    entry.Connections[#entry.Connections + 1] = model.DescendantAdded:Connect(function(obj)
-        if not runtime.Alive or not obj or not obj.Parent then return end
-
-        if active() and ROUND_CORPSE_BLOCK_CLASSES[obj.ClassName] then
-            if obj:IsA("Sound") then
-                pcall(function()
-                    obj.Volume = 0
-                    obj.Looped = false
-                    obj:Stop()
-                end)
-            end
-            pcall(function() obj:Destroy() end)
-            return
-        end
-
-        capture(obj)
-    end)
-
-    entry.Connections[#entry.Connections + 1] = model.AncestryChanged:Connect(function(_, parent)
-        if parent == nil then
-            for _, conn in ipairs(entry.Connections) do
-                pcall(function() conn:Disconnect() end)
-            end
-
-            for sound, volume in pairs(entry.MutedSounds) do
-                if sound and sound.Parent then
-                    pcall(function() sound.Volume = volume end)
-                end
-            end
-
-            runtime.TeamCorpseCache[model] = nil
-        end
-    end)
-
-    runtime.TeamCorpseCache[model] = entry
+    runtime.RoundCorpseCache[model] = entry
     return entry
 end
 
 runtime.NoteRoundDeath = function(targetPlayer, character, deathPosition)
     if not runtime.Alive or not targetPlayer or targetPlayer == player then return end
 
-    -- R50: every dead participant is cached. Killer/team is irrelevant:
-    -- later local effects are allowed to touch ONLY the current victim proxy.
     if character and character.Parent then
         runtime.RegisterTeamCorpse(character, targetPlayer.UserId)
     end
@@ -700,7 +431,6 @@ runtime.NoteRoundDeath = function(targetPlayer, character, deathPosition)
     local list = runtime.RecentRoundDeaths
     local now = os.clock()
     local write = 1
-
     for i = 1, #list do
         local item = list[i]
         if item and now - (item.At or 0) <= 1.60 then
@@ -724,11 +454,10 @@ runtime.TryCacheRoundCorpse = function(model)
         return nil
     end
 
-    local cached = runtime.TeamCorpseCache[model]
+    local cached = runtime.RoundCorpseCache[model]
     if cached then return cached end
     if not roundCorpseLooksLikeBody(model) then return nil end
 
-    -- Strong identity first: exact UserId attributes for ANY player.
     local okAttrs, attrs = pcall(function() return model:GetAttributes() end)
     if okAttrs and type(attrs) == "table" then
         for key, value in pairs(attrs) do
@@ -742,7 +471,6 @@ runtime.TryCacheRoundCorpse = function(model)
         end
     end
 
-    -- Exact username/display name match.
     local modelName = string.lower(tostring(model.Name))
     for _, p in ipairs(Players:GetPlayers()) do
         if p ~= player then
@@ -754,8 +482,6 @@ runtime.TryCacheRoundCorpse = function(model)
         end
     end
 
-    -- Last fallback: short death window + spatial match.
-    -- If two deaths could match, we refuse to guess.
     local pos = roundCorpsePosition(model)
     if not pos then return nil end
 
@@ -764,10 +490,8 @@ runtime.TryCacheRoundCorpse = function(model)
     for _, item in ipairs(runtime.RecentRoundDeaths) do
         if item and now - (item.At or 0) <= 1.35 and item.Position then
             local delta = pos - item.Position
-            if delta:Dot(delta) <= 484 then -- 22^2
-                if match then
-                    return nil
-                end
+            if delta:Dot(delta) <= 484 then
+                if match then return nil end -- ambiguous: never guess
                 match = item
             end
         end
@@ -779,67 +503,9 @@ runtime.TryCacheRoundCorpse = function(model)
     return nil
 end
 
-runtime.ArmRoundCorpseProtection = function(duration, exemptUserId)
-    duration = math.max(0.25, tonumber(duration) or 2.70)
-    exemptUserId = tonumber(exemptUserId)
-
-    local now = os.clock()
-    local untilAt = now + duration
-    runtime.TeamCorpseProtectionUntil = math.max(
-        runtime.TeamCorpseProtectionUntil or 0,
-        untilAt
-    )
-    runtime.TeamCorpseProtectionSerial = (runtime.TeamCorpseProtectionSerial or 0) + 1
-    runtime.TeamCorpseProtectionExemptUserId = exemptUserId
-    local serial = runtime.TeamCorpseProtectionSerial
-
-    -- Cheap pass over the small round-corpse cache only.
-    for model, entry in pairs(runtime.TeamCorpseCache or {}) do
-        if model and model.Parent and entry
-            and entry.Generation == (runtime.TeamCorpseGeneration or 0)
-            and (not exemptUserId or tonumber(entry.UserId) ~= exemptUserId) then
-
-            entry.ActiveUntil = math.max(entry.ActiveUntil or 0, untilAt)
-
-            -- Pre-mute idle corpse sounds so delayed Preview spill cannot leak even
-            -- one frame. Property listeners handle everything else on demand.
-            for sound, originalVolume in pairs(entry.Sounds) do
-                if sound and sound.Parent then
-                    local playing = false
-                    pcall(function() playing = sound.Playing or sound.IsPlaying end)
-                    if not playing then
-                        if entry.MutedSounds[sound] == nil then
-                            entry.MutedSounds[sound] = originalVolume
-                        end
-                        pcall(function() sound.Volume = 0 end)
-                    end
-                end
-            end
-        end
-    end
-
-    task.delay(duration + .06, function()
-        if not runtime.Alive then return end
-
-        -- A newer kill extended/restarted the window; let that newer timer own restore.
-        if serial ~= runtime.TeamCorpseProtectionSerial then return end
-        if os.clock() < (runtime.TeamCorpseProtectionUntil or 0) then return end
-
-        runtime.TeamCorpseProtectionUntil = 0
-        runtime.TeamCorpseProtectionExemptUserId = nil
-
-        for model, entry in pairs(runtime.TeamCorpseCache or {}) do
-            if model and model.Parent and entry then
-                entry.ActiveUntil = 0
-                for sound, volume in pairs(entry.MutedSounds) do
-                    if sound and sound.Parent then
-                        pcall(function() sound.Volume = volume end)
-                    end
-                    entry.MutedSounds[sound] = nil
-                end
-            end
-        end
-    end)
+-- Compatibility no-op. R52 never mutates cached real corpses.
+runtime.ArmRoundCorpseProtection = function()
+    return
 end
 
 function AstraRequest(ruta)
@@ -6153,6 +5819,138 @@ ENV.__XERO_DEATH_PROXY.WatchVenomCompletion = function(victim, cleaner)
     end)
 end
 
+
+-- ============================================================
+-- R52 · READ-ONLY REAL CORPSES / ISOLATED LOCAL PREVIEW
+-- Preview.play receives only our CurrentCamera proxy. During the synchronous
+-- native setup we move THAT LOCAL PROXY far away, never touching real corpses.
+-- Any local top-level VFX spawned near staging is translated back to the target.
+-- ============================================================
+local function xeroRootPosition(root)
+    if not root or not root.Parent then return nil end
+    if root:IsA("BasePart") then return root.Position end
+    if root:IsA("Model") then
+        local ok, pivot = pcall(function() return root:GetPivot() end)
+        if ok then return pivot.Position end
+    end
+    local part = root:FindFirstChildWhichIsA("BasePart", true)
+    return part and part.Position or nil
+end
+
+local function xeroTranslateLocalEffectRoot(root, delta)
+    if not root or not root.Parent or typeof(delta) ~= "Vector3" then return false end
+
+    -- Never translate anything avatar-like. The staging zone is for local VFX only.
+    if root:IsA("Model") and root:FindFirstChildOfClass("Humanoid") then
+        return false
+    end
+
+    if root:IsA("Model") then
+        local ok = pcall(function()
+            root:PivotTo(root:GetPivot() + delta)
+        end)
+        if ok then return true end
+    elseif root:IsA("BasePart") then
+        return pcall(function() root.CFrame = root.CFrame + delta end)
+    end
+
+    local moved = false
+    for _, obj in ipairs(root:GetDescendants()) do
+        if obj:IsA("BasePart") then
+            pcall(function()
+                obj.CFrame = obj.CFrame + delta
+                moved = true
+            end)
+        end
+    end
+    return moved
+end
+
+local function runPreviewIsolated(victim, effectName, cleaner)
+    if not victim or not victim.Parent then
+        return false, "proxy local no disponible"
+    end
+
+    local okPivot, targetPivot = pcall(function() return victim:GetPivot() end)
+    if not okPivot or typeof(targetPivot) ~= "CFrame" then
+        return pcall(function()
+            return Preview.play(victim, effectName, cleaner)
+        end)
+    end
+
+    local state = ENV.__XERO_DEATH_PROXY
+    local serial = state and tonumber(state.KillSerial) or 0
+
+    -- Far enough that no real player/corpse near the actual victim can be selected
+    -- by native radius/touch/overlap logic. Only the LOCAL proxy is moved.
+    local stageOffset = Vector3.new(
+        2048 + (serial % 7) * 96,
+        -4096 - (serial % 5) * 128,
+        2048
+    )
+    local targetPos = targetPivot.Position
+    local stagePos = targetPos + stageOffset
+    local stagePivot = CFrame.new(stagePos) * targetPivot.Rotation
+    local returnDelta = targetPos - stagePos
+
+    local spawnedTop = setmetatable({}, {__mode = "k"})
+    local alive = true
+
+    local function relocateIfStaged(root)
+        if not alive or not root or not root.Parent or root.Parent ~= Workspace then return end
+        local pos = xeroRootPosition(root)
+        if not pos then return end
+
+        local d = pos - stagePos
+        if d:Dot(d) > (420 * 420) then return end
+
+        -- A real character should never exist in our private staging zone. Still,
+        -- reject Humanoid models absolutely so we remain read-only toward players.
+        if root:IsA("Model") and root:FindFirstChildOfClass("Humanoid") then return end
+        xeroTranslateLocalEffectRoot(root, returnDelta)
+    end
+
+    local addedConn = Workspace.ChildAdded:Connect(function(child)
+        if not alive then return end
+        spawnedTop[child] = true
+        task.defer(relocateIfStaged, child)
+    end)
+
+    local staged = pcall(function()
+        victim:PivotTo(stagePivot)
+    end)
+
+    if not staged then
+        pcall(function() addedConn:Disconnect() end)
+        return pcall(function()
+            return Preview.play(victim, effectName, cleaner)
+        end)
+    end
+
+    local ok, result = pcall(function()
+        return Preview.play(victim, effectName, cleaner)
+    end)
+
+    -- Bring only OUR proxy back immediately. Real bodies were never modified.
+    pcall(function()
+        if victim and victim.Parent then victim:PivotTo(targetPivot) end
+    end)
+
+    -- Synchronous local effect roots spawned at staging move with the same delta.
+    for root in pairs(spawnedTop) do
+        relocateIfStaged(root)
+    end
+
+    -- A captured native task can create its local root slightly after play() returns.
+    -- Keep a tiny watcher only for NEW roots near the staging point.
+    task.delay(.80, function()
+        alive = false
+        pcall(function() addedConn:Disconnect() end)
+    end)
+
+    return ok, result
+end
+
 local function runNativeOnVictim(name, victim, statusLabel, triggerInfo)
     if not victim or not victim.Parent then
         if statusLabel then statusLabel.Text = "✕ La víctima ya no existe." end
@@ -6237,11 +6035,7 @@ local function runNativeOnVictim(name, victim, statusLabel, triggerInfo)
     -- R40: first audio playback remains native; only replays AFTER the first pass
     -- are blocked. This is safe to install before Preview.play because it never
     -- pre-mutes the initial candidate.
-    -- R50: every OLD corpse is protected; only the current victim is exempt.
-    -- O(cached corpses), no Workspace/body scan at kill time.
-    if runtime.ArmRoundCorpseProtection then
-        runtime.ArmRoundCorpseProtection(2.70, triggerInfo and triggerInfo.playerUserId)
-    end
+    -- R52: real corpses are strictly read-only. Isolation happens on our proxy.
     ENV.__XERO_DEATH_PROXY.GuardEffectSounds(victim, asset, name)
     ENV.__XERO_DEATH_PROXY.GuardOneShotVFX(victim)
     local cleaner = makeCleaner()
@@ -6269,9 +6063,7 @@ local function runNativeOnVictim(name, victim, statusLabel, triggerInfo)
         frostbiteAccessoryAppearance = captureAccessoryAppearance(victim)
     end
 
-    local ok, result = pcall(function()
-        return Preview.play(victim, name, cleaner)
-    end)
+    local ok, result = runPreviewIsolated(victim, name, cleaner)
 
     -- Some body-timeline effects rewrite Humanoid/part state synchronously.
     -- Re-apply only the shot reaction for effects that do NOT own a custom flight.

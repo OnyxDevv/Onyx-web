@@ -1,4 +1,4 @@
--- XeroHub | DUELS MURDERS VS SHERIFF | Kevin test
+-- XeroHub | DUELS MURDERS VS SHERIFF | No dummys
 
 local SoundCatalogCore = {
     TARGET_SOUND_ID = "10209603",
@@ -5951,6 +5951,154 @@ local function runPreviewIsolated(victim, effectName, cleaner)
     return ok, result
 end
 
+
+-- ============================================================
+-- R53 · FREEZE LOCAL-ONLY
+-- Freeze no longer enters DeathEffectPreview at all.
+-- Body mutation is already handled by scheduleFreezeReal(victim).
+-- Here we clone only the prepared visual/audio asset into Xero's private
+-- CurrentCamera root and play it once. No real Character/corpse is touched.
+-- ============================================================
+local function runFreezeLocalOnly(victim, asset, cleaner, immediateMelee)
+    if not victim or not victim.Parent or not asset or not asset.Parent then
+        return false, "Freeze local: proxy/asset no disponible"
+    end
+
+    local state = ENV.__XERO_DEATH_PROXY
+    local cameraRoot = state and state.EnsureRoot and state.EnsureRoot() or nil
+    local victimRoot = victim:FindFirstChild("HumanoidRootPart")
+        or victim:FindFirstChild("UpperTorso")
+        or victim:FindFirstChild("Torso")
+        or victim:FindFirstChild("Head")
+
+    if not cameraRoot or not victimRoot or not victimRoot:IsA("BasePart") then
+        return false, "Freeze local: root no disponible"
+    end
+
+    local okClone, fx = pcall(function()
+        return asset:Clone()
+    end)
+    if not okClone or not fx then
+        return false, "Freeze local: no pude clonar asset"
+    end
+
+    fx.Name = "XeroLocalFreezeFX"
+    fx.Parent = cameraRoot
+    if cleaner and cleaner.Add then cleaner:Add(fx) end
+
+    -- Position ONLY the local clone at our local proxy.
+    local positioned = false
+    if fx:IsA("Model") then
+        positioned = pcall(function()
+            fx:PivotTo(victimRoot.CFrame)
+        end)
+    elseif fx:IsA("BasePart") then
+        positioned = pcall(function()
+            fx.CFrame = victimRoot.CFrame
+        end)
+    else
+        local firstPart = fx:FindFirstChildWhichIsA("BasePart", true)
+        if firstPart then
+            local delta = victimRoot.CFrame * firstPart.CFrame:Inverse()
+            positioned = true
+            for _, obj in ipairs(fx:GetDescendants()) do
+                if obj:IsA("BasePart") then
+                    pcall(function()
+                        obj.CFrame = delta * obj.CFrame
+                    end)
+                end
+            end
+        else
+            positioned = true
+        end
+    end
+
+    -- Every part here is OUR clone. Keep it purely visual and noninteractive.
+    local function sanitizeLocalPart(obj)
+        if not obj:IsA("BasePart") then return end
+        pcall(function()
+            obj.CanCollide = false
+            obj.CanTouch = false
+            obj.CanQuery = false
+            obj.Massless = true
+            obj.Anchored = true
+        end)
+    end
+
+    if fx:IsA("BasePart") then sanitizeLocalPart(fx) end
+    for _, obj in ipairs(fx:GetDescendants()) do
+        sanitizeLocalPart(obj)
+    end
+
+    -- One audible instance per logical sound key, entirely under CurrentCamera.
+    local playedSoundKeys = {}
+    local function playLocalSound(sound)
+        if not sound or not sound:IsA("Sound") then return end
+        local id = tostring(sound.SoundId or "")
+        local key = id ~= "" and id or ("name:" .. tostring(sound.Name))
+        if playedSoundKeys[key] then
+            pcall(function()
+                sound.Volume = 0
+                sound.Looped = false
+                sound:Stop()
+            end)
+            return
+        end
+        playedSoundKeys[key] = true
+        pcall(function()
+            sound.Looped = false
+            sound.TimePosition = 0
+            sound:Play()
+        end)
+    end
+
+    -- Marked emitters retain the exact captured EmitCount/Delay behavior.
+    local emitters = {}
+    local sounds = {}
+    for _, obj in ipairs(fx:GetDescendants()) do
+        if obj:IsA("ParticleEmitter") then
+            emitters[#emitters + 1] = obj
+        elseif obj:IsA("Sound") then
+            sounds[#sounds + 1] = obj
+        end
+    end
+    if fx:IsA("Sound") then sounds[#sounds + 1] = fx end
+
+    for _, emitter in ipairs(emitters) do
+        local hasBurst =
+            emitter:GetAttribute("EmitCount") ~= nil
+            or emitter:GetAttribute("KillEffectEmitCount") ~= nil
+            or emitter:GetAttribute("EmitDuration") ~= nil
+
+        if hasBurst then
+            forceMarkedEmitter(emitter, immediateMelee)
+        elseif emitter.Enabled then
+            -- Asset-authored continuous emitters get a short local one-shot window.
+            task.delay(.80, function()
+                if emitter and emitter.Parent then
+                    pcall(function() emitter.Enabled = false end)
+                end
+            end)
+        end
+    end
+
+    for _, sound in ipairs(sounds) do
+        playLocalSound(sound)
+    end
+
+    -- Freeze's visible body transformation is already local and proxy-scoped.
+    scheduleFreezeReal(victim)
+
+    -- VFX carriers/sounds are transient; frozen proxy itself may persist for the round.
+    task.delay(6.0, function()
+        if fx and fx.Parent then
+            pcall(function() fx:Destroy() end)
+        end
+    end)
+
+    return positioned, positioned and "Freeze local-only" or "Freeze local sin posición"
+end
+
 local function runNativeOnVictim(name, victim, statusLabel, triggerInfo)
     if not victim or not victim.Parent then
         if statusLabel then statusLabel.Text = "✕ La víctima ya no existe." end
@@ -6023,11 +6171,11 @@ local function runNativeOnVictim(name, victim, statusLabel, triggerInfo)
 
     local before = nil -- R44: debug snapshot disabled in production
 
-    -- R36: marked ParticleEmitters in the captured assets need the same bridge
-    -- the original dummy version used. This observer is scoped to this proxy and
-    -- dedupes each emitter, so VFX return without replaying effect sounds.
-    observeNativeParticles(victim, name, immediateMelee)
-    enforceInvisibleCarriers(victim, asset, name)
+    -- R53: Freeze is fully local-only; never attach Workspace/global native observers.
+    if name ~= "Freeze" then
+        observeNativeParticles(victim, name, immediateMelee)
+        enforceInvisibleCarriers(victim, asset, name)
+    end
 
     local clothesV2 = applyV2Clothing(victim, asset)
     local hatsV2 = attachV2HatIfNeeded(victim, asset)
@@ -6063,11 +6211,19 @@ local function runNativeOnVictim(name, victim, statusLabel, triggerInfo)
         frostbiteAccessoryAppearance = captureAccessoryAppearance(victim)
     end
 
-    local ok, result = runPreviewIsolated(victim, name, cleaner)
+    local ok, result
+    local freezeLocalOnly = name == "Freeze"
+
+    if freezeLocalOnly then
+        ok, result = runFreezeLocalOnly(victim, asset, cleaner, immediateMelee)
+    else
+        ok, result = runPreviewIsolated(victim, name, cleaner)
+    end
 
     -- Some body-timeline effects rewrite Humanoid/part state synchronously.
     -- Re-apply only the shot reaction for effects that do NOT own a custom flight.
-    if ok and ENV.__XERO_DEATH_PROXY and ENV.__XERO_DEATH_PROXY.ReapplyReaction then
+    if ok and not freezeLocalOnly
+        and ENV.__XERO_DEATH_PROXY and ENV.__XERO_DEATH_PROXY.ReapplyReaction then
         task.defer(function()
             if victim and victim.Parent then
                 ENV.__XERO_DEATH_PROXY.ReapplyReaction(victim, name)
@@ -6084,9 +6240,9 @@ local function runNativeOnVictim(name, victim, statusLabel, triggerInfo)
         bodyPatchSource = "1x1x1x1 · verde nativo completo"
 
     elseif name == "Freeze" then
-        scheduleFreezeReal(victim)
+        -- R53: already applied exactly once inside runFreezeLocalOnly().
         bodyPatched = true
-        bodyPatchSource = "Freeze · TODO sólido"
+        bodyPatchSource = "Freeze · local-only · TODO sólido"
 
     elseif name == "Frostbite" then
         scheduleFrostbiteReal(victim, cleaner, frostbiteAccessoryAppearance)
@@ -6135,7 +6291,9 @@ local function runNativeOnVictim(name, victim, statusLabel, triggerInfo)
 
     if not ok then
         if statusLabel then
-            statusLabel.Text = "✕ DeathEffectPreview falló:\n" .. tostring(result)
+            statusLabel.Text =
+                (freezeLocalOnly and "✕ Freeze local falló:\n" or "✕ DeathEffectPreview falló:\n")
+                .. tostring(result)
         end
         victim:SetAttribute("XeroVenomConsumed", nil)
         cleanVictim(victim)

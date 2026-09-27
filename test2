@@ -10161,6 +10161,7 @@ runtime.SoundCleanup = function()
 end
 
 refreshSoundCatalog(false)
+end -- XERO LOCAL-SCOPE: sound internals
 -- ==========================================
 -- PESTAÑA TEXTURAS: skins para armas default (cuchillo y pistola)
 -- Catálogo automático desde carpetas de GitHub + Asset ID personalizado.
@@ -10913,7 +10914,6 @@ end
 refreshTextureCatalog("knife", true)
 refreshTextureCatalog("gun", false)
 updateSkinDropdownForWeapon("knife")
-end
 end
 
 Tabs.Inicio:Paragraph({
@@ -21710,6 +21710,7 @@ Tabs.KillAll:Paragraph({
     Desc = "Kill All está desactivado temporalmente mientras se mejora su estabilidad."
 })
 
+do -- XERO LOCAL-SCOPE: Kill All internals
 local KillRunService = game:GetService("RunService")
 
 local killAllEnabled = false
@@ -23425,6 +23426,7 @@ end
 -- No se crea ningún toggle mientras la función está en mantenimiento.
 -- La lógica se conserva arriba para poder reactivarla más adelante.
 
+end -- XERO LOCAL-SCOPE: Kill All internals
 
 -- ====================
 -- HITBOX EXPANDER OPTIMIZADO (LAZY LOADING)
@@ -23485,6 +23487,7 @@ UIElements.SliHitboxTrans = Tabs.Aim:Slider({
 -- ==========================================
 
 
+do -- XERO LOCAL-SCOPE: visual spoof internals
 local isWorkspaceLooping = false
 local originalData = setmetatable({}, {__mode = "k"})
 runtime.VisualConnections = runtime.VisualConnections or {}
@@ -23777,6 +23780,7 @@ runtime.VisualSpoofCleanup = function()
     creatorTagEnabled = false
     stopVisualWatchersAndRestore()
 end
+end -- XERO LOCAL-SCOPE: visual spoof internals
 
 UIElements.TogHideName = Tabs.Vis:Toggle({
     Title = "Ocultar mi Nombre (Visual)", 

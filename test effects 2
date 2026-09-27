@@ -1,4 +1,4 @@
--- XeroHub | DUELS MURDERS VS SHERIFF | Kevin tests --
+-- XeroHub | DUELS MURDERS VS SHERIFF | Kev -- Testeos
 
 local SoundCatalogCore = {
     TARGET_SOUND_ID = "10209603",
@@ -2481,7 +2481,7 @@ local function emitterIsNear(dummy, emitter)
     return (p.Position - root.Position).Magnitude <= 35
 end
 
-local function forceMarkedEmitter(emitter)
+local function forceMarkedEmitter(emitter, immediate)
     local emitCount =
         tonumber(emitter:GetAttribute("EmitCount"))
         or tonumber(emitter:GetAttribute("KillEffectEmitCount"))
@@ -2489,7 +2489,8 @@ local function forceMarkedEmitter(emitter)
     local emitDelay = tonumber(emitter:GetAttribute("EmitDelay")) or 0
     local emitDuration = tonumber(emitter:GetAttribute("EmitDuration")) or 0
 
-    task.delay(math.max(0, emitDelay), function()
+    local startDelay = immediate and 0 or math.max(0, emitDelay)
+    task.delay(startDelay, function()
         if not emitter.Parent then return end
 
         -- R36: EmitCount is the authoritative one-shot burst. R35 also enabled
@@ -2511,7 +2512,7 @@ local function forceMarkedEmitter(emitter)
     end)
 end
 
-local function observeNativeParticles(dummy, effectName)
+local function observeNativeParticles(dummy, effectName, immediate)
     -- R36: same emitter bridge the original dummy build required, but hard-bound
     -- to ONE kill serial and deduped by a stable hierarchy key as well as Instance.
     -- Re-created emitters at the same logical path cannot re-fire the same burst.
@@ -2601,7 +2602,7 @@ local function observeNativeParticles(dummy, effectName)
         -- The bridge still fires only once for this logical emitter.
         task.defer(function()
             if tokenAlive() and obj.Parent then
-                forceMarkedEmitter(obj)
+                forceMarkedEmitter(obj, immediate)
             end
         end)
     end
@@ -3872,6 +3873,8 @@ ENV.__XERO_DEATH_PROXY = {
 }
 
 ENV.__XERO_DEATH_PROXY.PersistsForRound = function(name)
+    -- Guaranteed persistent effects. R42's adaptive probe promotes any other
+    -- effect that actually leaves a structural/body transformation on the corpse.
     return name == "Frostbite" or name == "Heartache"
         or name == "Freeze" or name == "PineappleEffect"
 end
@@ -4350,7 +4353,17 @@ ENV.__XERO_DEATH_PROXY.GuardDuplicateAvatars = function(proxy)
 
     local function authorized(model)
         if model == proxy then return true end
-        -- Previous persistent Frostbite/Freeze/etc. corpses are legitimate.
+
+        -- R42: effect-owned nested models are legitimate. Gifted and other
+        -- transformations can build a secondary body/mesh hierarchy INSIDE the
+        -- official proxy. The old guard destroyed those because they looked like
+        -- another avatar. We only prune avatar-like siblings/external models.
+        local okNested, nested = pcall(function()
+            return model:IsDescendantOf(proxy)
+        end)
+        if okNested and nested then return true end
+
+        -- Previous persistent corpses are legitimate too.
         if state.SourceByProxy[model] ~= nil then return true end
         return false
     end
@@ -4416,6 +4429,98 @@ ENV.__XERO_DEATH_PROXY.GuardDuplicateAvatars = function(proxy)
 
     -- Late Preview tasks are the concern; no need to watch forever.
     task.delay(4.0, stop)
+end
+
+
+-- R42 · ADAPTIVE EFFECT PERSISTENCE
+-- Some effects are particle-only and can disappear after their choreography.
+-- Others (Gifted, Freeze/Frostbite-like transformations, body styles, hats/clothes)
+-- leave a transformed corpse that must remain intact. Instead of maintaining an
+-- ever-growing hardcoded whitelist, detect structural/body mutations produced by
+-- the effect during its initial application window.
+ENV.__XERO_DEATH_PROXY.PersistenceProbes = setmetatable({}, {__mode = "k"})
+
+ENV.__XERO_DEATH_PROXY.ArmPersistenceProbe = function(proxy, effectName)
+    local state = ENV.__XERO_DEATH_PROXY
+    if not proxy or not proxy.Parent or state.PersistenceProbes[proxy] then return end
+
+    local alive = true
+    local connections = {}
+    local baseline = setmetatable({}, {__mode = "k"})
+
+    for _, obj in ipairs(proxy:GetDescendants()) do
+        baseline[obj] = true
+    end
+
+    local STRUCTURAL_CLASSES = {
+        MeshPart = true,
+        SpecialMesh = true,
+        CharacterMesh = true,
+        Accessory = true,
+        Shirt = true,
+        Pants = true,
+        ShirtGraphic = true,
+        BodyColors = true,
+        SurfaceAppearance = true,
+    }
+
+    local function mark(reason)
+        if not alive or not proxy.Parent then return end
+        if proxy:GetAttribute("XeroPersistForRound") ~= true then
+            proxy:SetAttribute("XeroPersistForRound", true)
+            proxy:SetAttribute("XeroPersistReason", tostring(reason or "transformación del efecto"))
+        end
+    end
+
+    local function isBodyPart(obj)
+        return obj and obj:IsA("BasePart")
+            and obj.Name ~= "HumanoidRootPart"
+            and REAL_BODY_PART_NAMES[obj.Name] == true
+            and not obj:FindFirstAncestorOfClass("Accessory")
+            and obj:IsDescendantOf(proxy)
+    end
+
+    -- Effect-added structural objects should survive with the corpse.
+    connections[#connections + 1] = proxy.DescendantAdded:Connect(function(obj)
+        if not alive or not obj or baseline[obj] then return end
+
+        if STRUCTURAL_CLASSES[obj.ClassName] then
+            mark("estructura " .. obj.ClassName)
+            return
+        end
+
+        -- A new body-named BasePart is also a structural transformation.
+        if obj:IsA("BasePart") and REAL_BODY_PART_NAMES[obj.Name] then
+            mark("parte corporal añadida")
+        end
+    end)
+
+    -- BodyStyle effects may not add descendants; they mutate the existing body.
+    for _, obj in ipairs(proxy:GetDescendants()) do
+        if isBodyPart(obj) then
+            for _, prop in ipairs({"Color", "Material", "Transparency", "Reflectance", "Size"}) do
+                connections[#connections + 1] =
+                    obj:GetPropertyChangedSignal(prop):Connect(function()
+                        if alive then mark("BodyStyle " .. prop) end
+                    end)
+            end
+        end
+    end
+
+    local function stop()
+        if not alive then return end
+        alive = false
+        for _, conn in ipairs(connections) do
+            pcall(function() conn:Disconnect() end)
+        end
+        state.PersistenceProbes[proxy] = nil
+    end
+
+    state.PersistenceProbes[proxy] = stop
+
+    -- Preview.play's meaningful structural work happens during the opening
+    -- choreography. Do not let unrelated later changes flip persistence.
+    task.delay(3.25, stop)
 end
 
 ENV.__XERO_DEATH_PROXY.MeasureBodyChange = function(proxy, info)
@@ -4500,6 +4605,12 @@ ENV.__XERO_DEATH_PROXY.DestroyProxy = function(proxy)
     if duplicateGuard then
         pcall(duplicateGuard)
         ENV.__XERO_DEATH_PROXY.DuplicateAvatarGuards[proxy] = nil
+    end
+    local persistenceProbe = ENV.__XERO_DEATH_PROXY.PersistenceProbes
+        and ENV.__XERO_DEATH_PROXY.PersistenceProbes[proxy]
+    if persistenceProbe then
+        pcall(persistenceProbe)
+        ENV.__XERO_DEATH_PROXY.PersistenceProbes[proxy] = nil
     end
     ENV.__XERO_DEATH_PROXY.DisconnectFollow(proxy)
     local physicsConn = ENV.__XERO_DEATH_PROXY.PhysicsConnections[proxy]
@@ -5228,6 +5339,11 @@ ENV.__XERO_DEATH_PROXY.Make = function(source, effectName, hum, player, deathPos
     proxy:SetAttribute("XeroCreatedAt", os.clock())
     ENV.__XERO_DEATH_PROXY.SourceByProxy[proxy] = source
 
+    -- Detect effect-owned structural/body transformations. If the selected effect
+    -- needs its transformed corpse to remain (Gifted/body styles/etc.), persistence
+    -- is promoted automatically before cleanup/session rotation can remove it.
+    ENV.__XERO_DEATH_PROXY.ArmPersistenceProbe(proxy, effectName)
+
     -- The official proxy is now authorized. Any other avatar-like model created
     -- inside XeroDeathVisuals during Preview.play is a local duplicate.
     ENV.__XERO_DEATH_PROXY.GuardDuplicateAvatars(proxy)
@@ -5405,11 +5521,16 @@ ENV.__XERO_DEATH_PROXY.WatchVenomCompletion = function(victim, cleaner)
     end)
 end
 
-local function runNativeOnVictim(name, victim, statusLabel)
+local function runNativeOnVictim(name, victim, statusLabel, triggerInfo)
     if not victim or not victim.Parent then
         if statusLabel then statusLabel.Text = "✕ La víctima ya no existe." end
         return false
     end
+
+    local proofText = string.lower(tostring(triggerInfo and triggerInfo.proof or ""))
+    local immediateMelee = (triggerInfo and triggerInfo.meleeConfirmed == true)
+        or string.find(proofText, "cuchillo", 1, true) ~= nil
+        or string.find(proofText, "melee", 1, true) ~= nil
 
     if string.find(string.lower(tostring(name)), "venom", 1, true) then
         if statusLabel then statusLabel.Text = "Venom eliminado del selector." end
@@ -5476,7 +5597,7 @@ local function runNativeOnVictim(name, victim, statusLabel)
     -- R36: marked ParticleEmitters in the captured assets need the same bridge
     -- the original dummy version used. This observer is scoped to this proxy and
     -- dedupes each emitter, so VFX return without replaying effect sounds.
-    observeNativeParticles(victim, name)
+    observeNativeParticles(victim, name, immediateMelee)
     enforceInvisibleCarriers(victim, asset, name)
 
     local clothesV2 = applyV2Clothing(victim, asset)
@@ -5615,18 +5736,10 @@ local function runNativeOnVictim(name, victim, statusLabel)
             (victim:GetAttribute("XeroTiming") and ("\n" .. victim:GetAttribute("XeroTiming")) or "")
     end)
 
-    -- Death effects are short-lived. Keep cleanup isolated per victim so one
-    -- kill never cancels the visuals of another kill.
-    task.delay(10, function()
-        if victimCleaners[victim] == cleaner and victim:GetAttribute("XeroPersistForRound") ~= true then
-            if victim:GetAttribute("XeroVenomConsumed") == true then
-                ENV.__XERO_DEATH_PROXY.DestroyProxy(victim)
-            else
-                cleanVictim(victim)
-            end
-        end
-    end)
-
+    -- R42: never call the native cleaner while a visible proxy is still alive.
+    -- Some effects (Gifted especially) register their added meshes with cleaner;
+    -- cleaning first and destroying the proxy later leaves a mutilated corpse.
+    -- Make() already destroys non-persistent proxies atomically at 10.35s.
     return true
 end
 
@@ -6019,7 +6132,7 @@ local function triggerVictim(player, character, hum, proof)
     info.cloneReadyAt = os.clock()
     info.trace = deathRuntime.TraceText(character, info.confirmedAt)
     local ok, result = pcall(function()
-        return runNativeOnVictim(effectName, proxy, status)
+        return runNativeOnVictim(effectName, proxy, status, info)
     end)
     info.rendererReturnedAt = os.clock()
 
@@ -6231,6 +6344,18 @@ queueVictimDeath = function(player, character, hum)
     info.deathPosition = info.deathPosition or modelPosition(character)
     info.deathEligible = true
 
+    -- R43: preserve exact melee context BEFORE another confirmation source
+    -- (killer tag / counter / sound) consumes this death.
+    local rt = ENV.__XERO_DEATH_BRIDGE_RUNTIME
+    local melee = rt and rt.RecentMelee
+    local meleeMatched = melee
+        and melee.Humanoid == hum
+        and os.clock() - (melee.At or 0) <= 1.05
+        and (melee.Source == "Touched" or melee.Source == "mouse" or melee.Source == "nearest")
+    if meleeMatched then
+        info.meleeConfirmed = true
+    end
+
     -- Best case: the game already stamped the killer/creator on the Humanoid.
     if hasLocalKillerTag(character, hum) then
         triggerVictim(player, character, hum, "killer/creator nativo")
@@ -6240,9 +6365,7 @@ queueVictimDeath = function(player, character, hum)
     -- R36 melee fast-path: Tool.Activated/Touched only PRE-ARMS a target. We still
     -- wait for this Humanoid to actually die, so a non-lethal stab never fires an
     -- effect. This removes the extra kill-counter delay for knives.
-    local rt = ENV.__XERO_DEATH_BRIDGE_RUNTIME
-    local melee = rt and rt.RecentMelee
-    if hum.Health <= 0 and melee and melee.Source == "Touched" and melee.Humanoid == hum and os.clock() - (melee.At or 0) <= 1.05 then
+    if hum.Health <= 0 and meleeMatched and melee.Source == "Touched" then
         rt.RecentMelee = nil
         triggerVictim(player, character, hum, "cuchillo local confirmado por muerte")
         return
@@ -6595,6 +6718,7 @@ ENV.__XERO_DEATH_BRIDGE_RUNTIME.SetRecentMelee = function(character, source)
     }
     deathRuntime.TraceMark("Melee " .. source, character)
     if lateContact then
+        if info then info.meleeConfirmed = true end
         deathRuntime.RecentMelee = nil
         triggerVictim(targetPlayer, character, hum, "cuchillo local · contacto y muerte")
     end

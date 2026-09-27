@@ -1,4 +1,4 @@
--- XeroHub | DUELS MURDERS VS SHERIFF | R55 FIX AIM/AUTOSHOOT
+-- XeroHub | DUELS MURDERS VS SHERIFF | R56 CONSERVATIVE
 
 local SoundCatalogCore = {
     TARGET_SOUND_ID = "10209603",
@@ -21145,8 +21145,11 @@ runtime.Track(RunService.Heartbeat:Connect(function(deltaTime)
                             local closestTargetDistSq = math.huge
                             mState.igAS[1] = char
 
-                            -- Seleccionar el visible más cercano no requiere crear N tablas,
-                            -- ordenar N candidatos y reciclarlos: basta conservar el mejor.
+                            -- R56 CONSERVATIVE:
+                            -- Misma selección que la versión estable, pero el filtro de Raycast
+                            -- es idéntico para todas las partes del MISMO Character. Se publica
+                            -- una sola vez por enemigo en vez de repetir la escritura por parte.
+                            -- No cambia orden, frecuencia, target ganador ni ruta de disparo.
                             local enemies, enemyCount = runtime.GetEnemySnapshot()
                             for i = 1, enemyCount do
                                 local enemy = enemies[i]
@@ -21157,17 +21160,18 @@ runtime.Track(RunService.Heartbeat:Connect(function(deltaTime)
                                     if enemyDelta:Dot(enemyDelta) <= 640000 then
                                         local targetParts = runtime.CollectTargetParts(enemyChar, "AutoShoot")
                                         if targetParts then
-                                            for j = 1, #targetParts do
+                                            mState.igAS[2] = enemyChar
+                                            mState.pAS.FilterDescendantsInstances = mState.igAS
+                                            local targetPartCount = #targetParts
+                                            for j = 1, targetPartCount do
                                                 local part = targetParts[j]
-                                                local partDelta = part.Position - myPos
+                                                local partPosition = part.Position
+                                                local partDelta = partPosition - myPos
                                                 local distSq = partDelta:Dot(partDelta)
-                                                if distSq < closestTargetDistSq then
-                                                    mState.igAS[2] = enemyChar
-                                                    mState.pAS.FilterDescendantsInstances = mState.igAS
-                                                    if not ws_Raycast(workspace, headPos, part.Position - headPos, mState.pAS) then
-                                                        closestTargetDistSq = distSq
-                                                        closestTargetPart = part
-                                                    end
+                                                if distSq < closestTargetDistSq
+                                                    and not ws_Raycast(workspace, headPos, partPosition - headPos, mState.pAS) then
+                                                    closestTargetDistSq = distSq
+                                                    closestTargetPart = part
                                                 end
                                             end
                                         end
@@ -21255,29 +21259,34 @@ runtime.Track(RunService.Heartbeat:Connect(function(deltaTime)
                                     end
 
                                     local targetParts = runtime.CollectTargetParts(enemyChar, "SilentAim")
-                                    mState.igSA[2] = enemyChar 
-                                    mState.pSA.FilterDescendantsInstances = mState.igSA
-                                    
                                     if targetParts then
-                                        for j = 1, #targetParts do
+                                        -- R56: el filtro sólo hace falta cuando realmente hay
+                                        -- partes candidatas. La posición de cada parte se lee una
+                                        -- sola vez durante esta evaluación. La lógica de selección
+                                        -- y el Raycast siguen exactamente en el mismo orden.
+                                        mState.igSA[2] = enemyChar
+                                        mState.pSA.FilterDescendantsInstances = mState.igSA
+                                        local targetPartCount = #targetParts
+                                        for j = 1, targetPartCount do
                                             local part = targetParts[j]
+                                            local partPosition = part.Position
                                             local pasaFiltro = false
                                             local candidateDistance = math.huge
                                             
                                             if silentAimFovEnabled then
-                                                local hrpPos2D, onScreen = camera:WorldToViewportPoint(part.Position)
+                                                local hrpPos2D, onScreen = camera:WorldToViewportPoint(partPosition)
                                                 if onScreen then
                                                     local dx, dy = hrpPos2D.X - centerX, hrpPos2D.Y - centerY 
                                                     candidateDistance = dx * dx + dy * dy
                                                     if candidateDistance <= fovSq and candidateDistance < shortestDistToCenter then pasaFiltro = true end
                                                 end
                                             else
-                                                local partDelta = part.Position - myPos
+                                                local partDelta = partPosition - myPos
                                                 candidateDistance = partDelta:Dot(partDelta)
                                                 if candidateDistance < shortestDistanceFisica then pasaFiltro = true end
                                             end
                                             
-                                            if pasaFiltro and not ws_Raycast(workspace, headPos, part.Position - headPos, mState.pSA) then
+                                            if pasaFiltro and not ws_Raycast(workspace, headPos, partPosition - headPos, mState.pSA) then
                                                 if silentAimFovEnabled then shortestDistToCenter = candidateDistance else shortestDistanceFisica = candidateDistance end
                                                 closestTargetPart = part
                                             end

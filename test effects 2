@@ -1,4 +1,4 @@
--- XeroHub | DUELS MURDERS VS SHERIFF | R58 CONSERVATIVE
+-- XeroHub | DUELS MURDERS VS SHERIFF | R59 SHARED COMBAT SNAPSHOT
 
 local SoundCatalogCore = {
     TARGET_SOUND_ID = "10209603",
@@ -20654,6 +20654,11 @@ local mState = {
     enemySnapshot = {},
     enemySnapshotCount = 0,
     enemySnapshotReady = false,
+    -- R59: snapshot local reutilizado sólo dentro del Heartbeat actual.
+    -- AutoShoot y Silent Aim dejan de releer Character/Core/HRP/Head/Tool/posiciones
+    -- cuando ambos coinciden en el mismo frame.
+    localCombatSnapshot = {},
+    localCombatSnapshotReady = false,
     equippedTool = nil,
     toolChar = nil,
     toolAddedConnection = nil,
@@ -20771,8 +20776,41 @@ runtime.Track(player.CharacterAdded:Connect(function(char)
 end))
 runtime.BindEquippedToolCache(player.Character)
 
+-- R59: snapshot local reutilizado sólo dentro del Heartbeat ACTUAL.
+-- Conserva exactamente las mismas fuentes de verdad que usaban AutoShoot/Silent Aim;
+-- sólo evita repetir accesos a Instances cuando ambos módulos caen en el mismo frame.
+function runtime.GetLocalCombatSnapshot()
+    if mState.localCombatSnapshotReady then
+        return mState.localCombatSnapshot
+    end
+
+    local snapshot = mState.localCombatSnapshot
+    local char = player.Character
+    local core = char and getCharCore(char) or nil
+    local hrp = core and core.HRP or nil
+    local head = core and core.Head or nil
+    local tool = nil
+
+    if char then
+        tool = (mState.toolChar == char) and mState.equippedTool or char:FindFirstChildOfClass("Tool")
+        if tool and tool.Parent ~= char then tool = nil end
+    end
+
+    local position = hrp and hrp.Position or nil
+    snapshot.Character = char
+    snapshot.Core = core
+    snapshot.HRP = hrp
+    snapshot.Head = head
+    snapshot.Tool = tool
+    snapshot.Position = position
+    snapshot.HeadPosition = (head and head.Position) or position
+
+    mState.localCombatSnapshotReady = true
+    return snapshot
+end
+
 -- Snapshot reutilizado sólo dentro del Heartbeat ACTUAL. Nunca conserva posiciones
--- entre frames: comparte validación Character/Humanoid/HRP/isEnemy entre módulos.
+-- entre frames: comparte validación Character/Humanoid/HRP/isEnemy y HRP.Position.
 function runtime.GetEnemySnapshot()
     if mState.enemySnapshotReady then
         return mState.enemySnapshot, mState.enemySnapshotCount
@@ -20796,6 +20834,7 @@ function runtime.GetEnemySnapshot()
             local hrp = core and core.HRP or nil
             local hum = core and core.Humanoid or nil
             local alive = hrp ~= nil and hum ~= nil and hum.Health > 0
+            local position = alive and hrp.Position or nil
 
             entry.Player = p
             entry.Character = char
@@ -20803,6 +20842,7 @@ function runtime.GetEnemySnapshot()
             entry.HRP = hrp
             entry.Humanoid = hum
             entry.Head = core and core.Head or nil
+            entry.Position = position
             entry.Alive = alive
             entry.Enemy = alive and isEnemy(p) or false
             entry.SafeZone = nil
@@ -20993,6 +21033,7 @@ runtime.Track(RunService.Heartbeat:Connect(function(deltaTime)
     end
 
     mState.enemySnapshotReady = false
+    mState.localCombatSnapshotReady = false
     local camera = workspace.CurrentCamera -- 🔥 FIX: Siempre la cámara actual
     local deathEffectBusy = (runtime.DeathEffectBusyUntil or 0) > os.clock()
     timerLobby = timerLobby + deltaTime
@@ -21041,6 +21082,7 @@ runtime.Track(RunService.Heartbeat:Connect(function(deltaTime)
                     local targetChar = enemy.Character
                     local targetCore = enemy.Core
                     local hrp = enemy.HRP
+                    local targetPosition = enemy.Position
                     local targetHum = enemy.Humanoid
                     
                     if enemy.Alive and enemy.Enemy then
@@ -21058,7 +21100,7 @@ runtime.Track(RunService.Heartbeat:Connect(function(deltaTime)
                         -- 3. CÁLCULO DE VISIBILIDAD (Raycast)
                         local aLaVista = false
                         if myHead then
-                            local rayDirection = hrp.Position - origin
+                            local rayDirection = targetPosition - origin
                             if rayDirection:Dot(rayDirection) < 62500 then
                                 mState.igHB[2] = targetChar
                                 mState.pHB.FilterDescendantsInstances = mState.igHB
@@ -21150,17 +21192,17 @@ runtime.Track(RunService.Heartbeat:Connect(function(deltaTime)
         if mState.tAS >= 0.15 and not deathEffectBusy then
             mState.tAS = 0
             if not enLobby then
-                local char = player.Character
-                local localCore = char and getCharCore(char) or nil
-                local hrp = localCore and localCore.HRP
+                local localSnapshot = runtime.GetLocalCombatSnapshot()
+                local char = localSnapshot.Character
+                local localCore = localSnapshot.Core
+                local hrp = localSnapshot.HRP
                 if hrp then
-                    local arma = (mState.toolChar == char) and mState.equippedTool or char:FindFirstChildOfClass("Tool")
-                    if arma and arma.Parent ~= char then arma = nil end
+                    local arma = localSnapshot.Tool
                     if arma and arma:FindFirstChild("Handle") then
                         local esGun = esLaPistola(arma)
                         if (esGun and autoShootEnabled) or (not esGun and autoShootCuchilloEnabled) then
-                            local myPos = hrp.Position
-                            local headPos = (localCore and localCore.Head and localCore.Head.Position) or myPos
+                            local myPos = localSnapshot.Position
+                            local headPos = localSnapshot.HeadPosition or myPos
                             
                             local closestTargetPart = nil
                             local closestTargetDistSq = math.huge
@@ -21176,8 +21218,9 @@ runtime.Track(RunService.Heartbeat:Connect(function(deltaTime)
                                 local enemy = enemies[i]
                                 local enemyChar = enemy.Character
                                 local enemyHrp = enemy.HRP
-                                if enemy.Alive and enemy.Enemy and enemyHrp then
-                                    local enemyDelta = enemyHrp.Position - myPos
+                                local enemyPosition = enemy.Position
+                                if enemy.Alive and enemy.Enemy and enemyHrp and enemyPosition then
+                                    local enemyDelta = enemyPosition - myPos
                                     if enemyDelta:Dot(enemyDelta) <= 640000 then
                                         local targetParts = runtime.CollectTargetParts(enemyChar, "AutoShoot")
                                         if targetParts then
@@ -21233,12 +21276,12 @@ runtime.Track(RunService.Heartbeat:Connect(function(deltaTime)
         if mState.tSA >= 0.03 and not deathEffectBusy then
             mState.tSA = 0
             if not enLobby then
-                local char = player.Character
-                local localCore = char and getCharCore(char) or nil
-                local hrp = localCore and localCore.HRP
+                local localSnapshot = runtime.GetLocalCombatSnapshot()
+                local char = localSnapshot.Character
+                local localCore = localSnapshot.Core
+                local hrp = localSnapshot.HRP
                 if hrp then
-                    local arma = (mState.toolChar == char) and mState.equippedTool or char:FindFirstChildOfClass("Tool")
-                    if arma and arma.Parent ~= char then arma = nil end
+                    local arma = localSnapshot.Tool
                     local allowedWeapon = false
                     if arma then
                         local esGun = esLaPistola(arma)
@@ -21251,8 +21294,8 @@ runtime.Track(RunService.Heartbeat:Connect(function(deltaTime)
                         local closestTargetPart = nil
                         local shortestDistToCenter = math.huge 
                         local shortestDistanceFisica = math.huge 
-                        local myPos = hrp.Position
-                        local headPos = (localCore and localCore.Head and localCore.Head.Position) or myPos
+                        local myPos = localSnapshot.Position
+                        local headPos = localSnapshot.HeadPosition or myPos
                         local viewport = camera.ViewportSize
                         if viewport.X ~= mState.vpX or viewport.Y ~= mState.vpY then
                             mState.vpX, mState.vpY = viewport.X, viewport.Y
@@ -21270,11 +21313,12 @@ runtime.Track(RunService.Heartbeat:Connect(function(deltaTime)
                             local enemy = enemies[i]
                             local enemyChar = enemy.Character
                             local enemyHrp = enemy.HRP
-                            if enemy.Alive and enemy.Enemy and enemyHrp then
-                                local enemyDelta = enemyHrp.Position - myPos
+                            local enemyPosition = enemy.Position
+                            if enemy.Alive and enemy.Enemy and enemyHrp and enemyPosition then
+                                local enemyDelta = enemyPosition - myPos
                                 if enemyDelta:Dot(enemyDelta) <= 640000 then
                                     if silentAimFovEnabled then
-                                        local hrpPos2D, onScreen = camera:WorldToViewportPoint(enemyHrp.Position)
+                                        local hrpPos2D, onScreen = camera:WorldToViewportPoint(enemyPosition)
                                         local dx, dy = hrpPos2D.X - centerX, hrpPos2D.Y - centerY
                                         if not onScreen or (dx * dx + dy * dy) > broadFovSq then continue end
                                     end

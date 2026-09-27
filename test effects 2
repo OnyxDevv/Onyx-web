@@ -1,4 +1,4 @@
--- XeroHub | DUELS MURDERS VS SHERIFF | 465 SHARED COMBAT SNAPSHOT
+-- XeroHub | DUELS MURDERS VS SHERIFF | R62 PERF FACES EFFECTS SOUNDS | R59 SHARED COMBAT SNAPSHOT
 
 local SoundCatalogCore = {
     TARGET_SOUND_ID = "10209603",
@@ -7790,7 +7790,21 @@ ENV.__XERO_DEATH_BRIDGE_RUNTIME.ScanMeleeTools = function(root)
 end
 
 -- Death body watcher: only models CREATED after the script starts are remembered.
--- This avoids repeatedly scanning the whole Workspace on every kill.
+-- R62 PERF: corpse construction can emit many DescendantAdded events for the same
+-- Model in one scheduler slice. Coalesce only the BasePart/Accessory/Motor6D retry
+-- path; Model/Humanoid and kill-sound signals remain immediate.
+local deathModelRememberQueued = setmetatable({}, {__mode = "k"})
+local function queueRememberDeathModel(model)
+    if not model or not model.Parent or deathModelRememberQueued[model] then return end
+    deathModelRememberQueued[model] = true
+    task.defer(function()
+        deathModelRememberQueued[model] = nil
+        if deathRuntime.Alive and model and model.Parent then
+            rememberDeathModel(model)
+        end
+    end)
+end
+
 killSignalConnections[#killSignalConnections + 1] = Workspace.DescendantAdded:Connect(function(obj)
     if obj:IsA("Tool") and LP.Character and obj:IsDescendantOf(LP.Character) then
         ENV.__XERO_DEATH_BRIDGE_RUNTIME.HookMeleeTool(obj)
@@ -7800,10 +7814,11 @@ killSignalConnections[#killSignalConnections + 1] = Workspace.DescendantAdded:Co
         rememberDeathModel(obj.Parent)
     elseif obj:IsA("BasePart") or obj:IsA("Accessory") or obj:IsA("Motor6D") then
         -- If DUELS builds a corpse inside an existing container, the Model itself
-        -- may not be the descendant that triggered this event. Remember its ancestor.
+        -- may not be the descendant that triggered this event. One deferred retry
+        -- per model/slice is enough to observe the newly-created body topology.
         local model = obj:FindFirstAncestorOfClass("Model")
         if model and not isCurrentPlayerCharacter(model) then
-            rememberDeathModel(model)
+            queueRememberDeathModel(model)
         end
     elseif obj:IsA("Sound") then
         -- DUELS can briefly clone GunKill outside the Character/Backpack tree.
@@ -8477,6 +8492,7 @@ local function disableSoundChanger(announce)
     soundState.PendingKey = nil
     soundState.ActiveKey = nil
     soundState.ActiveLabel = nil
+    if runtime.RefreshSoundWatchers then runtime.RefreshSoundWatchers() end
     restoreOriginalSounds()
     if soundState.ReplacementSound then
         pcall(function() soundState.ReplacementSound:Destroy() end)
@@ -8502,6 +8518,7 @@ local function disableGunshotMute(announce)
     end
 
     soundState.MuteGunshot = false
+    if runtime.RefreshSoundWatchers then runtime.RefreshSoundWatchers() end
     restoreOriginalSounds()
 
     if announce then
@@ -8519,6 +8536,7 @@ local function enableGunshotMute(announce)
     end
 
     soundState.MuteGunshot = true
+    if runtime.RefreshSoundWatchers then runtime.RefreshSoundWatchers() end
     local linked = scanGunshots()
 
     if announce then
@@ -8548,6 +8566,7 @@ local function activateEntry(entry, changedSelection, silent)
     local token = soundState.LoadToken
     local entryKey = SoundCatalogCore.entryKey(entry)
     soundState.PendingKey = entryKey
+    if runtime.RefreshSoundWatchers then runtime.RefreshSoundWatchers() end
     local wasEnabled = soundState.Enabled
     if not silent then
         showBottomMessage("Preparando " .. entry.label .. "…", {
@@ -9635,6 +9654,7 @@ local function disableKillSoundChanger(announce)
     killSoundState.PendingKey = nil
     killSoundState.ActiveKey = nil
     killSoundState.ActiveLabel = nil
+    if runtime.RefreshSoundWatchers then runtime.RefreshSoundWatchers() end
     killSoundState.RecentLocalAttack = 0
     killSoundState.RecentAttackTool = nil
     killSoundState.LastConfirmedKillTrigger = 0
@@ -9667,6 +9687,7 @@ local function activateKillEntry(entry, changedSelection, silent)
     local token = killSoundState.LoadToken
     local entryKey = SoundCatalogCore.entryKey(entry)
     killSoundState.PendingKey = entryKey
+    if runtime.RefreshSoundWatchers then runtime.RefreshSoundWatchers() end
     local wasEnabled = killSoundState.Enabled
     if not silent then
         showBottomMessage("Preparando sonido de muerte: " .. entry.label .. "…", {
@@ -10083,14 +10104,47 @@ local function onRelevantSoundAdded(object)
     if killSoundState.Enabled then watchCandidateKillSound(object) end
 end
 
--- Evita escuchar TODO game (CoreGui, Lighting, UI, etc.). Workspace ya cubre
--- Character y CurrentCamera; SoundService y Backpack completan los otros roots.
-runtime.Track(workspace.DescendantAdded:Connect(onRelevantSoundAdded))
-runtime.Track(SoundService.DescendantAdded:Connect(onRelevantSoundAdded))
-local soundBackpack = player:FindFirstChildOfClass("Backpack")
-if soundBackpack then
-    runtime.Track(soundBackpack.DescendantAdded:Connect(onRelevantSoundAdded))
+-- R62 PERF · global sound discovery is ON-DEMAND. When all sound features are off
+-- there are zero Workspace/SoundService/Backpack DescendantAdded callbacks from
+-- this subsystem. Re-enabling primes the registry again so sounds created while
+-- dormant are not missed.
+runtime.SoundWatcherConnections = {}
+local function soundWatchersWanted()
+    return soundState.Enabled or soundState.DesiredEnabled or soundState.MuteGunshot
+        or killSoundState.Enabled or killSoundState.DesiredEnabled
 end
+
+local function stopSoundWatchers()
+    local list = runtime.SoundWatcherConnections
+    for i = #list, 1, -1 do
+        pcall(function() list[i]:Disconnect() end)
+        list[i] = nil
+    end
+    -- Force one bounded rescan on the next enable; no scanning happens while off.
+    runtime.SoundRegistryPrimed = false
+end
+
+local function startSoundWatchers()
+    local list = runtime.SoundWatcherConnections
+    if list[1] and list[1].Connected then return end
+    stopSoundWatchers()
+    list[#list + 1] = workspace.DescendantAdded:Connect(onRelevantSoundAdded)
+    list[#list + 1] = SoundService.DescendantAdded:Connect(onRelevantSoundAdded)
+    local backpack = player:FindFirstChildOfClass("Backpack")
+    if backpack then
+        list[#list + 1] = backpack.DescendantAdded:Connect(onRelevantSoundAdded)
+    end
+end
+
+runtime.RefreshSoundWatchers = function()
+    if not runtime.Alive then
+        stopSoundWatchers()
+        return
+    end
+    if soundWatchersWanted() then startSoundWatchers() else stopSoundWatchers() end
+end
+-- Reconcile in case the UI library invoked an initial callback while controls were built.
+runtime.RefreshSoundWatchers()
 
 runtime.SoundCleanup = function()
     soundState.LoadToken = soundState.LoadToken + 1
@@ -10099,6 +10153,7 @@ runtime.SoundCleanup = function()
     disableSoundChanger(false)
     disableGunshotMute(false)
     disableKillSoundChanger(false)
+    stopSoundWatchers()
     if soundState.PreviewSound then
         pcall(function() soundState.PreviewSound:Destroy() end)
         soundState.PreviewSound = nil
@@ -12956,6 +13011,10 @@ function runtime.DestroyFaceClassicVisual(model)
     local entry = model and runtime.Appearance.FaceClassicVisuals[model]
     if not entry then return end
     runtime.Appearance.FaceClassicVisuals[model] = nil
+    for i = #(entry.Connections or {}), 1, -1 do
+        pcall(function() entry.Connections[i]:Disconnect() end)
+        entry.Connections[i] = nil
+    end
     if entry.Part and entry.Part.Parent then
         pcall(function() entry.Part:Destroy() end)
     end
@@ -12989,7 +13048,7 @@ local function getClassicFaceHeadScale(model)
     return 1
 end
 
-function runtime.SyncFaceClassicVisual(model)
+function runtime.SyncFaceClassicVisual(model, poseOnly, cameraTransparency)
     local entry = model and runtime.Appearance.FaceClassicVisuals[model]
     if not entry then return false end
     local head = entry.Head
@@ -12999,97 +13058,107 @@ function runtime.SyncFaceClassicVisual(model)
         return false
     end
 
-    local key = runtime.GetActiveFaceKey()
-    if not key then
-        runtime.DestroyFaceClassicVisual(model)
-        return false
-    end
+    if not poseOnly then
+        local key = runtime.GetActiveFaceKey()
+        if not key then
+            runtime.DestroyFaceClassicVisual(model)
+            return false
+        end
+        entry.ActiveFaceKey = key
 
-    -- La cabeza original permanece presente para attachments/animaciones, pero no se dibuja.
-    -- Estas dos propiedades sí se reafirman porque CameraModule/juegos pueden reescribirlas.
-    appearanceSafeSet(head, "Transparency", 1)
-    appearanceSafeSet(head, "LocalTransparencyModifier", 1)
+        -- Original head stays present for attachments/animations but is hidden.
+        appearanceSafeSet(head, "Transparency", 1)
+        appearanceSafeSet(head, "LocalTransparencyModifier", 1)
 
-    local texture = runtime.GetFaceTexture(key)
-    if texture and entry.Decal
-        and (entry.LastAppliedTexture ~= texture or entry.Decal.Texture ~= texture) then
-        appearanceSafeSet(entry.Decal, "Texture", texture)
-        entry.LastAppliedTexture = texture
-    end
+        local texture = runtime.GetFaceTexture(key)
+        if texture and entry.Decal
+            and (entry.LastAppliedTexture ~= texture or entry.Decal.Texture ~= texture) then
+            appearanceSafeSet(entry.Decal, "Texture", texture)
+            entry.LastAppliedTexture = texture
+        end
 
-    local hidden = runtime.Appearance.Enabled.Headless == true
-    local hiddenTransparency = hidden and 1 or 0
-    if entry.LastHidden ~= hidden or part.Transparency ~= hiddenTransparency
-        or (entry.Decal and entry.Decal.Transparency ~= hiddenTransparency) then
+        local hidden = runtime.Appearance.Enabled.Headless == true
         entry.LastHidden = hidden
+        local hiddenTransparency = hidden and 1 or 0
         appearanceSafeSet(part, "Transparency", hiddenTransparency)
         if entry.Decal then appearanceSafeSet(entry.Decal, "Transparency", hiddenTransparency) end
+
+        if not entry.Static then
+            local headColor = head.Color
+            if entry.LastColor ~= headColor or part.Color ~= headColor then
+                entry.LastColor = headColor
+                appearanceSafeSet(part, "Color", headColor)
+            end
+            local castShadow = head.CastShadow
+            if entry.LastCastShadow ~= castShadow or part.CastShadow ~= castShadow then
+                entry.LastCastShadow = castShadow
+                appearanceSafeSet(part, "CastShadow", castShadow)
+            end
+
+            local headScale = entry.HeadScale or 1
+            local scaleValue = entry.HeadScaleValue
+            if not scaleValue or not scaleValue.Parent then
+                local humanoid = entry.Humanoid
+                if not humanoid or humanoid.Parent ~= model then
+                    humanoid = model:FindFirstChildOfClass("Humanoid")
+                    entry.Humanoid = humanoid
+                end
+                scaleValue = humanoid and humanoid:FindFirstChild("HeadScale")
+                if scaleValue and scaleValue:IsA("NumberValue") then
+                    entry.HeadScaleValue = scaleValue
+                else
+                    entry.HeadScaleValue = nil
+                    scaleValue = nil
+                end
+            end
+
+            if scaleValue then
+                headScale = math.clamp(tonumber(scaleValue.Value) or headScale, 0.5, 2)
+                entry.HeadScale = headScale
+            elseif not entry.HeadScale then
+                headScale = getClassicFaceHeadScale(model)
+                entry.HeadScale = headScale
+            end
+
+            local mesh = entry.Mesh
+            if mesh then
+                local targetMeshScale = Vector3.new(1.25, 1.25, 1.25) * headScale
+                if entry.LastAppliedHeadScale ~= headScale or mesh.Scale ~= targetMeshScale then
+                    entry.LastAppliedHeadScale = headScale
+                    mesh.Scale = targetMeshScale
+                end
+            end
+        end
     end
 
     if not entry.Static then
-        -- XERO_PERF_FACE_SYNC: sólo CFrame/LTM son realmente dinámicos por frame.
+        -- Pose remains full-rate so the face never jitters. Keep the original head
+        -- hidden here because CameraModule may rewrite LTM every frame; using a
+        -- PropertyChanged guard for that would create more callbacks than this check.
+        appearanceSafeSet(head, "Transparency", 1)
+        appearanceSafeSet(head, "LocalTransparencyModifier", 1)
         appearanceSafeSet(part, "CFrame", head.CFrame)
 
-        local headColor = head.Color
-        if entry.LastColor ~= headColor or part.Color ~= headColor then
-            entry.LastColor = headColor
-            appearanceSafeSet(part, "Color", headColor)
-        end
-        local castShadow = head.CastShadow
-        if entry.LastCastShadow ~= castShadow or part.CastShadow ~= castShadow then
-            entry.LastCastShadow = castShadow
-            appearanceSafeSet(part, "CastShadow", castShadow)
-        end
-
-        local headScale = entry.HeadScale or 1
-        local scaleValue = entry.HeadScaleValue
-        if not scaleValue or not scaleValue.Parent then
-            local humanoid = entry.Humanoid
-            if not humanoid or humanoid.Parent ~= model then
-                humanoid = model:FindFirstChildOfClass("Humanoid")
-                entry.Humanoid = humanoid
+        local hidden = entry.LastHidden == true
+        if hidden then
+            appearanceSafeSet(part, "LocalTransparencyModifier", 1)
+        else
+            if cameraTransparency == nil then
+                cameraTransparency = 0
+                local currentCamera = workspace.CurrentCamera
+                if currentCamera then
+                    local cameraDelta = currentCamera.Focus.Position - currentCamera.CFrame.Position
+                    local distanceSq = cameraDelta:Dot(cameraDelta)
+                    if distanceSq < 4 then
+                        local distance = math.sqrt(distanceSq)
+                        cameraTransparency = 1 - (distance - 0.5) / 1.5
+                        if cameraTransparency < 0.5 then cameraTransparency = 0 end
+                        cameraTransparency = math.clamp(cameraTransparency, 0, 1)
+                    end
+                end
             end
-            scaleValue = humanoid and humanoid:FindFirstChild("HeadScale")
-            if scaleValue and scaleValue:IsA("NumberValue") then
-                entry.HeadScaleValue = scaleValue
-            else
-                entry.HeadScaleValue = nil
-                scaleValue = nil
-            end
+            appearanceSafeSet(part, "LocalTransparencyModifier", cameraTransparency)
         end
-
-        if scaleValue then
-            headScale = math.clamp(tonumber(scaleValue.Value) or headScale, 0.5, 2)
-            entry.HeadScale = headScale
-        elseif not entry.HeadScale then
-            headScale = getClassicFaceHeadScale(model)
-            entry.HeadScale = headScale
-        end
-
-        local mesh = entry.Mesh
-        if mesh then
-            local targetMeshScale = Vector3.new(1.25, 1.25, 1.25) * headScale
-            if entry.LastAppliedHeadScale ~= headScale or mesh.Scale ~= targetMeshScale then
-                entry.LastAppliedHeadScale = headScale
-                mesh.Scale = targetMeshScale
-            end
-        end
-
-        -- El visual está fuera del Character/overlay, por lo que CameraModule no lo
-        -- desvanece automáticamente en primera persona. Replicamos sólo ese fade.
-        local cameraTransparency = 0
-        local currentCamera = workspace.CurrentCamera
-        if currentCamera then
-            local cameraDelta = currentCamera.Focus.Position - currentCamera.CFrame.Position
-            local distanceSq = cameraDelta:Dot(cameraDelta)
-            if distanceSq < 4 then
-                local distance = math.sqrt(distanceSq)
-                cameraTransparency = 1 - (distance - 0.5) / 1.5
-                if cameraTransparency < 0.5 then cameraTransparency = 0 end
-                cameraTransparency = math.clamp(cameraTransparency, 0, 1)
-            end
-        end
-        appearanceSafeSet(part, "LocalTransparencyModifier", hidden and 1 or cameraTransparency)
     end
 
     return true
@@ -13109,11 +13178,30 @@ function runtime.EnsureFaceClassicSync()
 
     runtime.Appearance.FaceClassicSyncConnection = runtime.Track(RunService.RenderStepped:Connect(function()
         local anyLive = false
+        local sharedCameraTransparency = nil
+        local cameraTransparencyReady = false
+
         for model, entry in pairs(runtime.Appearance.FaceClassicVisuals) do
-            -- El overlay clonado ya se actualiza al final de su propio syncPose.
-            -- No lo repetimos en este RenderStepped para evitar un callback duplicado.
+            -- Avatar clone already aligns its face inside the clone pose callback.
             if entry and not entry.Static and not runtime.FaceClassicUsesAvatarCloneSync(model) then
-                if runtime.SyncFaceClassicVisual(model) then anyLive = true end
+                if entry.LastHidden ~= true and not cameraTransparencyReady then
+                    cameraTransparencyReady = true
+                    sharedCameraTransparency = 0
+                    local currentCamera = workspace.CurrentCamera
+                    if currentCamera then
+                        local cameraDelta = currentCamera.Focus.Position - currentCamera.CFrame.Position
+                        local distanceSq = cameraDelta:Dot(cameraDelta)
+                        if distanceSq < 4 then
+                            local distance = math.sqrt(distanceSq)
+                            sharedCameraTransparency = 1 - (distance - 0.5) / 1.5
+                            if sharedCameraTransparency < 0.5 then sharedCameraTransparency = 0 end
+                            sharedCameraTransparency = math.clamp(sharedCameraTransparency, 0, 1)
+                        end
+                    end
+                end
+                if runtime.SyncFaceClassicVisual(model, true, sharedCameraTransparency) then
+                    anyLive = true
+                end
             end
         end
         if not anyLive then
@@ -13179,8 +13267,29 @@ function runtime.CreateFaceClassicVisual(model, texture)
         Decal = decal,
         HeadScale = headScale,
         Static = not isLive,
+        Connections = {},
     }
     runtime.Appearance.FaceClassicVisuals[model] = entry
+
+    if isLive then
+        -- R62 PERF: properties that used to be polled every RenderStepped are guarded
+        -- by signals. RenderStepped now only aligns CFrame + first-person fade.
+        local function syncStyle()
+            if runtime.Alive and runtime.Appearance.FaceClassicVisuals[model] == entry then
+                runtime.SyncFaceClassicVisual(model, false)
+            end
+        end
+        entry.Connections[#entry.Connections + 1] = head:GetPropertyChangedSignal("Color"):Connect(syncStyle)
+        entry.Connections[#entry.Connections + 1] = head:GetPropertyChangedSignal("CastShadow"):Connect(syncStyle)
+
+        local humanoid = model:FindFirstChildOfClass("Humanoid")
+        entry.Humanoid = humanoid
+        local scaleValue = humanoid and humanoid:FindFirstChild("HeadScale")
+        if scaleValue and scaleValue:IsA("NumberValue") then
+            entry.HeadScaleValue = scaleValue
+            entry.Connections[#entry.Connections + 1] = scaleValue:GetPropertyChangedSignal("Value"):Connect(syncStyle)
+        end
+    end
 
     if isLive then
         part.Anchored = true

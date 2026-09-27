@@ -7286,15 +7286,26 @@ queueVictimDeath = function(player, character, hum)
         return
     end
 
-    -- R36 melee fast-path: Tool.Activated/Touched only PRE-ARMS a target. We still
-    -- wait for this Humanoid to actually die, so a non-lethal stab never fires an
-    -- effect. This removes the extra kill-counter delay for knives.
+    -- R61 melee fast-path: Touched remains the strongest proof, but on PC the
+    -- exact enemy under the mouse is also pre-armed synchronously on Tool.Activated.
+    -- We STILL require this exact Humanoid to reach Health <= 0, so a non-lethal
+    -- stab never fires an effect. Mouse pre-arm uses a shorter window to avoid
+    -- attributing an unrelated nearby death to an old knife click.
     local rt = ENV.__XERO_DEATH_BRIDGE_RUNTIME
     local melee = rt and rt.RecentMelee
-    if hum.Health <= 0 and melee and melee.Source == "Touched" and melee.Humanoid == hum and os.clock() - (melee.At or 0) <= 1.05 then
-        rt.RecentMelee = nil
-        triggerVictim(player, character, hum, "cuchillo local confirmado por muerte")
-        return
+    if hum.Health <= 0 and melee and melee.Humanoid == hum then
+        local meleeAge = os.clock() - (melee.At or 0)
+        local source = melee.Source
+        local confirmedMelee = (source == "Touched" and meleeAge <= 1.05)
+            or (source == "mouse" and meleeAge <= 0.55)
+        if confirmedMelee then
+            rt.RecentMelee = nil
+            triggerVictim(player, character, hum,
+                source == "Touched"
+                    and "cuchillo local confirmado por contacto+muerte"
+                    or "cuchillo local confirmado por objetivo+muerte")
+            return
+        end
     end
 
     -- Some local kill-confirm signals arrive a fraction before Humanoid.Died.
@@ -7725,6 +7736,14 @@ ENV.__XERO_DEATH_BRIDGE_RUNTIME.HookMeleeTool = function(tool)
     killSignalConnections[#killSignalConnections + 1] = tool.Activated:Connect(function()
         if not rt.Alive or not enabled or tool.Parent ~= LP.Character then return end
         rt.RecentMeleeAttackAt = os.clock()
+
+        -- R61: pre-arm the exact mouse target in THIS Activated callback, before
+        -- HealthChanged(0) can arrive. FindMeleeTarget may keep a nearest fallback,
+        -- but the instant death path only trusts mouse/Touched, never nearest.
+        if rt.FindMeleeTarget then
+            rt.FindMeleeTarget(tool)
+        end
+
         attackSerial += 1
         local serial = attackSerial
         -- Touched may be absent for an already-overlapping knife. Sample once in

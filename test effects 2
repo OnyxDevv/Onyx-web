@@ -1,4 +1,4 @@
--- XeroHub | DUELS MURDERS VS SHERIFF | Kevin test
+-- XeroHub | DUELS MURDERS VS SHERIFF | Kevin PRUEBAS
 
 local SoundCatalogCore = {
     TARGET_SOUND_ID = "10209603",
@@ -353,13 +353,13 @@ end
 runtimeEnv.__ILUNX_RUNTIME = runtime
 
 -- ==========================================================
--- R48 · TEAM CORPSE CACHE
+-- R50 · ROUND CORPSE CACHE
 -- Event-driven cache keyed by the actual corpse Model.
--- Expensive descendant capture happens ONCE when a teammate dies / corpse appears,
+-- Expensive descendant capture happens ONCE when any player corpse appears,
 -- not every time LocalPlayer gets a kill.
 -- ==========================================================
 runtime.TeamCorpseCache = setmetatable({}, {__mode = "k"})
-runtime.RecentTeammateDeaths = {}
+runtime.RecentRoundDeaths = {}
 runtime.TeamCorpseGeneration = 0
 runtime.TeamCorpseProtectionUntil = 0
 runtime.TeamCorpseProtectionSerial = 0
@@ -368,6 +368,7 @@ runtime.ClearTeamCorpseCache = function()
     runtime.TeamCorpseGeneration = (runtime.TeamCorpseGeneration or 0) + 1
     runtime.TeamCorpseProtectionSerial = (runtime.TeamCorpseProtectionSerial or 0) + 1
     runtime.TeamCorpseProtectionUntil = 0
+    runtime.TeamCorpseProtectionExemptUserId = nil
 
     for model, entry in pairs(runtime.TeamCorpseCache or {}) do
         if entry then
@@ -384,10 +385,10 @@ runtime.ClearTeamCorpseCache = function()
         runtime.TeamCorpseCache[model] = nil
     end
 
-    table.clear(runtime.RecentTeammateDeaths)
+    table.clear(runtime.RecentRoundDeaths)
 end
 
-local TEAM_CORPSE_BLOCK_CLASSES = {
+local ROUND_CORPSE_BLOCK_CLASSES = {
     ParticleEmitter = true,
     Beam = true,
     Trail = true,
@@ -398,7 +399,7 @@ local TEAM_CORPSE_BLOCK_CLASSES = {
     Sound = true,
 }
 
-local function teamCorpseLooksLikeBody(model)
+local function roundCorpseLooksLikeBody(model)
     if not model or not model:IsA("Model") or not model.Parent then return false end
 
     local bodyParts = 0
@@ -421,7 +422,7 @@ local function teamCorpseLooksLikeBody(model)
     return bodyParts >= 3 and totalParts >= 4
 end
 
-local function teamCorpsePosition(model)
+local function roundCorpsePosition(model)
     if not model then return nil end
     local root = model:FindFirstChild("HumanoidRootPart", true)
         or model:FindFirstChild("UpperTorso", true)
@@ -445,10 +446,12 @@ runtime.RegisterTeamCorpse = function(model, userId)
     local existing = runtime.TeamCorpseCache[model]
     if existing then
         existing.UserId = userId
-        existing.ActiveUntil = math.max(
-            existing.ActiveUntil or 0,
-            runtime.TeamCorpseProtectionUntil or 0
-        )
+        if tonumber(userId) ~= tonumber(runtime.TeamCorpseProtectionExemptUserId) then
+            existing.ActiveUntil = math.max(
+                existing.ActiveUntil or 0,
+                runtime.TeamCorpseProtectionUntil or 0
+            )
+        end
         return existing
     end
 
@@ -456,7 +459,11 @@ runtime.RegisterTeamCorpse = function(model, userId)
         Model = model,
         UserId = userId,
         Generation = runtime.TeamCorpseGeneration or 0,
-        ActiveUntil = runtime.TeamCorpseProtectionUntil or 0,
+        ActiveUntil = (
+            tonumber(userId) ~= tonumber(runtime.TeamCorpseProtectionExemptUserId)
+            and (runtime.TeamCorpseProtectionUntil or 0)
+            or 0
+        ),
         Parts = setmetatable({}, {__mode = "k"}),
         Meshes = setmetatable({}, {__mode = "k"}),
         Images = setmetatable({}, {__mode = "k"}),
@@ -467,12 +474,17 @@ runtime.RegisterTeamCorpse = function(model, userId)
     }
 
     local function active()
-        return runtime.Alive
-            and entry.Generation == (runtime.TeamCorpseGeneration or 0)
-            and os.clock() <= math.max(
-                entry.ActiveUntil or 0,
-                runtime.TeamCorpseProtectionUntil or 0
-            )
+        if not runtime.Alive
+            or entry.Generation ~= (runtime.TeamCorpseGeneration or 0) then
+            return false
+        end
+
+        local globalUntil = runtime.TeamCorpseProtectionUntil or 0
+        if tonumber(entry.UserId) == tonumber(runtime.TeamCorpseProtectionExemptUserId) then
+            globalUntil = 0
+        end
+
+        return os.clock() <= math.max(entry.ActiveUntil or 0, globalUntil)
     end
 
     local function withRestoreLock(obj, fn)
@@ -641,7 +653,7 @@ runtime.RegisterTeamCorpse = function(model, userId)
     entry.Connections[#entry.Connections + 1] = model.DescendantAdded:Connect(function(obj)
         if not runtime.Alive or not obj or not obj.Parent then return end
 
-        if active() and TEAM_CORPSE_BLOCK_CLASSES[obj.ClassName] then
+        if active() and ROUND_CORPSE_BLOCK_CLASSES[obj.ClassName] then
             if obj:IsA("Sound") then
                 pcall(function()
                     obj.Volume = 0
@@ -676,19 +688,16 @@ runtime.RegisterTeamCorpse = function(model, userId)
     return entry
 end
 
-runtime.NoteTeammateDeath = function(targetPlayer, character, deathPosition)
+runtime.NoteRoundDeath = function(targetPlayer, character, deathPosition)
     if not runtime.Alive or not targetPlayer or targetPlayer == player then return end
 
-    local state = runtime.TeamRoundState
-    local known = state and state.KnownTeammates
-        and state.KnownTeammates[targetPlayer.UserId] == true
-    if not known then return end
-
+    -- R50: every dead participant is cached. Killer/team is irrelevant:
+    -- later local effects are allowed to touch ONLY the current victim proxy.
     if character and character.Parent then
         runtime.RegisterTeamCorpse(character, targetPlayer.UserId)
     end
 
-    local list = runtime.RecentTeammateDeaths
+    local list = runtime.RecentRoundDeaths
     local now = os.clock()
     local write = 1
 
@@ -705,42 +714,38 @@ runtime.NoteTeammateDeath = function(targetPlayer, character, deathPosition)
         Player = targetPlayer,
         UserId = targetPlayer.UserId,
         Character = character,
-        Position = deathPosition or teamCorpsePosition(character),
+        Position = deathPosition or roundCorpsePosition(character),
         At = now,
     }
 end
 
-runtime.TryCacheTeamCorpse = function(model)
+runtime.TryCacheRoundCorpse = function(model)
     if not runtime.Alive or not model or not model:IsA("Model") or not model.Parent then
         return nil
     end
 
     local cached = runtime.TeamCorpseCache[model]
     if cached then return cached end
-    if not teamCorpseLooksLikeBody(model) then return nil end
+    if not roundCorpseLooksLikeBody(model) then return nil end
 
-    local state = runtime.TeamRoundState
-    local teammates = state and state.KnownTeammates
-    if type(teammates) ~= "table" then return nil end
-
-    -- Strong identity first: exact UserId attributes.
+    -- Strong identity first: exact UserId attributes for ANY player.
     local okAttrs, attrs = pcall(function() return model:GetAttributes() end)
     if okAttrs and type(attrs) == "table" then
         for key, value in pairs(attrs) do
             local k = string.lower(tostring(key))
             if k == "userid" or k == "playerid" or k == "ownerid" then
                 local userId = tonumber(value)
-                if userId and teammates[userId] == true then
+                if userId and Players:GetPlayerByUserId(userId) then
                     return runtime.RegisterTeamCorpse(model, userId)
                 end
             end
         end
     end
 
-    -- Exact Player/DisplayName match for corpse clones that keep the avatar name.
+    -- Exact username/display name match.
     local modelName = string.lower(tostring(model.Name))
     for _, p in ipairs(Players:GetPlayers()) do
-        if teammates[p.UserId] == true then
+        if p ~= player then
             local username = string.lower(tostring(p.Name))
             local display = string.lower(tostring(p.DisplayName))
             if modelName == username or (display ~= "" and modelName == display) then
@@ -749,21 +754,18 @@ runtime.TryCacheTeamCorpse = function(model)
         end
     end
 
-    -- Last fallback: only during the short window after a KNOWN teammate death,
-    -- and only when exactly one candidate matches spatially.
-    local pos = teamCorpsePosition(model)
+    -- Last fallback: short death window + spatial match.
+    -- If two deaths could match, we refuse to guess.
+    local pos = roundCorpsePosition(model)
     if not pos then return nil end
 
     local now = os.clock()
     local match = nil
-    for _, item in ipairs(runtime.RecentTeammateDeaths) do
-        if item and now - (item.At or 0) <= 1.35
-            and item.Position and teammates[item.UserId] == true then
-
+    for _, item in ipairs(runtime.RecentRoundDeaths) do
+        if item and now - (item.At or 0) <= 1.35 and item.Position then
             local delta = pos - item.Position
             if delta:Dot(delta) <= 484 then -- 22^2
                 if match then
-                    -- Ambiguous = do nothing. Never guess between two teammates.
                     return nil
                 end
                 match = item
@@ -777,8 +779,9 @@ runtime.TryCacheTeamCorpse = function(model)
     return nil
 end
 
-runtime.ArmTeamCorpseProtection = function(duration)
+runtime.ArmRoundCorpseProtection = function(duration, exemptUserId)
     duration = math.max(0.25, tonumber(duration) or 2.70)
+    exemptUserId = tonumber(exemptUserId)
 
     local now = os.clock()
     local untilAt = now + duration
@@ -787,12 +790,14 @@ runtime.ArmTeamCorpseProtection = function(duration)
         untilAt
     )
     runtime.TeamCorpseProtectionSerial = (runtime.TeamCorpseProtectionSerial or 0) + 1
+    runtime.TeamCorpseProtectionExemptUserId = exemptUserId
     local serial = runtime.TeamCorpseProtectionSerial
 
-    -- Cheap pass over the small teammate-corpse cache only.
+    -- Cheap pass over the small round-corpse cache only.
     for model, entry in pairs(runtime.TeamCorpseCache or {}) do
         if model and model.Parent and entry
-            and entry.Generation == (runtime.TeamCorpseGeneration or 0) then
+            and entry.Generation == (runtime.TeamCorpseGeneration or 0)
+            and (not exemptUserId or tonumber(entry.UserId) ~= exemptUserId) then
 
             entry.ActiveUntil = math.max(entry.ActiveUntil or 0, untilAt)
 
@@ -821,6 +826,7 @@ runtime.ArmTeamCorpseProtection = function(duration)
         if os.clock() < (runtime.TeamCorpseProtectionUntil or 0) then return end
 
         runtime.TeamCorpseProtectionUntil = 0
+        runtime.TeamCorpseProtectionExemptUserId = nil
 
         for model, entry in pairs(runtime.TeamCorpseCache or {}) do
             if model and model.Parent and entry then
@@ -6231,9 +6237,10 @@ local function runNativeOnVictim(name, victim, statusLabel, triggerInfo)
     -- R40: first audio playback remains native; only replays AFTER the first pass
     -- are blocked. This is safe to install before Preview.play because it never
     -- pre-mutes the initial candidate.
-    -- R48: O(known teammate corpses), no Workspace/body scan at kill time.
-    if runtime.ArmTeamCorpseProtection then
-        runtime.ArmTeamCorpseProtection(2.70)
+    -- R50: every OLD corpse is protected; only the current victim is exempt.
+    -- O(cached corpses), no Workspace/body scan at kill time.
+    if runtime.ArmRoundCorpseProtection then
+        runtime.ArmRoundCorpseProtection(2.70, triggerInfo and triggerInfo.playerUserId)
     end
     ENV.__XERO_DEATH_PROXY.GuardEffectSounds(victim, asset, name)
     ENV.__XERO_DEATH_PROXY.GuardOneShotVFX(victim)
@@ -6604,9 +6611,9 @@ local function rememberDeathModel(model)
         and model:GetAttribute("XeroDeathVisualProxy") ~= true then
         recentDeathModels[model] = os.clock()
 
-        -- R48: event-driven teammate corpse association. No per-kill world scan.
-        if runtime.TryCacheTeamCorpse then
-            pcall(runtime.TryCacheTeamCorpse, model)
+        -- R50: event-driven round corpse association. No per-kill world scan.
+        if runtime.TryCacheRoundCorpse then
+            pcall(runtime.TryCacheRoundCorpse, model)
         end
     end
 end
@@ -6757,6 +6764,7 @@ local function triggerVictim(player, character, hum, proof)
     lastAppliedAt = os.clock()
     info.confirmedAt = lastAppliedAt
     info.proof = proof
+    info.playerUserId = player and tonumber(player.UserId) or nil
     local deathPosition = info.deathPosition or modelPosition(character)
 
     status.Text =
@@ -7122,9 +7130,9 @@ local function hookCharacter(player, character)
         info.connections[#info.connections + 1] = hum.Died:Connect(function()
             deathRuntime.TraceMark("Died", character)
 
-            -- R48: teammates are cached independently of whether death effects are enabled.
-            if runtime.NoteTeammateDeath then
-                pcall(runtime.NoteTeammateDeath, player, character, modelPosition(character))
+            -- R50: every player corpse is cached, regardless of who killed them.
+            if runtime.NoteRoundDeath then
+                pcall(runtime.NoteRoundDeath, player, character, modelPosition(character))
             end
 
             queueVictimDeath(player, character, hum)
@@ -7205,8 +7213,8 @@ local function hookPlayer(player)
         local hum = character and character:FindFirstChildOfClass("Humanoid")
         local info = hum and trackedHumanoids[hum]
 
-        if hum and hum.Health <= 0 and runtime.NoteTeammateDeath then
-            pcall(runtime.NoteTeammateDeath, player, character, modelPosition(character))
+        if hum and hum.Health <= 0 and runtime.NoteRoundDeath then
+            pcall(runtime.NoteRoundDeath, player, character, modelPosition(character))
         end
         if hum and info and not info.triggered then
             deathRuntime.TraceMark("CharacterRemoving", character)
@@ -11399,13 +11407,6 @@ local function rememberTeammate(targetPlayer)
     teamRoundState.MarkerSystemSeen = true
     teamRoundState.KnownTeammates[targetPlayer.UserId] = true
     enemyCache[targetPlayer] = false
-
-    -- If the marker was observed just before/at death, keep ownership attached.
-    local char = targetPlayer.Character
-    local hum = char and char:FindFirstChildOfClass("Humanoid")
-    if char and hum and hum.Health <= 0 and runtime.NoteTeammateDeath then
-        pcall(runtime.NoteTeammateDeath, targetPlayer, char, teamCorpsePosition(char))
-    end
 
     return true
 end

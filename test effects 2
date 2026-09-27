@@ -1,4 +1,4 @@
--- XeroHub | DUELS MURDERS VS SHERIFF | Kevin pruebas
+-- XeroHub | DUELS MURDERS VS SHERIFF | R45
 
 local SoundCatalogCore = {
     TARGET_SOUND_ID = "10209603",
@@ -3526,6 +3526,23 @@ local function scheduleFrostbiteReal(dummy, cleaner, originalAccessoryAppearance
     local watched = setmetatable({}, {__mode = "k"})
     local pendingAccessory = setmetatable({}, {__mode = "k"})
     local alive = true
+    local jointRepairQueued = false
+    local accessoryFlushQueued = false
+
+    -- R54: one whole-avatar joint scan for a burst of accessory changes.
+    local function queueJointRepair()
+        if not alive or jointRepairQueued then return end
+        jointRepairQueued = true
+        task.defer(function()
+            if alive and dummy and dummy.Parent then
+                local state = ENV.__XERO_DEATH_PROXY
+                if state and type(state.RepairAccessoryJoints) == "function" then
+                    pcall(state.RepairAccessoryJoints, dummy, nil)
+                end
+            end
+            jointRepairQueued = false
+        end)
+    end
 
     local function track(conn)
         if conn then accessoryConnections[#accessoryConnections + 1] = conn end
@@ -3539,11 +3556,7 @@ local function scheduleFrostbiteReal(dummy, cleaner, originalAccessoryAppearance
             return
         end
 
-        -- Repara el AccessoryWeld si DeathEffectPreview lo tocó/recreó.
-        local state = ENV.__XERO_DEATH_PROXY
-        if state and type(state.RepairAccessoryJoints) == "function" then
-            pcall(state.RepairAccessoryJoints, dummy, nil)
-        end
+        queueJointRepair()
 
         -- Hipotermia debe mantener negros TODOS los accesorios, no sólo el cabello.
         blackenAccessory(accessory)
@@ -3564,9 +3577,17 @@ local function scheduleFrostbiteReal(dummy, cleaner, originalAccessoryAppearance
     local function queueAccessory(accessory)
         if not alive or pendingAccessory[accessory] then return end
         pendingAccessory[accessory] = true
+        if accessoryFlushQueued then return end
+        accessoryFlushQueued = true
         task.defer(function()
-            pendingAccessory[accessory] = nil
-            enforceAccessory(accessory)
+            accessoryFlushQueued = false
+            if not alive or not dummy or not dummy.Parent then
+                table.clear(pendingAccessory)
+                return
+            end
+            local batch = pendingAccessory
+            pendingAccessory = setmetatable({}, {__mode = "k"})
+            for item in pairs(batch) do enforceAccessory(item) end
         end)
     end
 
@@ -3695,6 +3716,7 @@ local function scheduleFrostbiteReal(dummy, cleaner, originalAccessoryAppearance
     local function stop()
         if not alive then return end
         alive = false
+        table.clear(pendingAccessory)
         for _, conn in ipairs(accessoryConnections) do
             pcall(function() conn:Disconnect() end)
         end
@@ -5570,28 +5592,42 @@ ENV.__XERO_DEATH_PROXY.BuildReadyMeta = function(proxy, source)
 end
 
 ENV.__XERO_DEATH_PROXY.BuildTemplate = function(player, character, hum, forceRefresh)
-    if not host.Alive() or not hum or ENV.__XERO_DEATH_PROXY.TemplateBuilding[hum] then return end
-    if ENV.__XERO_DEATH_PROXY.TemplateByHumanoid[hum] and not forceRefresh then return end
+    local state = ENV.__XERO_DEATH_PROXY
+    if not host.Alive() or not hum or not character or hum.Health <= 0
+        or hum.Parent ~= character or not character.Parent
+        or (player and player.Character ~= character) or state.TemplateBuilding[hum] then return end
+    if state.TemplateByHumanoid[hum] and not forceRefresh then return end
 
-    ENV.__XERO_DEATH_PROXY.TemplateBuilding[hum] = true
-
-    task.spawn(function()
-        if not host.Alive() then return end
+    state.TemplateBuilding[hum] = true
+    -- Initial preparation stays immediate. Forced refresh requests in the same
+    -- scheduler slice share one snapshot of the latest appearance.
+    local scheduleBuild = forceRefresh and task.defer or task.spawn
+    scheduleBuild(function()
+        if not host.Alive() or ENV.__XERO_DEATH_PROXY ~= state
+            or hum.Health <= 0 or hum.Parent ~= character or not character.Parent
+            or (player and player.Character ~= character) then
+            state.TemplateBuilding[hum] = nil
+            return
+        end
         local template
         if character and character.Parent then
-            template = select(1, ENV.__XERO_DEATH_PROXY.CopyExactCharacter(character))
+            template = select(1, state.CopyExactCharacter(character))
         end
 
-        if template and not host.Alive() then template:Destroy(); return end
+        if template and not host.Alive() then
+            template:Destroy()
+            state.TemplateBuilding[hum] = nil
+            return
+        end
         if template then
             template.Name = "XeroDeathTemplate_" .. tostring(player and player.Name or "Enemy")
             template.Parent = nil
 
-            local old = ENV.__XERO_DEATH_PROXY.TemplateByHumanoid[hum]
+            local old = state.TemplateByHumanoid[hum]
             if old and old ~= template then
                 pcall(function() old:Destroy() end)
             end
-            ENV.__XERO_DEATH_PROXY.TemplateByHumanoid[hum] = template
+            state.TemplateByHumanoid[hum] = template
 
             local ready
             local okReady, readyClone = pcall(function() return template:Clone() end)
@@ -5599,19 +5635,19 @@ ENV.__XERO_DEATH_PROXY.BuildTemplate = function(player, character, hum, forceRef
                 ready = readyClone
                 ready.Name = "XeroReadyDeathProxy_" .. tostring(player and player.Name or "Enemy")
                 ready.Parent = nil
-                ENV.__XERO_DEATH_PROXY.Sanitize(ready)
-                ENV.__XERO_DEATH_PROXY.BuildReadyMeta(ready, character)
+                state.Sanitize(ready)
+                state.BuildReadyMeta(ready, character)
             end
 
-            local oldReady = ENV.__XERO_DEATH_PROXY.ReadyProxyByHumanoid[hum]
+            local oldReady = state.ReadyProxyByHumanoid[hum]
             if oldReady and oldReady ~= ready then
-                ENV.__XERO_DEATH_PROXY.ReadyProxyMeta[oldReady] = nil
+                state.ReadyProxyMeta[oldReady] = nil
                 pcall(function() oldReady:Destroy() end)
             end
-            ENV.__XERO_DEATH_PROXY.ReadyProxyByHumanoid[hum] = ready
+            state.ReadyProxyByHumanoid[hum] = ready
         end
 
-        ENV.__XERO_DEATH_PROXY.TemplateBuilding[hum] = nil
+        state.TemplateBuilding[hum] = nil
     end)
 end
 

@@ -1,4 +1,4 @@
--- XeroHub | DUELS MURDERS VS SHERIFF | r55
+-- XeroHub | DUELS MURDERS VS SHERIFF | R55 FIX AIM/AUTOSHOOT
 
 local SoundCatalogCore = {
     TARGET_SOUND_ID = "10209603",
@@ -20369,47 +20369,31 @@ function runtime.InstallAimHooks()
     if type(hookmetamethod) ~= "function" then return false end
 
     local namecallHook = wrapAimHook(function(self, ...)
-        -- R55: most namecalls are not weapon rays. Exit before caller checks,
-        -- target properties, camera reads or vector calculations.
-        if self ~= workspace then return state.OldNamecall(self, ...) end
         local target = state.RoundActive and state.Wanted and state.Target or nil
-        if not target then return state.OldNamecall(self, ...) end
-        local method = getnamecallmethod()
-        if method ~= "Raycast" and method ~= "FindPartOnRay"
-            and method ~= "FindPartOnRayWithIgnoreList" then
-            return state.OldNamecall(self, ...)
-        end
-        if checkcaller() then return state.OldNamecall(self, ...) end
-        if not target.Parent then
-            state.Target = nil
-            return state.OldNamecall(self, ...)
-        end
-        local currentCamera = workspace.CurrentCamera
-        if not currentCamera then return state.OldNamecall(self, ...) end
-        local cameraPosition = currentCamera.CFrame.Position
-        if method == "Raycast" then
-            local origin, direction, params = ...
-            if typeof(origin) == "Vector3" and typeof(direction) == "Vector3"
-                and direction:Dot(direction) > 25 then
-                local fromCamera = origin - cameraPosition
-                if fromCamera:Dot(fromCamera) > 1 then
-                    local toTarget = target.Position - origin
-                    if toTarget:Dot(toTarget) > 0 then
-                        return state.OldNamecall(self, origin, toTarget.Unit * 5000, params)
+        if not checkcaller() and target then
+            if target.Parent then
+                local method = getnamecallmethod()
+                if self == workspace then
+                    if method == "Raycast" then
+                        local origin, direction, p3 = ...
+                        if typeof(direction) == "Vector3"
+                            and direction.Magnitude > 5
+                            and (origin - workspace.CurrentCamera.CFrame.Position).Magnitude > 1 then
+                            local newDir = (target.Position - origin).Unit * 5000
+                            return state.OldNamecall(self, origin, newDir, p3)
+                        end
+                    elseif method == "FindPartOnRay" or method == "FindPartOnRayWithIgnoreList" then
+                        local ray, p2, p3, p4 = ...
+                        if typeof(ray) == "Ray"
+                            and ray.Direction.Magnitude > 5
+                            and (ray.Origin - workspace.CurrentCamera.CFrame.Position).Magnitude > 1 then
+                            local newRay = Ray.new(ray.Origin, (target.Position - ray.Origin).Unit * 5000)
+                            return state.OldNamecall(self, newRay, p2, p3, p4)
+                        end
                     end
                 end
-            end
-        else
-            local ray, p2, p3, p4 = ...
-            if typeof(ray) == "Ray" and ray.Direction:Dot(ray.Direction) > 25 then
-                local fromCamera = ray.Origin - cameraPosition
-                if fromCamera:Dot(fromCamera) > 1 then
-                    local toTarget = target.Position - ray.Origin
-                    if toTarget:Dot(toTarget) > 0 then
-                        return state.OldNamecall(self,
-                            Ray.new(ray.Origin, toTarget.Unit * 5000), p2, p3, p4)
-                    end
-                end
+            else
+                state.Target = nil
             end
         end
         return state.OldNamecall(self, ...)
@@ -21052,8 +21036,7 @@ runtime.Track(RunService.Heartbeat:Connect(function(deltaTime)
                         
                         -- 3. CÁLCULO DE VISIBILIDAD (Raycast)
                         local aLaVista = false
-                        -- Visibility ray only drives the adornment color.
-                        if myHead and not hitboxInvisible then
+                        if myHead then
                             local rayDirection = hrp.Position - origin
                             if rayDirection:Dot(rayDirection) < 62500 then
                                 mState.igHB[2] = targetChar
@@ -21174,19 +21157,14 @@ runtime.Track(RunService.Heartbeat:Connect(function(deltaTime)
                                     if enemyDelta:Dot(enemyDelta) <= 640000 then
                                         local targetParts = runtime.CollectTargetParts(enemyChar, "AutoShoot")
                                         if targetParts then
-                                            local filterReady = false
                                             for j = 1, #targetParts do
                                                 local part = targetParts[j]
-                                                local partPosition = part.Position
-                                                local partDelta = partPosition - myPos
+                                                local partDelta = part.Position - myPos
                                                 local distSq = partDelta:Dot(partDelta)
                                                 if distSq < closestTargetDistSq then
-                                                    if not filterReady then
-                                                        mState.igAS[2] = enemyChar
-                                                        mState.pAS.FilterDescendantsInstances = mState.igAS
-                                                        filterReady = true
-                                                    end
-                                                    if not ws_Raycast(workspace, headPos, partPosition - headPos, mState.pAS) then
+                                                    mState.igAS[2] = enemyChar
+                                                    mState.pAS.FilterDescendantsInstances = mState.igAS
+                                                    if not ws_Raycast(workspace, headPos, part.Position - headPos, mState.pAS) then
                                                         closestTargetDistSq = distSq
                                                         closestTargetPart = part
                                                     end

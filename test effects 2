@@ -20664,6 +20664,8 @@ local mState = {
     toolAddedConnection = nil,
     toolRemovedConnection = nil,
     vpX = -1, vpY = -1, centerX = 0, centerY = 0,
+    -- R60: derivados del FOV sólo se recalculan cuando cambia el slider.
+    fovCacheRadius = -1, fovSq = 0, broadFovSq = 0,
     maxEspDistanceSq = MAX_ESP_DISTANCE * MAX_ESP_DISTANCE,
 }
 mState.pHB.FilterType = Enum.RaycastFilterType.Exclude
@@ -21296,15 +21298,25 @@ runtime.Track(RunService.Heartbeat:Connect(function(deltaTime)
                         local shortestDistanceFisica = math.huge 
                         local myPos = localSnapshot.Position
                         local headPos = localSnapshot.HeadPosition or myPos
-                        local viewport = camera.ViewportSize
-                        if viewport.X ~= mState.vpX or viewport.Y ~= mState.vpY then
-                            mState.vpX, mState.vpY = viewport.X, viewport.Y
-                            mState.centerX, mState.centerY = viewport.X * 0.5, viewport.Y * 0.5
+
+                        -- R60 CONSERVATIVE: si el filtro FOV está apagado no tocamos
+                        -- ViewportSize ni recalculamos radios que no se van a usar.
+                        local centerX, centerY, fovSq, broadFovSq
+                        if silentAimFovEnabled then
+                            local viewport = camera.ViewportSize
+                            if viewport.X ~= mState.vpX or viewport.Y ~= mState.vpY then
+                                mState.vpX, mState.vpY = viewport.X, viewport.Y
+                                mState.centerX, mState.centerY = viewport.X * 0.5, viewport.Y * 0.5
+                            end
+                            if mState.fovCacheRadius ~= fovRadius then
+                                mState.fovCacheRadius = fovRadius
+                                mState.fovSq = fovRadius * fovRadius
+                                local broadFov = fovRadius + 150
+                                mState.broadFovSq = broadFov * broadFov
+                            end
+                            centerX, centerY = mState.centerX, mState.centerY
+                            fovSq, broadFovSq = mState.fovSq, mState.broadFovSq
                         end
-                        local centerX, centerY = mState.centerX, mState.centerY
-                        local fovSq = fovRadius * fovRadius
-                        local broadFov = fovRadius + 150
-                        local broadFovSq = broadFov * broadFov
                         
                         mState.igSA[1] = char
 
@@ -21317,10 +21329,11 @@ runtime.Track(RunService.Heartbeat:Connect(function(deltaTime)
                             if enemy.Alive and enemy.Enemy and enemyHrp and enemyPosition then
                                 local enemyDelta = enemyPosition - myPos
                                 if enemyDelta:Dot(enemyDelta) <= 640000 then
+                                    local enemyScreenPos, enemyOnScreen
                                     if silentAimFovEnabled then
-                                        local hrpPos2D, onScreen = camera:WorldToViewportPoint(enemyPosition)
-                                        local dx, dy = hrpPos2D.X - centerX, hrpPos2D.Y - centerY
-                                        if not onScreen or (dx * dx + dy * dy) > broadFovSq then continue end
+                                        enemyScreenPos, enemyOnScreen = camera:WorldToViewportPoint(enemyPosition)
+                                        local dx, dy = enemyScreenPos.X - centerX, enemyScreenPos.Y - centerY
+                                        if not enemyOnScreen or (dx * dx + dy * dy) > broadFovSq then continue end
                                     end
 
                                     local targetParts = runtime.CollectTargetParts(enemyChar, "SilentAim")
@@ -21339,9 +21352,16 @@ runtime.Track(RunService.Heartbeat:Connect(function(deltaTime)
                                             local candidateDistance = math.huge
                                             
                                             if silentAimFovEnabled then
-                                                local hrpPos2D, onScreen = camera:WorldToViewportPoint(partPosition)
+                                                -- Si HumanoidRootPart forma parte de la selección, su
+                                                -- proyección ya se calculó en el broad-phase de este enemigo.
+                                                local partPos2D, onScreen
+                                                if part == enemyHrp then
+                                                    partPos2D, onScreen = enemyScreenPos, enemyOnScreen
+                                                else
+                                                    partPos2D, onScreen = camera:WorldToViewportPoint(partPosition)
+                                                end
                                                 if onScreen then
-                                                    local dx, dy = hrpPos2D.X - centerX, hrpPos2D.Y - centerY 
+                                                    local dx, dy = partPos2D.X - centerX, partPos2D.Y - centerY 
                                                     candidateDistance = dx * dx + dy * dy
                                                     if candidateDistance <= fovSq and candidateDistance < shortestDistToCenter then pasaFiltro = true end
                                                 end

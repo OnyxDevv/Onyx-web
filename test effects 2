@@ -1,4 +1,4 @@
--- XeroHub | DUELS MURDERS VS SHERIFF | Kevin pruebas --
+-- XeroHub | DUELS MURDERS VS SHERIFF | Kevin test
 
 local SoundCatalogCore = {
     TARGET_SOUND_ID = "10209603",
@@ -3878,7 +3878,7 @@ ENV.__XERO_DEATH_PROXY.SoundGuards = setmetatable({}, {__mode = "k"})
 -- Once a logical SoundId has played once, any later replay/copy is suppressed.
 -- Looped is forced false so a long-lived Frostbite/Freeze corpse cannot restart its
 -- death sound while the clone remains visible for the rest of the round.
-ENV.__XERO_DEATH_PROXY.GuardEffectSounds = function(proxy, asset)
+ENV.__XERO_DEATH_PROXY.GuardEffectSounds = function(proxy, asset, effectName)
     local state = ENV.__XERO_DEATH_PROXY
     if not proxy or not proxy.Parent or state.SoundGuards[proxy] then return end
 
@@ -3889,6 +3889,13 @@ ENV.__XERO_DEATH_PROXY.GuardEffectSounds = function(proxy, asset)
     local winnerByKey = {}
     local finishedKeys = {}
     local originalVolume = setmetatable({}, {__mode = "k"})
+
+    -- R46: Freeze occasionally emits the same audible cue through two different
+    -- Sound instances/IDs. For Freeze only, the whole death effect gets ONE audible
+    -- Sound winner. Other effects keep the existing per-SoundId behavior.
+    local strictSingleSound = tostring(effectName or "") == "Freeze"
+    local strictWinner = nil
+    local strictFinished = false
 
     local function keyOf(sound)
         local id = tostring(sound and sound.SoundId or "")
@@ -3950,9 +3957,9 @@ ENV.__XERO_DEATH_PROXY.GuardEffectSounds = function(proxy, asset)
         return false
     end
 
-    local function watch(sound)
+    local function watch(sound, forceRelevant)
         if not alive or not sound or not sound:IsA("Sound") or seen[sound] then return end
-        if not belongs(sound) then return end
+        if not forceRelevant and not belongs(sound) then return end
         seen[sound] = true
         rememberVolume(sound)
 
@@ -3967,6 +3974,13 @@ ENV.__XERO_DEATH_PROXY.GuardEffectSounds = function(proxy, asset)
         local currentlyPlaying = false
         pcall(function() currentlyPlaying = sound.Playing or sound.IsPlaying end)
 
+        if strictSingleSound then
+            if strictFinished or (strictWinner and strictWinner ~= sound) then
+                suppress(sound)
+                return
+            end
+        end
+
         if finishedKeys[key] then
             suppress(sound)
             return
@@ -3979,6 +3993,9 @@ ENV.__XERO_DEATH_PROXY.GuardEffectSounds = function(proxy, asset)
         end
 
         if currentlyPlaying then
+            if strictSingleSound and not strictWinner then
+                strictWinner = sound
+            end
             winnerByKey[key] = sound
             started = true
             firstCycleOpen = true
@@ -3989,6 +4006,9 @@ ENV.__XERO_DEATH_PROXY.GuardEffectSounds = function(proxy, asset)
             local currentKey = keyOf(sound)
             if winnerByKey[currentKey] == sound then
                 finishedKeys[currentKey] = true
+                if strictSingleSound and strictWinner == sound then
+                    strictFinished = true
+                end
                 firstCycleOpen = false
                 -- It already finished naturally. Muting now cannot chop audio,
                 -- but prevents a delayed native :Play() from becoming audible.
@@ -4002,6 +4022,13 @@ ENV.__XERO_DEATH_PROXY.GuardEffectSounds = function(proxy, asset)
         connections[#connections + 1] = sound.Played:Connect(function()
             if not alive or not sound.Parent then return end
             local currentKey = keyOf(sound)
+
+            if strictSingleSound then
+                if strictFinished or (strictWinner and strictWinner ~= sound) then
+                    suppress(sound)
+                    return
+                end
+            end
 
             if finishedKeys[currentKey] then
                 suppress(sound)
@@ -4022,6 +4049,9 @@ ENV.__XERO_DEATH_PROXY.GuardEffectSounds = function(proxy, asset)
                 return
             end
 
+            if strictSingleSound and not strictWinner then
+                strictWinner = sound
+            end
             winnerByKey[currentKey] = sound
             started = true
             firstCycleOpen = true
@@ -4043,12 +4073,22 @@ ENV.__XERO_DEATH_PROXY.GuardEffectSounds = function(proxy, asset)
 
                 if sound.Playing then
                     local currentKey = keyOf(sound)
+
+                    if strictSingleSound
+                        and (strictFinished or (strictWinner and strictWinner ~= sound)) then
+                        suppress(sound)
+                        return
+                    end
+
                     if finishedKeys[currentKey] then
                         suppress(sound)
                     elseif winnerByKey[currentKey]
                         and winnerByKey[currentKey] ~= sound then
                         suppress(sound)
                     elseif not started then
+                        if strictSingleSound and not strictWinner then
+                            strictWinner = sound
+                        end
                         winnerByKey[currentKey] = sound
                         started = true
                         firstCycleOpen = true
@@ -4066,7 +4106,9 @@ ENV.__XERO_DEATH_PROXY.GuardEffectSounds = function(proxy, asset)
             sound:GetPropertyChangedSignal("Volume"):Connect(function()
                 if not alive or not sound.Parent then return end
                 local currentKey = keyOf(sound)
-                if finishedKeys[currentKey]
+                if (strictSingleSound
+                        and (strictFinished or (strictWinner and strictWinner ~= sound)))
+                    or finishedKeys[currentKey]
                     or (winnerByKey[currentKey] and winnerByKey[currentKey] ~= sound) then
                     pcall(function() sound.Volume = 0 end)
                 end
@@ -4086,6 +4128,16 @@ ENV.__XERO_DEATH_PROXY.GuardEffectSounds = function(proxy, asset)
     -- Catch Sounds that Preview reconstructed synchronously before the listener saw them.
     for _, obj in ipairs(proxy:GetDescendants()) do
         if obj:IsA("Sound") then watch(obj) end
+    end
+
+    -- Freeze sometimes plays an asset Sound directly instead of only parenting a
+    -- clone under the proxy. Observe those exact asset Sounds too. We still do NOT
+    -- mute/pre-stop the first playback, so clones inherit their normal Volume.
+    if strictSingleSound and asset then
+        if asset:IsA("Sound") then watch(asset, true) end
+        for _, obj in ipairs(asset:GetDescendants()) do
+            if obj:IsA("Sound") then watch(obj, true) end
+        end
     end
 
     local stopped = false
@@ -5693,7 +5745,7 @@ local function runNativeOnVictim(name, victim, statusLabel, triggerInfo)
     -- R40: first audio playback remains native; only replays AFTER the first pass
     -- are blocked. This is safe to install before Preview.play because it never
     -- pre-mutes the initial candidate.
-    ENV.__XERO_DEATH_PROXY.GuardEffectSounds(victim, asset)
+    ENV.__XERO_DEATH_PROXY.GuardEffectSounds(victim, asset, name)
     ENV.__XERO_DEATH_PROXY.GuardOneShotVFX(victim)
     local cleaner = makeCleaner()
     victimCleaners[victim] = cleaner

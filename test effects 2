@@ -1,4 +1,4 @@
--- XeroHub | DUELS MURDERS VS SHERIFF | Kevin test
+-- XeroHub | DUELS MURDERS VS SHERIFF | Kevin PRUEBAS
 
 local SoundCatalogCore = {
     TARGET_SOUND_ID = "10209603",
@@ -359,6 +359,8 @@ runtimeEnv.__ILUNX_RUNTIME = runtime
 -- not every time LocalPlayer gets a kill.
 -- ==========================================================
 runtime.TeamCorpseCache = setmetatable({}, {__mode = "k"})
+-- Character-scoped ally memory survives transient round-state resets.
+runtime.DeathEffectAlliedCharacters = setmetatable({}, {__mode = "k"})
 runtime.RecentRoundDeaths = {}
 runtime.TeamCorpseGeneration = 0
 runtime.TeamCorpseProtectionUntil = 0
@@ -3270,25 +3272,97 @@ local function forceFreezePass(dummy)
     end
 end
 
-local function scheduleFreezeReal(dummy)
-    -- Re-apply because native preview can add/re-parent visual avatar pieces
-    -- asynchronously after play() returns.
-    for _, delayTime in ipairs({0, .05, .14, .30, .55, .90, 1.35, 1.80}) do
-        task.delay(delayTime, function()
-            forceFreezePass(dummy)
-        end)
+-- R52: self-contained renderer. No Preview/Adapter, Workspace observers,
+-- nearby emitters, real corpse guards, or callbacks with a mutable target.
+local function renderIsolatedFreeze(dummy, asset, cleaner, info)
+    local state = ENV.__XERO_DEATH_PROXY
+    local root = state and state.Root
+    local serial = state and state.KillSerial
+    local round = runtime.TeamRoundState
+    local generation = round and round.Generation
+    local userId = info and tonumber(info.playerUserId)
+    local source = state and state.SourceByProxy and state.SourceByProxy[dummy]
+    local function authorized()
+        if not runtime.Alive or ENV.__XERO_DEATH_PROXY ~= state
+            or not state or state.KillSerial ~= serial
+            or not root or not root.Parent or not dummy or not dummy.Parent
+            or dummy.Parent ~= root or not userId
+            or dummy:GetAttribute("XeroDeathVisualProxy") ~= true
+            or tonumber(dummy:GetAttribute("XeroVictimUserId")) ~= userId then return false end
+        local currentRound = runtime.TeamRoundState
+        if currentRound ~= round or (round and round.Generation ~= generation) then return false end
+        if round and round.KnownTeammates[userId] then return false end
+        if source and runtime.DeathEffectAlliedCharacters[source] then return false end
+        return true
     end
+    if not authorized() then return false end
+    -- One synchronous body pass: lag cannot retarget it to another body.
+    forceFreezePass(dummy)
+    local fallback = dummy:FindFirstChild("HumanoidRootPart")
+        or dummy:FindFirstChild("UpperTorso") or dummy:FindFirstChild("Torso")
+    if not fallback or not fallback:IsA("BasePart") then return true end
 
-    local conn
-    conn = dummy.DescendantAdded:Connect(function()
-        task.defer(function()
-            forceFreezePass(dummy)
-        end)
-    end)
-
-    task.delay(2.0, function()
-        pcall(function() conn:Disconnect() end)
-    end)
+    local soundPlayed = false
+    local function targetPart(object)
+        local node = object.Parent
+        while node and node ~= asset do
+            if node:IsA("BasePart") then
+                local match = dummy:FindFirstChild(node.Name)
+                if match and match:IsA("BasePart") then return match end
+            end
+            node = node.Parent
+        end
+        return fallback
+    end
+    -- Copy inert visual/audio leaves only. Never copy scripts, welds,
+    -- ObjectValues, adapters, or references to world instances.
+    for _, original in ipairs(asset:GetDescendants()) do
+        if not authorized() then return false end
+        if original:IsA("ParticleEmitter") then
+            local part = targetPart(original)
+            local emitter = original:Clone()
+            if emitter then
+                emitter:ClearAllChildren()
+                emitter.Enabled = false
+                local attachment = Instance.new("Attachment")
+                attachment.Name = "XeroFreezeLocal"
+                if original.Parent and original.Parent:IsA("Attachment") then
+                    attachment.CFrame = original.Parent.CFrame
+                end
+                attachment.Parent = part
+                emitter.Parent = attachment
+                cleaner:Add(attachment)
+                local count = tonumber(original:GetAttribute("EmitCount"))
+                    or tonumber(original:GetAttribute("KillEffectEmitCount"))
+                local duration = math.clamp(tonumber(original:GetAttribute("EmitDuration")) or .25, 0, 2)
+                if not count then count = math.max(1, math.ceil(original.Rate * duration)) end
+                count = math.clamp(math.floor(count), 0, 250)
+                local delayTime = math.clamp(tonumber(original:GetAttribute("EmitDelay")) or 0, 0, 3)
+                local function emit()
+                    if authorized() and emitter.Parent == attachment
+                        and attachment.Parent == part and part:IsDescendantOf(dummy) then
+                        emitter:Emit(count)
+                    end
+                end
+                if delayTime > 0 then task.delay(delayTime, emit) else emit() end
+            end
+        elseif original:IsA("Sound") and not soundPlayed and original.SoundId ~= "" then
+            local sound = original:Clone()
+            if sound then
+                sound:ClearAllChildren()
+                sound.Playing = false
+                sound.Looped = false
+                sound.PlayOnRemove = false
+                sound.SoundGroup = nil
+                sound.TimePosition = 0
+                sound.Parent = fallback
+                cleaner:Add(sound)
+                if authorized() then sound:Play() end
+                soundPlayed = true
+            end
+        end
+    end
+    return true
 end
 
 local function tintTreeColorOnly(root, color)
@@ -6224,6 +6298,22 @@ local function runNativeOnVictim(name, victim, statusLabel, triggerInfo)
         return false
     end
 
+    -- Freeze returns BEFORE every shared renderer, global particle observer,
+    -- native adapter and real-corpse protection/muting path.
+    if name == "Freeze" then
+        cleanVictim(victim)
+        local cleaner = makeCleaner()
+        victimCleaners[victim] = cleaner
+        local ok, rendered = pcall(renderIsolatedFreeze, victim, asset, cleaner, triggerInfo)
+        if not ok or rendered ~= true then
+            cleanVictim(victim)
+            if statusLabel then statusLabel.Text = "Freeze cancelado: visual no autorizado." end
+            return false
+        end
+        if statusLabel then statusLabel.Text = "Freeze · víctima confirmada" end
+        return true
+    end
+
     cleanVictim(victim)
 
     local before = nil -- R44: debug snapshot disabled in production
@@ -6295,11 +6385,6 @@ local function runNativeOnVictim(name, victim, statusLabel, triggerInfo)
         schedule1x1x1x1Color(victim)
         bodyPatched = true
         bodyPatchSource = "1x1x1x1 · verde nativo completo"
-
-    elseif name == "Freeze" then
-        scheduleFreezeReal(victim)
-        bodyPatched = true
-        bodyPatchSource = "Freeze · TODO sólido"
 
     elseif name == "Frostbite" then
         scheduleFrostbiteReal(victim, cleaner, frostbiteAccessoryAppearance)
@@ -6786,6 +6871,14 @@ local function triggerVictim(player, character, hum, proof)
     if not deathRuntime.Alive or ENV.__XERO_DEATH_BRIDGE_RUNTIME ~= deathRuntime then return false end
     if not info or info.triggered or info.expired then return false end
     if not enabled or info.deathEligible ~= true then return false end
+    local round = runtime.TeamRoundState
+    if not player or runtime.DeathEffectAlliedCharacters[character]
+        or (round and round.KnownTeammates[player.UserId]) then return false end
+    local targetRoot = character and character:FindFirstChild("HumanoidRootPart")
+    if targetRoot and targetRoot:FindFirstChild("TeammateIconPart") then
+        runtime.DeathEffectAlliedCharacters[character] = true
+        return false
+    end
 
     -- Reject before BeginKillSession: duplicate callbacks must not clear the
     -- legitimate effect either. Keep R36's original kill attribution unchanged.
@@ -6843,9 +6936,13 @@ local function triggerVictim(player, character, hum, proof)
         return false
     end
 
-    suppressNativeCorpseForKill(
-        player, character, deathPosition, info.deathAt or info.confirmedAt
-    )
+    -- Freeze never searches for replacement bodies in Workspace.
+    -- Make() already hides only the exact confirmed source Character.
+    if effectName ~= "Freeze" then
+        suppressNativeCorpseForKill(
+            player, character, deathPosition, info.deathAt or info.confirmedAt
+        )
+    end
 
     status.Text =
         "2/3 · CLON CURRENTCAMERA + ORIGINAL OCULTO\n" ..
@@ -11455,6 +11552,9 @@ local function rememberTeammate(targetPlayer)
     if not targetPlayer or targetPlayer == player then return false end
     teamRoundState.MarkerSystemSeen = true
     teamRoundState.KnownTeammates[targetPlayer.UserId] = true
+    if targetPlayer.Character then
+        runtime.DeathEffectAlliedCharacters[targetPlayer.Character] = true
+    end
     enemyCache[targetPlayer] = false
 
     return true

@@ -1,4 +1,4 @@
--- XeroHub | DUELS MURDERS VS SHERIFF | Kev --
+-- XeroHub | DUELS MURDERS VS SHERIFF | Kevin tests --
 
 local SoundCatalogCore = {
     TARGET_SOUND_ID = "10209603",
@@ -3876,13 +3876,238 @@ ENV.__XERO_DEATH_PROXY.PersistsForRound = function(name)
         or name == "Freeze" or name == "PineappleEffect"
 end
 ENV.__XERO_DEATH_PROXY.SoundGuards = setmetatable({}, {__mode = "k"})
-ENV.__XERO_DEATH_PROXY.ActiveEffectSoundScope = nil
 
--- R39: intentionally no-op.
--- Audio is never touched after Preview.play starts. Duplicate effects are prevented
--- at the death/proxy/Preview level instead of stopping already-playing Sounds.
+-- R40 · POST-PLAY AUDIO LOCK
+-- First playback is completely native. We do not pre-mute, seek, stop or restart it.
+-- Once a logical SoundId has played once, any later replay/copy is suppressed.
+-- Looped is forced false so a long-lived Frostbite/Freeze corpse cannot restart its
+-- death sound while the clone remains visible for the rest of the round.
 ENV.__XERO_DEATH_PROXY.GuardEffectSounds = function(proxy, asset)
-    return
+    local state = ENV.__XERO_DEATH_PROXY
+    if not proxy or not proxy.Parent or state.SoundGuards[proxy] then return end
+
+    local root = state.Root
+    local alive = true
+    local connections = {}
+    local seen = setmetatable({}, {__mode = "k"})
+    local winnerByKey = {}
+    local finishedKeys = {}
+    local originalVolume = setmetatable({}, {__mode = "k"})
+
+    local function keyOf(sound)
+        local id = tostring(sound and sound.SoundId or "")
+        local digits = id:match("^rbxassetid://(%d+)$")
+            or id:match("^(%d+)$")
+            or id:match("[?&]id=(%d+)")
+            or id:match("(%d+)")
+        if digits and digits ~= "" then
+            return "id:" .. digits
+        end
+        return "name:" .. string.lower(tostring(sound and sound.Name or "Sound"))
+    end
+
+    local function rememberVolume(sound)
+        if originalVolume[sound] == nil then
+            local ok, v = pcall(function() return sound.Volume end)
+            originalVolume[sound] = ok and v or 1
+        end
+    end
+
+    local function suppress(sound)
+        if not sound or not sound.Parent then return end
+        rememberVolume(sound)
+        pcall(function()
+            sound.Looped = false
+            sound.Volume = 0
+            sound:Stop()
+        end)
+    end
+
+    local function belongs(sound)
+        if not sound or not sound.Parent then return false end
+
+        local okProxy, inProxy = pcall(function()
+            return sound:IsDescendantOf(proxy)
+        end)
+        if okProxy and inProxy then return true end
+
+        -- DeathEffectPreview may parent the sound as a sibling of the proxy.
+        -- Only accept objects inside our private CurrentCamera folder and reject
+        -- sounds that clearly belong to another already-authorized death proxy.
+        if root and root.Parent then
+            local okRoot, inRoot = pcall(function()
+                return sound:IsDescendantOf(root)
+            end)
+            if okRoot and inRoot then
+                local node = sound.Parent
+                while node and node ~= root do
+                    if node:IsA("Model") and node ~= proxy
+                        and state.SourceByProxy[node] ~= nil then
+                        return false
+                    end
+                    node = node.Parent
+                end
+                return true
+            end
+        end
+
+        return false
+    end
+
+    local function watch(sound)
+        if not alive or not sound or not sound:IsA("Sound") or seen[sound] then return end
+        if not belongs(sound) then return end
+        seen[sound] = true
+        rememberVolume(sound)
+
+        -- Turning looping off while a Sound is already playing does NOT restart it;
+        -- it simply lets the current pass finish and prevents another pass.
+        pcall(function() sound.Looped = false end)
+
+        local key = keyOf(sound)
+        local started = false
+        local firstCycleOpen = false
+
+        local currentlyPlaying = false
+        pcall(function() currentlyPlaying = sound.Playing or sound.IsPlaying end)
+
+        if finishedKeys[key] then
+            suppress(sound)
+            return
+        end
+
+        if winnerByKey[key] and winnerByKey[key] ~= sound then
+            -- A winner already exists for this SoundId. A late clone is a replay.
+            suppress(sound)
+            return
+        end
+
+        if currentlyPlaying then
+            winnerByKey[key] = sound
+            started = true
+            firstCycleOpen = true
+        end
+
+        local function lockAfterFirst()
+            if not alive then return end
+            local currentKey = keyOf(sound)
+            if winnerByKey[currentKey] == sound then
+                finishedKeys[currentKey] = true
+                firstCycleOpen = false
+                -- It already finished naturally. Muting now cannot chop audio,
+                -- but prevents a delayed native :Play() from becoming audible.
+                pcall(function()
+                    sound.Looped = false
+                    sound.Volume = 0
+                end)
+            end
+        end
+
+        connections[#connections + 1] = sound.Played:Connect(function()
+            if not alive or not sound.Parent then return end
+            local currentKey = keyOf(sound)
+
+            if finishedKeys[currentKey] then
+                suppress(sound)
+                return
+            end
+
+            local winner = winnerByKey[currentKey]
+            if winner and winner ~= sound then
+                suppress(sound)
+                return
+            end
+
+            if started then
+                -- Played/Playing can both report the same initial launch.
+                if firstCycleOpen and winner == sound then return end
+                -- Same instance trying to play again later.
+                suppress(sound)
+                return
+            end
+
+            winnerByKey[currentKey] = sound
+            started = true
+            firstCycleOpen = true
+            -- Deliberately do NOT touch Volume/TimePosition/PlaybackSpeed.
+        end)
+
+        connections[#connections + 1] = sound.Ended:Connect(lockAfterFirst)
+
+        connections[#connections + 1] =
+            sound:GetPropertyChangedSignal("Looped"):Connect(function()
+                if alive and sound.Parent and sound.Looped then
+                    pcall(function() sound.Looped = false end)
+                end
+            end)
+
+        connections[#connections + 1] =
+            sound:GetPropertyChangedSignal("Playing"):Connect(function()
+                if not alive or not sound.Parent then return end
+
+                if sound.Playing then
+                    local currentKey = keyOf(sound)
+                    if finishedKeys[currentKey] then
+                        suppress(sound)
+                    elseif winnerByKey[currentKey]
+                        and winnerByKey[currentKey] ~= sound then
+                        suppress(sound)
+                    elseif not started then
+                        winnerByKey[currentKey] = sound
+                        started = true
+                        firstCycleOpen = true
+                    elseif not firstCycleOpen then
+                        suppress(sound)
+                    end
+                elseif started and firstCycleOpen then
+                    -- Some executor/Roblox builds do not reliably fire Ended.
+                    -- A transition to Playing=false after the first launch is enough.
+                    lockAfterFirst()
+                end
+            end)
+
+        connections[#connections + 1] =
+            sound:GetPropertyChangedSignal("Volume"):Connect(function()
+                if not alive or not sound.Parent then return end
+                local currentKey = keyOf(sound)
+                if finishedKeys[currentKey]
+                    or (winnerByKey[currentKey] and winnerByKey[currentKey] ~= sound) then
+                    pcall(function() sound.Volume = 0 end)
+                end
+            end)
+    end
+
+    connections[#connections + 1] = proxy.DescendantAdded:Connect(function(obj)
+        if obj:IsA("Sound") then watch(obj) end
+    end)
+
+    if root and root.Parent then
+        connections[#connections + 1] = root.DescendantAdded:Connect(function(obj)
+            if obj:IsA("Sound") then watch(obj) end
+        end)
+    end
+
+    -- Catch Sounds that Preview reconstructed synchronously before the listener saw them.
+    for _, obj in ipairs(proxy:GetDescendants()) do
+        if obj:IsA("Sound") then watch(obj) end
+    end
+
+    local stopped = false
+    local function stop()
+        if stopped then return end
+        stopped = true
+        alive = false
+        for _, conn in ipairs(connections) do
+            pcall(function() conn:Disconnect() end)
+        end
+        -- Do not stop the current winner during cleanup here; DestroyProxy/cleaner
+        -- owns object lifetime. This avoids chopping an in-progress first play.
+        if state.SoundGuards[proxy] == stop then
+            state.SoundGuards[proxy] = nil
+        end
+    end
+
+    state.SoundGuards[proxy] = stop
 end
 
 -- VFX one-shot independiente del tiempo de vida del clon. Frostbite/Freeze/etc.
@@ -4080,6 +4305,119 @@ ENV.__XERO_DEATH_PROXY.GuardOneShotVFX = function(proxy)
     end)
 end
 
+
+-- R40 · PRIVATE DUPLICATE-AVATAR PRUNER
+-- Preview.play can schedule work after its return. If it creates a second avatar-like
+-- model inside XeroDeathVisuals, that model bypasses Make()'s Humanoid claim because
+-- it was not created by Make(). Only the official SourceByProxy model is authorized.
+ENV.__XERO_DEATH_PROXY.DuplicateAvatarGuards = setmetatable({}, {__mode = "k"})
+
+ENV.__XERO_DEATH_PROXY.GuardDuplicateAvatars = function(proxy)
+    local state = ENV.__XERO_DEATH_PROXY
+    local root = state.Root
+    if not proxy or not proxy.Parent or not root or not root.Parent
+        or state.DuplicateAvatarGuards[proxy] then
+        return
+    end
+
+    local alive = true
+    local queued = setmetatable({}, {__mode = "k"})
+    local connections = {}
+
+    local BODY_NAMES = {
+        Head=true, HumanoidRootPart=true,
+        Torso=true, UpperTorso=true, LowerTorso=true,
+        LeftArm=true, RightArm=true, LeftLeg=true, RightLeg=true,
+        LeftUpperArm=true, RightUpperArm=true,
+        LeftLowerArm=true, RightLowerArm=true,
+        LeftUpperLeg=true, RightUpperLeg=true,
+        LeftLowerLeg=true, RightLowerLeg=true,
+    }
+
+    local function avatarScore(model)
+        if not model or not model:IsA("Model") or not model.Parent then return 0 end
+        local hum = model:FindFirstChildOfClass("Humanoid")
+        if not hum then return 0 end
+
+        local score = 0
+        for _, child in ipairs(model:GetChildren()) do
+            if child:IsA("BasePart") and BODY_NAMES[child.Name] then
+                score += 1
+            end
+        end
+        return score
+    end
+
+    local function authorized(model)
+        if model == proxy then return true end
+        -- Previous persistent Frostbite/Freeze/etc. corpses are legitimate.
+        if state.SourceByProxy[model] ~= nil then return true end
+        return false
+    end
+
+    local function inspect(model)
+        if not alive or not model or not model.Parent or authorized(model) then return end
+
+        local okInside, inside = pcall(function()
+            return model:IsDescendantOf(root)
+        end)
+        if not okInside or not inside then return end
+
+        if avatarScore(model) >= 4 then
+            -- Local-only visual tree. Safe to remove; never touches the real victim.
+            pcall(function() model:Destroy() end)
+        end
+    end
+
+    local function queue(model)
+        if not alive or not model or queued[model] or authorized(model) then return end
+        queued[model] = true
+        task.delay(0.03, function()
+            queued[model] = nil
+            inspect(model)
+        end)
+    end
+
+    connections[#connections + 1] = root.DescendantAdded:Connect(function(obj)
+        if not alive then return end
+
+        if obj:IsA("Model") then
+            queue(obj)
+            return
+        end
+
+        if obj:IsA("Humanoid") or obj:IsA("BasePart") then
+            local model = obj:FindFirstAncestorOfClass("Model")
+            while model and model ~= root do
+                queue(model)
+                model = model.Parent and model.Parent:FindFirstAncestorOfClass("Model") or nil
+            end
+        end
+    end)
+
+    -- Also inspect anything Preview managed to create synchronously.
+    task.defer(function()
+        if not alive or not root.Parent then return end
+        for _, obj in ipairs(root:GetDescendants()) do
+            if obj:IsA("Model") then queue(obj) end
+        end
+    end)
+
+    local function stop()
+        if not alive then return end
+        alive = false
+        for _, conn in ipairs(connections) do
+            pcall(function() conn:Disconnect() end)
+        end
+        state.DuplicateAvatarGuards[proxy] = nil
+    end
+
+    state.DuplicateAvatarGuards[proxy] = stop
+
+    -- Late Preview tasks are the concern; no need to watch forever.
+    task.delay(4.0, stop)
+end
+
 ENV.__XERO_DEATH_PROXY.MeasureBodyChange = function(proxy, info)
     local connections, done = {}, false
     local rt = ENV.__XERO_DEATH_BRIDGE_RUNTIME
@@ -4156,6 +4494,12 @@ ENV.__XERO_DEATH_PROXY.DestroyProxy = function(proxy)
     if transientGuard then
         pcall(function() transientGuard.Stop() end)
         ENV.__XERO_DEATH_PROXY.TransientGuards[proxy] = nil
+    end
+    local duplicateGuard = ENV.__XERO_DEATH_PROXY.DuplicateAvatarGuards
+        and ENV.__XERO_DEATH_PROXY.DuplicateAvatarGuards[proxy]
+    if duplicateGuard then
+        pcall(duplicateGuard)
+        ENV.__XERO_DEATH_PROXY.DuplicateAvatarGuards[proxy] = nil
     end
     ENV.__XERO_DEATH_PROXY.DisconnectFollow(proxy)
     local physicsConn = ENV.__XERO_DEATH_PROXY.PhysicsConnections[proxy]
@@ -4743,6 +5087,25 @@ ENV.__XERO_DEATH_PROXY.RepairAccessoryJoints = function(proxy, template)
 end
 
 ENV.__XERO_DEATH_PROXY.Make = function(source, effectName, hum, player, deathPosition, info)
+    -- R41: before claiming this NEW Humanoid, remove only stale visual proxies that
+    -- belong to the same Roblox user. Frostbite/Freeze may persist for a round, but
+    -- a previous-round corpse must never coexist with the next death of that user.
+    local preState = ENV.__XERO_DEATH_PROXY
+    local victimUserId = player and tonumber(player.UserId) or nil
+    if victimUserId and preState.Root and preState.Root.Parent then
+        local stale = {}
+        for _, oldProxy in ipairs(preState.Root:GetChildren()) do
+            if oldProxy:IsA("Model")
+                and oldProxy:GetAttribute("XeroDeathVisualProxy") == true
+                and tonumber(oldProxy:GetAttribute("XeroVictimUserId")) == victimUserId then
+                stale[#stale + 1] = oldProxy
+            end
+        end
+        for _, oldProxy in ipairs(stale) do
+            preState.DestroyProxy(oldProxy)
+        end
+    end
+
     -- R38 one-death gate: local + cross-runtime. Even if a stale listener gets one
     -- final scheduling slice, only one engine can claim this Humanoid/Character.
     local state = ENV.__XERO_DEATH_PROXY
@@ -4861,7 +5224,13 @@ ENV.__XERO_DEATH_PROXY.Make = function(source, effectName, hum, player, deathPos
     proxy:SetAttribute("XeroDeathVisualProxy", true)
     proxy:SetAttribute("XeroDeathEffect", tostring(effectName or ""))
     proxy:SetAttribute("XeroPersistForRound", state.PersistsForRound(effectName))
+    proxy:SetAttribute("XeroVictimUserId", player and tonumber(player.UserId) or 0)
+    proxy:SetAttribute("XeroCreatedAt", os.clock())
     ENV.__XERO_DEATH_PROXY.SourceByProxy[proxy] = source
+
+    -- The official proxy is now authorized. Any other avatar-like model created
+    -- inside XeroDeathVisuals during Preview.play is a local duplicate.
+    ENV.__XERO_DEATH_PROXY.GuardDuplicateAvatars(proxy)
 
     task.delay(10.35, function()
         if proxy and proxy.Parent and proxy:GetAttribute("XeroPersistForRound") ~= true then
@@ -5113,10 +5482,10 @@ local function runNativeOnVictim(name, victim, statusLabel)
     local clothesV2 = applyV2Clothing(victim, asset)
     local hatsV2 = attachV2HatIfNeeded(victim, asset)
 
-    -- R39 AUDIO: never Stop()/mute/restart an effect Sound at death time.
-    -- Under a stalled frame, late Played/Playing callbacks made the old guard produce
-    -- the audible "starts -> cuts -> full sound" artifact. Preview.play is already
-    -- protected from duplicate death-proxy creation, so native effect audio is left alone.
+    -- R40: first audio playback remains native; only replays AFTER the first pass
+    -- are blocked. This is safe to install before Preview.play because it never
+    -- pre-mutes the initial candidate.
+    ENV.__XERO_DEATH_PROXY.GuardEffectSounds(victim, asset)
     ENV.__XERO_DEATH_PROXY.GuardOneShotVFX(victim)
     local cleaner = makeCleaner()
     victimCleaners[victim] = cleaner

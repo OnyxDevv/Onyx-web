@@ -1,4 +1,4 @@
--- XeroHub | DUELS MURDERS VS SHERIFF | Kev --
+-- XeroHub | DUELS MURDERS VS SHERIFF | Kevin rios --
 
 local SoundCatalogCore = {
     TARGET_SOUND_ID = "10209603",
@@ -3859,6 +3859,7 @@ ENV.__XERO_DEATH_PROXY = {
     SourceByProxy = setmetatable({}, {__mode = "k"}),
     TemplateByHumanoid = setmetatable({}, {__mode = "k"}),
     ReadyProxyByHumanoid = setmetatable({}, {__mode = "k"}),
+    ReadyProxyMeta = setmetatable({}, {__mode = "k"}),
     TemplateBuilding = setmetatable({}, {__mode = "k"}),
     LastMakeByHumanoid = setmetatable({}, {__mode = "k"}),
     LastMakeByCharacter = setmetatable({}, {__mode = "k"}),
@@ -4436,8 +4437,9 @@ ENV.__XERO_DEATH_PROXY.ArmPersistenceProbe = function(proxy, effectName)
     local alive = true
     local connections = {}
     local baseline = setmetatable({}, {__mode = "k"})
+    local initialDescendants = proxy:GetDescendants()
 
-    for _, obj in ipairs(proxy:GetDescendants()) do
+    for _, obj in ipairs(initialDescendants) do
         baseline[obj] = true
     end
 
@@ -4462,7 +4464,7 @@ ENV.__XERO_DEATH_PROXY.ArmPersistenceProbe = function(proxy, effectName)
         end
     end)
 
-    for _, obj in ipairs(proxy:GetDescendants()) do
+    for _, obj in ipairs(initialDescendants) do
         if obj:IsA("BasePart")
             and obj.Name ~= "HumanoidRootPart"
             and REAL_BODY_PART_NAMES[obj.Name]
@@ -4556,6 +4558,7 @@ end
 
 ENV.__XERO_DEATH_PROXY.DestroyProxy = function(proxy)
     if not proxy then return end
+    ENV.__XERO_DEATH_PROXY.ReadyProxyMeta[proxy] = nil
     local stopSounds = ENV.__XERO_DEATH_PROXY.SoundGuards[proxy]
     if stopSounds then
         stopSounds()
@@ -4625,6 +4628,7 @@ ENV.__XERO_DEATH_PROXY.Cleanup = function()
     for hum, ready in pairs(ENV.__XERO_DEATH_PROXY.ReadyProxyByHumanoid or {}) do
         ENV.__XERO_DEATH_PROXY.ReadyProxyByHumanoid[hum] = nil
         if ready then
+            ENV.__XERO_DEATH_PROXY.ReadyProxyMeta[ready] = nil
             pcall(function() ready:Destroy() end)
         end
     end
@@ -4854,6 +4858,38 @@ ENV.__XERO_DEATH_PROXY.SyncReadyProxyPose = function(proxy, source, info)
     end
 end
 
+
+-- R45 · conservative ready-proxy metadata cache.
+-- Only caches references to descendants already present in the detached ready proxy.
+-- No timings, physics or visual behavior are changed.
+ENV.__XERO_DEATH_PROXY.BuildReadyMeta = function(proxy)
+    if not proxy then return nil end
+
+    local meta = {
+        Parts = {},
+        Motors = {},
+        Humanoid = nil,
+    }
+
+    local descendants = proxy:GetDescendants()
+    for _, obj in ipairs(descendants) do
+        if obj:IsA("BasePart") then
+            meta.Parts[#meta.Parts + 1] = obj
+        elseif obj:IsA("Motor6D") then
+            meta.Motors[#meta.Motors + 1] = obj
+        elseif not meta.Humanoid and obj:IsA("Humanoid") then
+            meta.Humanoid = obj
+        end
+    end
+
+    if not meta.Humanoid then
+        meta.Humanoid = proxy:FindFirstChildOfClass("Humanoid")
+    end
+
+    ENV.__XERO_DEATH_PROXY.ReadyProxyMeta[proxy] = meta
+    return meta
+end
+
 ENV.__XERO_DEATH_PROXY.BuildTemplate = function(player, character, hum, forceRefresh)
     if not host.Alive() or not hum or ENV.__XERO_DEATH_PROXY.TemplateBuilding[hum] then return end
     if ENV.__XERO_DEATH_PROXY.TemplateByHumanoid[hum] and not forceRefresh then return end
@@ -4885,10 +4921,12 @@ ENV.__XERO_DEATH_PROXY.BuildTemplate = function(player, character, hum, forceRef
                 ready.Name = "XeroReadyDeathProxy_" .. tostring(player and player.Name or "Enemy")
                 ready.Parent = nil
                 ENV.__XERO_DEATH_PROXY.Sanitize(ready)
+                ENV.__XERO_DEATH_PROXY.BuildReadyMeta(ready)
             end
 
             local oldReady = ENV.__XERO_DEATH_PROXY.ReadyProxyByHumanoid[hum]
             if oldReady and oldReady ~= ready then
+                ENV.__XERO_DEATH_PROXY.ReadyProxyMeta[oldReady] = nil
                 pcall(function() oldReady:Destroy() end)
             end
             ENV.__XERO_DEATH_PROXY.ReadyProxyByHumanoid[hum] = ready
@@ -4928,9 +4966,12 @@ ENV.__XERO_DEATH_PROXY.CopySourceMotion = function(proxy, source, effectName, in
     if not proxyRoot or not proxyRoot:IsA("BasePart") then return end
 
     local lowerEffect = string.lower(tostring(effectName or ""))
+    local readyMeta = ENV.__XERO_DEATH_PROXY.ReadyProxyMeta[proxy]
+    local cachedParts = readyMeta and readyMeta.Parts or nil
+    local cachedMotors = readyMeta and readyMeta.Motors or nil
 
     if string.find(lowerEffect, "venom", 1, true) then
-        for _, part in ipairs(proxy:GetDescendants()) do
+        for _, part in ipairs(cachedParts or proxy:GetDescendants()) do
             if part:IsA("BasePart") then
                 part.AssemblyLinearVelocity = Vector3.zero
                 part.AssemblyAngularVelocity = Vector3.zero
@@ -4946,7 +4987,7 @@ ENV.__XERO_DEATH_PROXY.CopySourceMotion = function(proxy, source, effectName, in
     if string.find(lowerEffect, "frostbite", 1, true)
         or string.find(lowerEffect, "hypo", 1, true) then
         pcall(function() proxy:SetAttribute("XeroDeathFrostbitePivot", proxy:GetPivot()) end)
-        for _, part in ipairs(proxy:GetDescendants()) do
+        for _, part in ipairs(cachedParts or proxy:GetDescendants()) do
             if part:IsA("BasePart") then
                 local accessoryPart = part:FindFirstAncestorOfClass("Accessory") ~= nil
                 pcall(function()
@@ -5022,7 +5063,7 @@ ENV.__XERO_DEATH_PROXY.CopySourceMotion = function(proxy, source, effectName, in
     local keepRigid = ENV.__XERO_DEATH_PROXY.EffectKeepsRigidBody(effectName)
 
     if not keepRigid then
-        for _, motor in ipairs(proxy:GetDescendants()) do
+        for _, motor in ipairs(cachedMotors or proxy:GetDescendants()) do
             if motor:IsA("Motor6D")
                 and motor.Part0 and motor.Part1
                 and motor.Name ~= "Root"
@@ -5054,7 +5095,7 @@ ENV.__XERO_DEATH_PROXY.CopySourceMotion = function(proxy, source, effectName, in
         end
     end
 
-    for _, part in ipairs(proxy:GetDescendants()) do
+    for _, part in ipairs(cachedParts or proxy:GetDescendants()) do
         if part:IsA("BasePart") then
             pcall(function()
                 part.Anchored = false
@@ -5091,7 +5132,7 @@ ENV.__XERO_DEATH_PROXY.CopySourceMotion = function(proxy, source, effectName, in
         proxy:SetAttribute("XeroDeathKeepRigid", keepRigid == true)
     end)
 
-    for _, part in ipairs(proxy:GetDescendants()) do
+    for _, part in ipairs(cachedParts or proxy:GetDescendants()) do
         if part:IsA("BasePart") and not part.Anchored then
             pcall(function()
                 part.AssemblyLinearVelocity = inheritedLinear + push
@@ -5469,7 +5510,7 @@ ENV.__XERO_DEATH_PROXY.FollowCorpse = function(proxy, corpse, effectName)
     local followAccum = 0
     local motionAccum = 0
     ENV.__XERO_DEATH_PROXY.FollowConnections[proxy] =
-        game:GetService("RunService").Heartbeat:Connect(function(deltaTime)
+        RunService.Heartbeat:Connect(function(deltaTime)
             if not proxy.Parent or not corpse.Parent then
                 ENV.__XERO_DEATH_PROXY.DisconnectFollow(proxy)
                 return
@@ -5561,7 +5602,7 @@ ENV.__XERO_DEATH_PROXY.WatchVenomCompletion = function(victim, cleaner)
             end)
         end
     end
-    conn = game:GetService("RunService").Heartbeat:Connect(finish)
+    conn = RunService.Heartbeat:Connect(finish)
     cleaner:Add(function()
         done = true
         if conn then conn:Disconnect() end

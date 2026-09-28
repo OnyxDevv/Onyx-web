@@ -1,4 +1,4 @@
--- XeroHub | DUELS MURDERS VS SHERIFF | R62 PERF FACES EFFECTS SOUNDS | R59 SHARED COMBAT SNAPSHOT BIMO LEGION
+-- XeroHub | DUELS MURDERS VS SHERIFF | R62 PERF FACES EFFECTS SOUNDS | R59 SHARED COMBAT SNAPSHOT
 
 local SoundCatalogCore = {
     TARGET_SOUND_ID = "10209603",
@@ -14087,13 +14087,14 @@ placeAppearanceElement(restoreAppearanceButton, nextAppearanceOrder())
 runtime.RefreshAppearanceControls()
 
 
--- XERO BIMO NATIVE-SHOOT AIM v2
--- Bimo móvil guarda Mouse.Hit en el upvalue u57 ANTES de Tool.Activated.
--- En vez de falsear Mouse.Hit/Target o redirigir Raycast globalmente, esta build
--- engancha la función nativa Shoot() y sustituye u57 en el ÚLTIMO instante,
--- después del toque real y justo antes de ShootLocalBeam().
--- Así la propia arma conserva su Raycast, fire/showBeam, sonido y remotes nativos.
-local AIM_HOOK_LIFECYCLE_VERSION = 7
+-- XERO BIMO ACTIVATED-AIM v3
+-- Móvil: Mouse.Button1Down escribe el toque real en u57 ANTES de Tool.Activated.
+-- Esta build NO hookea Shoot() ni Mouse.Hit/Target ni workspace:Raycast.
+-- Engancha el callback NATIVO de Tool.Activated y, justo antes de que ese callback
+-- llame al Shoot() original, escribe target.Position en el u57 REAL de Shoot().
+-- Resultado esperado: la ruta original Shoot -> ShootLocalBeam -> fire/showBeam/hit
+-- se conserva completa tanto para toque manual como para AutoShoot.
+local AIM_HOOK_LIFECYCLE_VERSION = 8
 local aimHookState = {
     Version = AIM_HOOK_LIFECYCLE_VERSION,
     Target = nil,
@@ -14104,9 +14105,11 @@ local aimHookState = {
     Installed = false,
     Tool = nil,
     ShootFunction = nil,
-    OldShoot = nil,
-    UpvalueIndex = 5,
+    ActivatedFunction = nil,
+    OldActivated = nil,
+    DestinationUpvalueIndex = nil,
     LastScanAt = 0,
+    LastWriteOK = false,
     LastError = nil,
 }
 
@@ -14125,6 +14128,17 @@ do
     local getUpvalues = (debug and type(debug.getupvalues) == "function" and debug.getupvalues)
         or (type(getupvalues) == "function" and getupvalues)
         or nil
+    local getUpvalue = (debug and type(debug.getupvalue) == "function" and debug.getupvalue)
+        or (type(getupvalue) == "function" and getupvalue)
+        or nil
+    local getConnections = type(getconnections) == "function" and getconnections or nil
+
+    local warned = {}
+    local function aimWarnOnce(key, message)
+        if warned[key] then return end
+        warned[key] = true
+        warn("[XeroHub Bimo Aim v3] " .. tostring(message))
+    end
 
     local function aimFnInfo(fn)
         local name, source = "", ""
@@ -14148,32 +14162,67 @@ do
         return char and char:FindFirstChildOfClass("Tool") or nil
     end
 
-    local function isShootForTool(fn, tool)
-        if type(fn) ~= "function" or not tool then return false end
-        local name, source = aimFnInfo(fn)
-        if name ~= "Shoot" then return false end
-
-        -- La ruta fuerte es la firma de upvalues de la pistola de Bimo:
-        -- #5=u57, #6=ShootLocalBeam, #7=Parent/Tool.
+    local function readUpvalue(fn, index)
+        if not fn or not index then return false, nil end
+        if getUpvalue then
+            local ok, a, b = pcall(getUpvalue, fn, index)
+            if ok then
+                -- Algunos ejecutores devuelven (name, value), otros sólo value.
+                if b ~= nil then return true, b end
+                return true, a
+            end
+        end
         if getUpvalues then
             local ok, ups = pcall(getUpvalues, fn)
             if ok and type(ups) == "table" then
-                local beamFn = ups[6]
-                local parentTool = ups[7]
-                if type(beamFn) == "function" then
-                    local beamName = aimFnInfo(beamFn)
-                    if beamName == "ShootLocalBeam" then
-                        if typeof(parentTool) ~= "Instance" or parentTool == tool then
-                            return true
-                        end
+                return true, ups[index]
+            end
+        end
+        return false, nil
+    end
+
+    local function inspectShoot(fn, tool)
+        if type(fn) ~= "function" or not tool then return nil end
+        local name = aimFnInfo(fn)
+        if name ~= "Shoot" then return nil end
+        if not getUpvalues then return nil end
+
+        local ok, ups = pcall(getUpvalues, fn)
+        if not ok or type(ups) ~= "table" then return nil end
+
+        local beamIndex, toolIndex
+        for index, value in pairs(ups) do
+            if type(index) == "number" then
+                if type(value) == "function" then
+                    local upName = aimFnInfo(value)
+                    if upName == "ShootLocalBeam" then
+                        beamIndex = index
                     end
+                elseif typeof(value) == "Instance" and value == tool then
+                    toolIndex = index
                 end
             end
         end
 
-        -- Fallback conservador para ejecutores que no exponen getupvalues.
-        return source ~= ""
-            and string.find(string.lower(source), string.lower(tool.Name), 1, true) ~= nil
+        -- En el source de Bimo: ... LocalPlayer, u57, ShootLocalBeam, Parent.
+        -- Derivamos u57 a partir de ShootLocalBeam en vez de fijar #5 a ciegas.
+        local destinationIndex = beamIndex and (beamIndex - 1) or nil
+        if not destinationIndex or destinationIndex < 1 then return nil end
+
+        local okDest, currentDest = readUpvalue(fn, destinationIndex)
+        if okDest and currentDest ~= nil and typeof(currentDest) ~= "Vector3" then
+            return nil
+        end
+
+        -- Si el Tool aparece entre los upvalues, debe ser exactamente el equipado.
+        if toolIndex and ups[toolIndex] ~= tool then return nil end
+
+        return {
+            Function = fn,
+            DestinationIndex = destinationIndex,
+            BeamIndex = beamIndex,
+            ToolIndex = toolIndex,
+        }
     end
 
     local function findNativeShoot(tool)
@@ -14184,106 +14233,183 @@ do
         end
         if not ok or type(objects) ~= "table" then return nil end
 
+        local fallback
         for _, obj in ipairs(objects) do
-            if type(obj) == "function" and isShootForTool(obj, tool) then
-                return obj
+            if type(obj) == "function" then
+                local info = inspectShoot(obj, tool)
+                if info then
+                    if info.ToolIndex then return info end
+                    fallback = fallback or info
+                end
+            end
+        end
+        return fallback
+    end
+
+    local function connectionFunction(connection)
+        if not connection then return nil end
+        local fn
+        pcall(function() fn = connection.Function end)
+        if type(fn) ~= "function" then
+            pcall(function() fn = connection.Callback end)
+        end
+        return type(fn) == "function" and fn or nil
+    end
+
+    local function functionContainsUpvalue(fn, wanted)
+        if type(fn) ~= "function" or type(wanted) ~= "function" or not getUpvalues then return false end
+        local ok, ups = pcall(getUpvalues, fn)
+        if not ok or type(ups) ~= "table" then return false end
+        for _, value in pairs(ups) do
+            if value == wanted then return true end
+        end
+        return false
+    end
+
+    local function findActivatedCallback(tool, shootFn)
+        if not tool or not shootFn or not getConnections then return nil end
+        local ok, connections = pcall(getConnections, tool.Activated)
+        if not ok or type(connections) ~= "table" then return nil end
+
+        for _, connection in ipairs(connections) do
+            local fn = connectionFunction(connection)
+            if fn and functionContainsUpvalue(fn, shootFn) then
+                return fn
             end
         end
         return nil
     end
 
-    local function clearNativeDestination(fn)
-        if fn and setupValue then
-            pcall(setupValue, fn, aimHookState.UpvalueIndex, nil)
+    local function writeDestination(targetPart)
+        local state = aimHookState
+        local shootFn = state.ShootFunction
+        local index = state.DestinationUpvalueIndex
+        if not setupValue or not shootFn or not index then
+            state.LastWriteOK = false
+            return false
         end
+
+        local value = targetPart and targetPart.Parent and targetPart.Position or nil
+        local ok = pcall(setupValue, shootFn, index, value)
+        if not ok then
+            state.LastWriteOK = false
+            return false
+        end
+
+        -- Validación real; no damos por bueno sólo porque setupvalue no lanzó error.
+        if value ~= nil then
+            local couldRead, current = readUpvalue(shootFn, index)
+            if couldRead and (typeof(current) ~= "Vector3" or (current - value).Magnitude > 0.05) then
+                state.LastWriteOK = false
+                return false
+            end
+        end
+
+        state.LastWriteOK = true
+        return true
     end
 
-    local function restoreShootHook()
+    local function restoreActivatedHook()
         local state = aimHookState
-        if state.ShootFunction and state.OldShoot and type(hookfunction) == "function" then
-            pcall(hookfunction, state.ShootFunction, state.OldShoot)
+        if state.ActivatedFunction and state.OldActivated and type(hookfunction) == "function" then
+            pcall(hookfunction, state.ActivatedFunction, state.OldActivated)
         end
-        state.ShootFunction = nil
-        state.OldShoot = nil
+        if state.ShootFunction and state.DestinationUpvalueIndex then
+            pcall(setupValue, state.ShootFunction, state.DestinationUpvalueIndex, nil)
+        end
         state.Tool = nil
+        state.ShootFunction = nil
+        state.ActivatedFunction = nil
+        state.OldActivated = nil
+        state.DestinationUpvalueIndex = nil
         state.Installed = false
+        state.LastWriteOK = false
     end
 
     function runtime.InstallAimHooks()
         local state = aimHookState
         if not runtime.Alive or state.Owner ~= runtime then return false end
+        if game.PlaceId ~= DUELS_BIMO_PLACE_ID then return false end
 
-        if game.PlaceId ~= DUELS_BIMO_PLACE_ID then
-            state.LastError = "NativeShoot v2 sólo está habilitado para Bimo"
-            return false
-        end
         if type(hookfunction) ~= "function" then
             state.LastError = "hookfunction no disponible"
+            aimWarnOnce("hookfunction", state.LastError)
             return false
         end
-        if not setupValue then
-            state.LastError = "setupvalue no disponible"
+        if not setupValue or not getUpvalues then
+            state.LastError = "setupvalue/getupvalues no disponible"
+            aimWarnOnce("upvalues", state.LastError)
+            return false
+        end
+        if not getConnections then
+            state.LastError = "getconnections no disponible"
+            aimWarnOnce("connections", state.LastError)
             return false
         end
 
         local tool = currentAimTool()
         if not tool then return false end
         local okGun, gun = pcall(esLaPistola, tool)
-        if not okGun or not gun then
-            -- Esta build de prueba sólo cambia la pistola; no toca el cuchillo.
-            return false
-        end
+        if not okGun or not gun then return false end
 
-        if state.Installed and state.Tool == tool and state.ShootFunction and state.OldShoot then
+        if state.Installed and state.Tool == tool
+            and state.ShootFunction and state.ActivatedFunction and state.OldActivated then
             return true
         end
 
-        if state.Installed then
-            clearNativeDestination(state.OldShoot or state.ShootFunction)
-            restoreShootHook()
-        end
+        if state.Installed then restoreActivatedHook() end
 
         local now = os.clock()
-        if now - (state.LastScanAt or 0) < 0.15 then return false end
+        if now - (state.LastScanAt or 0) < 0.12 then return false end
         state.LastScanAt = now
 
-        local shootFn = findNativeShoot(tool)
-        if not shootFn then
-            state.LastError = "No encontré Shoot() de " .. tostring(tool.Name)
+        local shootInfo = findNativeShoot(tool)
+        if not shootInfo then
+            state.LastError = "No encontré Shoot()/ShootLocalBeam de " .. tostring(tool.Name)
             return false
         end
 
-        local oldShoot
+        local activatedFn = findActivatedCallback(tool, shootInfo.Function)
+        if not activatedFn then
+            state.LastError = "No encontré el callback Tool.Activated que llama a Shoot()"
+            return false
+        end
+
+        state.Tool = tool
+        state.ShootFunction = shootInfo.Function
+        state.ActivatedFunction = activatedFn
+        state.DestinationUpvalueIndex = shootInfo.DestinationIndex
+
+        local oldActivated
         local replacement = function(...)
             local target = state.RoundActive and state.Wanted and state.Target or nil
 
-            -- CLAVE DEL FIX:
-            -- Mouse.Button1Down móvil ya pudo escribir su posición real en u57.
-            -- La reemplazamos AQUÍ, justo antes de que el Shoot original lea u57.
+            -- Aquí Button1Down YA guardó el toque real. Lo sobrescribimos en el
+            -- último punto seguro antes de que el callback nativo ejecute Shoot().
             if target and target.Parent then
-                pcall(setupValue, oldShoot, state.UpvalueIndex, target.Position)
+                if not writeDestination(target) then
+                    aimWarnOnce("write", "Encontré la ruta nativa, pero u57 no aceptó el target.")
+                end
             else
-                -- Sin target, vuelve al comportamiento nativo de Mouse.Hit.
-                pcall(setupValue, oldShoot, state.UpvalueIndex, nil)
+                writeDestination(nil)
             end
 
-            return oldShoot(...)
+            return oldActivated(...)
         end
         if type(newcclosure) == "function" then
             local okWrap, wrapped = pcall(newcclosure, replacement)
             if okWrap and wrapped then replacement = wrapped end
         end
 
-        local okHook, original = pcall(hookfunction, shootFn, replacement)
+        local okHook, original = pcall(hookfunction, activatedFn, replacement)
         if not okHook or type(original) ~= "function" then
-            state.LastError = "No pude enganchar Shoot(): " .. tostring(original)
+            state.LastError = "No pude enganchar Tool.Activated: " .. tostring(original)
+            restoreActivatedHook()
             return false
         end
 
-        oldShoot = original
-        state.Tool = tool
-        state.ShootFunction = shootFn
-        state.OldShoot = original
+        oldActivated = original
+        state.OldActivated = original
         state.Installed = true
         state.LastError = nil
         return true
@@ -14292,12 +14418,11 @@ do
     function runtime.UninstallAimHooks(force)
         local state = aimHookState
         state.Target = nil
-
-        -- Al apagar el toggle dejamos el wrapper instalado pero totalmente pasivo.
-        -- Así no estamos hook/unhook en cada toque. En Cleanup(force=true) sí restauramos.
-        if state.OldShoot then clearNativeDestination(state.OldShoot) end
+        if state.ShootFunction and state.DestinationUpvalueIndex then
+            writeDestination(nil)
+        end
         if force then
-            restoreShootHook()
+            restoreActivatedHook()
             state.Wanted = false
             state.RoundActive = false
         end
@@ -14308,6 +14433,7 @@ do
         local state = aimHookState
         if state.Owner ~= runtime or not runtime.Alive then return end
 
+        -- Esta build cambia sólo la ruta de pistola. El resto del hub queda intacto.
         local wanted = autoShootEnabled or silentAimPistolaEnabled
         local inMatch = inMatchOverride
         if inMatch == nil then
@@ -14324,16 +14450,16 @@ do
             runtime.InstallAimHooks()
         else
             state.Target = nil
-            if state.OldShoot then clearNativeDestination(state.OldShoot) end
+            if state.ShootFunction and state.DestinationUpvalueIndex then
+                writeDestination(nil)
+            end
         end
     end
 
     function runtime.EnsureAimHooksReady()
         local state = aimHookState
         if state.Owner ~= runtime or not runtime.Alive then return false end
-        if not state.RoundActive or not state.Wanted then
-            runtime.RefreshAimHooks()
-        end
+        if not state.RoundActive or not state.Wanted then runtime.RefreshAimHooks() end
         if not state.RoundActive or not state.Wanted then return false end
         return runtime.InstallAimHooks()
     end
@@ -14344,12 +14470,9 @@ do
     runtime.Track(player:GetPropertyChangedSignal("Neutral"):Connect(function()
         task.defer(runtime.RefreshAimHooks)
     end))
-
-    -- Si cambia de arma, el siguiente Ensure/Refresh engancha el Shoot nuevo.
     runtime.Track(player.CharacterAdded:Connect(function()
         aimHookState.Target = nil
-        if aimHookState.OldShoot then clearNativeDestination(aimHookState.OldShoot) end
-        restoreShootHook()
+        restoreActivatedHook()
     end))
 end
 

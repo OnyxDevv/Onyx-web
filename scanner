@@ -1,21 +1,23 @@
 --[[
-    XeroHub - Kill All Movement + Throw PoC v2
+    XeroHub - Movement Only PoC v3
     Creator: Kev
 
-    Replica de prueba del mecanismo observado:
+    PRUEBA DE AISLAMIENTO:
+    - NO toca HumanoidRootPart.CFrame
+    - NO usa hookmetamethod
+    - NO usa getconnections/firesignal
+    - NO usa cuchillo
+    - NO crea hitbox
 
-      1) Crea plataforma invisible bajo el jugador.
-      2) Desactiva colisiones locales del mapa.
-      3) Mueve la plataforma directamente hacia el enemigo.
-      4) El jugador viaja sobre ella atravesando geometría.
-      5) Se detiene cerca del enemigo.
-      6) Crea HitboxPart 30x30x30.
-      7) Redirige Mouse.Target/Mouse.Hit.
-      8) Activa DefaultKnife por sus conexiones nativas.
-      9) El handler nativo del cuchillo debe terminar registrando el hit.
-     10) Restaura mapa/plataforma/hitbox al finalizar.
-
-    ES SOLO UN POC SEPARADO. NO MODIFICA XEROHUB.
+    Solo replica la parte observada en el scanner:
+      * plataforma invisible 10x1x10
+      * Anchored = true
+      * CanCollide = true
+      * CanQuery = false
+      * CanTouch = false
+      * Parent = CurrentCamera
+      * movimiento continuo hacia el enemigo
+      * geometría de ActiveMaps con CanCollide=false / CanQuery=true
 ]]
 
 local Players = game:GetService("Players")
@@ -24,42 +26,28 @@ local RunService = game:GetService("RunService")
 local LP = Players.LocalPlayer
 local Camera = workspace.CurrentCamera
 
--- ============================================================
+-- =========================
 -- CONFIG
--- ============================================================
+-- =========================
 
+local SPEED = 16                 -- aprox. lo observado en el log
+local STOP_DISTANCE = 15
 local PLATFORM_SIZE = Vector3.new(10, 1, 10)
 
--- El scanner mostró aprox. ~16 studs/s de avance.
-local TRAVEL_SPEED = 16
+-- El otro script parecía escribir la posición ~30 veces/s.
+local UPDATE_RATE = 1 / 30
 
--- En el log el script empieza a tirar cuando ya está relativamente cerca.
-local STOP_DISTANCE = 16
-
-local MAX_THROWS = 10
-local THROW_DELAY = 0.09
-local SERVER_CONFIRM_TIME = 1.5
-
-local HITBOX_SIZE = Vector3.new(30, 30, 30)
-local HITBOX_TRANSPARENCY = 0.82
-
--- ============================================================
+-- =========================
 -- STATE
--- ============================================================
+-- =========================
 
-local active = true
-local collisionBackup = {}
 local platform
-local hitbox
+local backup = {}
+local running = true
 
-local mouse = LP:GetMouse()
-local redirectEnabled = false
-local redirectPart = nil
-local oldIndex
-
--- ============================================================
+-- =========================
 -- HELPERS
--- ============================================================
+-- =========================
 
 local function getCharacter(player)
     local char = player and player.Character
@@ -95,8 +83,8 @@ local function isEnemy(player)
 end
 
 local function nearestEnemy()
-    local _, _, myRoot = getCharacter(LP)
-    if not myRoot then
+    local _, _, root = getCharacter(LP)
+    if not root then
         return nil
     end
 
@@ -105,10 +93,10 @@ local function nearestEnemy()
 
     for _, player in ipairs(Players:GetPlayers()) do
         if isEnemy(player) then
-            local _, _, root = getCharacter(player)
+            local _, _, targetRoot = getCharacter(player)
 
-            if root then
-                local d = (root.Position - myRoot.Position).Magnitude
+            if targetRoot then
+                local d = (targetRoot.Position - root.Position).Magnitude
 
                 if d < bestDistance then
                     bestDistance = d
@@ -121,82 +109,51 @@ local function nearestEnemy()
     return best, bestDistance
 end
 
-local function getKnife()
-    local char = LP.Character
-    local backpack = LP:FindFirstChildOfClass("Backpack")
-
-    local knife = char and char:FindFirstChild("DefaultKnife")
-
-    if not knife and backpack then
-        knife = backpack:FindFirstChild("DefaultKnife")
-    end
-
-    return knife
+local function getPlatformOffset(hum, root)
+    -- Scanner:
+    -- HRP ~Y 123.09
+    -- plataforma ~Y 119.59
+    -- diferencia ~3.50
+    --
+    -- Esto suele coincidir con:
+    -- HipHeight + medio HRP + media plataforma.
+    return hum.HipHeight + (root.Size.Y * 0.5) + (PLATFORM_SIZE.Y * 0.5)
 end
 
-local function equipKnife()
-    local char, hum = getCharacter(LP)
-
-    if not char or not hum then
-        return nil, "personaje no disponible"
-    end
-
-    local knife = getKnife()
-
-    if not knife then
-        return nil, "no encontré DefaultKnife"
-    end
-
-    if knife.Parent ~= char then
-        hum:EquipTool(knife)
-
-        local timeout = os.clock() + 2
-
-        repeat
-            RunService.Heartbeat:Wait()
-        until knife.Parent == char or os.clock() >= timeout
-    end
-
-    if knife.Parent ~= char then
-        return nil, "DefaultKnife no se equipó"
-    end
-
-    return knife
-end
-
--- ============================================================
--- LOCAL MAP NOCLIP
--- ============================================================
+-- =========================
+-- MAP COLLISION
+-- =========================
 
 local function disableMapCollision()
     local activeMaps = workspace:FindFirstChild("ActiveMaps")
 
     if not activeMaps then
-        warn("[XERO POC] No existe workspace.ActiveMaps; sigo sin map noclip.")
+        warn("[XERO MOVE TEST] No existe workspace.ActiveMaps")
         return
     end
 
-    local changed = 0
+    local count = 0
 
     for _, obj in ipairs(activeMaps:GetDescendants()) do
         if obj:IsA("BasePart") then
-            collisionBackup[obj] = {
+            backup[obj] = {
                 CanCollide = obj.CanCollide,
                 CanQuery = obj.CanQuery
             }
 
-            -- Patrón observado en el scanner.
+            -- Exactamente el patrón que vimos en el log.
             obj.CanQuery = true
             obj.CanCollide = false
-            changed += 1
+
+            count += 1
         end
     end
 
-    print(("[XERO POC] Map noclip aplicado a %d partes."):format(changed))
+    print(("[XERO MOVE TEST] Noclip aplicado a %d partes"):format(count))
 end
 
 local function restoreMapCollision()
-    for obj, props in pairs(collisionBackup) do
+    for obj, props in pairs(backup) do
         if obj and obj.Parent then
             pcall(function()
                 obj.CanCollide = props.CanCollide
@@ -205,18 +162,12 @@ local function restoreMapCollision()
         end
     end
 
-    table.clear(collisionBackup)
+    table.clear(backup)
 end
 
--- ============================================================
--- INVISIBLE MOVING PLATFORM
--- ============================================================
-
-local function platformYOffset(hum, root)
-    -- En el primer snapshot:
-    -- HRP Y 123.088 -> platform Y 119.590 ~= 3.5 studs debajo.
-    return hum.HipHeight + (root.Size.Y * 0.5) + (PLATFORM_SIZE.Y * 0.5)
-end
+-- =========================
+-- PLATFORM
+-- =========================
 
 local function createPlatform()
     local _, hum, root = getCharacter(LP)
@@ -225,8 +176,10 @@ local function createPlatform()
         return nil
     end
 
+    local offset = getPlatformOffset(hum, root)
+
     local p = Instance.new("Part")
-    p.Name = "XeroMovePlatform"
+    p.Name = "p" .. tostring(math.random(100000, 999999))
     p.Size = PLATFORM_SIZE
     p.Anchored = true
     p.CanCollide = true
@@ -234,9 +187,6 @@ local function createPlatform()
     p.CanTouch = false
     p.Transparency = 1
     p.CastShadow = false
-
-    local offset = platformYOffset(hum, root)
-
     p.CFrame = CFrame.new(root.Position - Vector3.new(0, offset, 0))
     p.Parent = Camera
 
@@ -244,222 +194,8 @@ local function createPlatform()
     return p
 end
 
-local function movePlatformToTarget(target)
-    local myChar, hum, myRoot = getCharacter(LP)
-    local targetChar, targetHum, targetRoot = getCharacter(target)
-
-    if not myRoot or not targetRoot or not platform then
-        return false
-    end
-
-    local supportOffset = platformYOffset(hum, myRoot)
-
-    print("[XERO POC] Moviéndome directo al enemigo...")
-
-    while active do
-        myChar, hum, myRoot = getCharacter(LP)
-        targetChar, targetHum, targetRoot = getCharacter(target)
-
-        if not myRoot or not targetRoot or not platform or not platform.Parent then
-            return false
-        end
-
-        local delta = targetRoot.Position - myRoot.Position
-        local distance = delta.Magnitude
-
-        if distance <= STOP_DISTANCE then
-            print(("[XERO POC] Llegué a rango: %.2f studs"):format(distance))
-            return true
-        end
-
-        local dt = RunService.Heartbeat:Wait()
-
-        -- La plataforma se dirige hacia el enemigo en línea recta.
-        -- Usamos el HRP para recalcular el offset de soporte.
-        local desiredSupport =
-            targetRoot.Position
-            - Vector3.new(0, supportOffset, 0)
-
-        local current = platform.Position
-        local toGoal = desiredSupport - current
-        local maxStep = TRAVEL_SPEED * dt
-
-        local nextPos
-
-        if toGoal.Magnitude <= maxStep then
-            nextPos = desiredSupport
-        else
-            nextPos = current + toGoal.Unit * maxStep
-        end
-
-        platform.CFrame = CFrame.new(nextPos)
-
-        -- Esto evita que el personaje se quede rezagado por una pérdida de
-        -- contacto física breve con la plataforma.
-        --
-        -- No hacemos teleport al enemigo; sólo mantenemos al personaje
-        -- apoyado encima de la plataforma móvil.
-        local expectedRoot = nextPos + Vector3.new(0, supportOffset, 0)
-
-        if (myRoot.Position - expectedRoot).Magnitude > 4.5 then
-            local rot = myRoot.CFrame.Rotation
-            myRoot.CFrame = CFrame.new(expectedRoot) * rot
-        end
-    end
-
-    return false
-end
-
--- ============================================================
--- TARGET HITBOX
--- ============================================================
-
-local function makeHitbox(target)
-    local char, _, root = getCharacter(target)
-
-    if not root then
-        return nil
-    end
-
-    local old = char:FindFirstChild("XeroThrowHitbox")
-
-    if old then
-        old:Destroy()
-    end
-
-    local p = Instance.new("Part")
-    p.Name = "XeroThrowHitbox"
-    p.Shape = Enum.PartType.Block
-    p.Size = HITBOX_SIZE
-    p.CFrame = root.CFrame
-    p.Anchored = false
-    p.CanCollide = false
-    p.CanQuery = true
-    p.CanTouch = false
-    p.Massless = true
-    p.Transparency = HITBOX_TRANSPARENCY
-    p.Color = Color3.new(1, 0, 0)
-    p.CastShadow = false
-    p.Parent = char
-
-    local weld = Instance.new("WeldConstraint")
-    weld.Name = "XeroThrowHitboxWeld"
-    weld.Part0 = root
-    weld.Part1 = p
-    weld.Parent = p
-
-    hitbox = p
-    return p
-end
-
--- ============================================================
--- MOUSE SPOOF
--- ============================================================
-
-local function installMouseRedirect()
-    if oldIndex then
-        return true
-    end
-
-    if type(hookmetamethod) ~= "function" then
-        return false, "hookmetamethod no disponible"
-    end
-
-    local ok, err = pcall(function()
-        oldIndex = hookmetamethod(game, "__index", newcclosure(function(self, key)
-            if redirectEnabled
-                and self == mouse
-                and redirectPart
-                and redirectPart.Parent
-            then
-                if key == "Target" then
-                    return redirectPart
-
-                elseif key == "Hit" then
-                    return redirectPart.CFrame
-
-                elseif key == "UnitRay" then
-                    local cam = workspace.CurrentCamera
-                    local origin = cam and cam.CFrame.Position or Vector3.zero
-                    local direction = redirectPart.Position - origin
-
-                    if direction.Magnitude > 0 then
-                        return Ray.new(origin, direction.Unit * 1000)
-                    end
-                end
-            end
-
-            return oldIndex(self, key)
-        end))
-    end)
-
-    if not ok then
-        oldIndex = nil
-        return false, tostring(err)
-    end
-
-    return true
-end
-
--- ============================================================
--- NATIVE TOOL ACTIVATION
--- ============================================================
-
-local function activateKnife(tool)
-    if type(getconnections) == "function" then
-        local ok, connections = pcall(getconnections, tool.Activated)
-
-        if ok and type(connections) == "table" then
-            local fired = false
-
-            for _, connection in ipairs(connections) do
-                local fn
-
-                pcall(function()
-                    fn = connection.Function
-                end)
-
-                if type(fn) == "function" then
-                    fired = true
-
-                    task.spawn(function()
-                        pcall(fn)
-                    end)
-                end
-            end
-
-            if fired then
-                return true
-            end
-        end
-    end
-
-    if type(firesignal) == "function" then
-        if pcall(firesignal, tool.Activated) then
-            return true
-        end
-    end
-
-    return pcall(function()
-        tool:Activate()
-    end)
-end
-
--- ============================================================
--- CLEANUP
--- ============================================================
-
 local function cleanup()
-    redirectEnabled = false
-    redirectPart = nil
-
-    if hitbox and hitbox.Parent then
-        pcall(function()
-            hitbox:Destroy()
-        end)
-    end
-
-    hitbox = nil
+    running = false
 
     if platform and platform.Parent then
         pcall(function()
@@ -468,126 +204,129 @@ local function cleanup()
     end
 
     platform = nil
-
     restoreMapCollision()
+
+    print("[XERO MOVE TEST] Cleanup terminado.")
 end
 
--- ============================================================
+-- =========================
+-- MOVEMENT
+-- =========================
+
+local function moveToward(target)
+    local _, hum, root = getCharacter(LP)
+    local _, targetHum, targetRoot = getCharacter(target)
+
+    if not hum or not root or not targetRoot or not platform then
+        return false
+    end
+
+    local offset = getPlatformOffset(hum, root)
+
+    print("[XERO MOVE TEST] Moviendo plataforma...")
+    print("[XERO MOVE TEST] NO se escribirá el CFrame de tu HRP.")
+
+    local accumulator = 0
+
+    while running do
+        local dt = RunService.Heartbeat:Wait()
+        accumulator += dt
+
+        if accumulator < UPDATE_RATE then
+            continue
+        end
+
+        local stepDt = accumulator
+        accumulator = 0
+
+        local _, currentHum, currentRoot = getCharacter(LP)
+        local _, currentTargetHum, currentTargetRoot = getCharacter(target)
+
+        if not currentHum or not currentRoot then
+            return false
+        end
+
+        if not currentTargetHum or not currentTargetRoot then
+            return false
+        end
+
+        local distance = (currentTargetRoot.Position - currentRoot.Position).Magnitude
+
+        if distance <= STOP_DISTANCE then
+            print(("[XERO MOVE TEST] Llegué a %.2f studs"):format(distance))
+            return true
+        end
+
+        -- Importante:
+        -- SOLO movemos la plataforma.
+        -- Nunca hacemos root.CFrame = ...
+        local goal =
+            currentTargetRoot.Position
+            - Vector3.new(0, offset, 0)
+
+        local pos = platform.Position
+        local delta = goal - pos
+
+        if delta.Magnitude > 0.001 then
+            local step = math.min(SPEED * stepDt, delta.Magnitude)
+            local nextPos = pos + delta.Unit * step
+
+            platform.CFrame = CFrame.new(nextPos)
+        end
+    end
+
+    return false
+end
+
+-- =========================
 -- MAIN
--- ============================================================
+-- =========================
 
-local function run()
-    print("[XERO POC] ===== MOVEMENT + THROW TEST =====")
+local function main()
+    print("[XERO MOVE TEST] ===== v3 MOVEMENT ONLY =====")
 
-    local myChar, myHum, myRoot = getCharacter(LP)
+    local _, _, root = getCharacter(LP)
 
-    if not myRoot then
-        warn("[XERO POC] Tu personaje no está listo.")
+    if not root then
+        warn("[XERO MOVE TEST] Tu personaje no está listo.")
         return
     end
 
     local target, distance = nearestEnemy()
 
     if not target then
-        warn("[XERO POC] No encontré enemigo.")
+        warn("[XERO MOVE TEST] No hay enemigo vivo.")
         return
     end
 
-    print(("[XERO POC] Target: %s | %.2f studs"):format(target.Name, distance))
-
-    local knife, knifeErr = equipKnife()
-
-    if not knife then
-        warn("[XERO POC] " .. tostring(knifeErr))
-        return
-    end
-
-    local hookOk, hookErr = installMouseRedirect()
-
-    if not hookOk then
-        warn("[XERO POC] Mouse redirect falló: " .. tostring(hookErr))
-        return
-    end
+    print(("[XERO MOVE TEST] Target: %s | %.2f studs"):format(
+        target.Name,
+        distance
+    ))
 
     disableMapCollision()
 
     if not createPlatform() then
-        warn("[XERO POC] No pude crear plataforma.")
+        warn("[XERO MOVE TEST] No pude crear la plataforma.")
         cleanup()
         return
     end
 
-    local reached = movePlatformToTarget(target)
+    local reached = moveToward(target)
 
-    if not reached then
-        warn("[XERO POC] No pude llegar al objetivo.")
-        cleanup()
-        return
-    end
-
-    local targetChar, targetHum, targetRoot = getCharacter(target)
-
-    if not targetHum or not targetRoot then
-        warn("[XERO POC] El objetivo dejó de ser válido.")
-        cleanup()
-        return
-    end
-
-    local p = makeHitbox(target)
-
-    if not p then
-        warn("[XERO POC] No pude crear HitboxPart.")
-        cleanup()
-        return
-    end
-
-    redirectPart = p
-    redirectEnabled = true
-
-    print("[XERO POC] En rango. Probando lanzamiento nativo...")
-
-    local startHealth = targetHum.Health
-
-    for i = 1, MAX_THROWS do
-        if not targetHum.Parent or targetHum.Health <= 0 then
-            break
-        end
-
-        print(("[XERO POC] Throw %d/%d | HP %.1f"):format(
-            i,
-            MAX_THROWS,
-            targetHum.Health
-        ))
-
-        activateKnife(knife)
-        task.wait(THROW_DELAY)
-    end
-
-    local deadline = os.clock() + SERVER_CONFIRM_TIME
-
-    while targetHum.Parent
-        and targetHum.Health > 0
-        and os.clock() < deadline
-    do
-        task.wait(0.05)
-    end
-
-    if targetHum.Parent and targetHum.Health <= 0 then
-        print(("[XERO POC] ÉXITO -> %s eliminado."):format(target.Name))
+    if reached then
+        print("[XERO MOVE TEST] Movimiento completado SIN tocar HRP.CFrame.")
+        task.wait(1)
     else
-        warn(("[XERO POC] NO MATÓ -> HP %.1f -> %.1f"):format(
-            startHealth,
-            targetHum.Parent and targetHum.Health or -1
-        ))
+        warn("[XERO MOVE TEST] Movimiento interrumpido.")
     end
 
     cleanup()
-    print("[XERO POC] Cleanup terminado.")
 end
 
-local ok, err = xpcall(run, debug.traceback)
+local ok, err = xpcall(main, debug.traceback)
 
 if not ok then
-    warn("[XERO POC] ERROR:\n" .. tostring(err))
+    warn("[XERO MOVE TEST] ERROR:\n" .. tostring(err))
     cleanup()
 end

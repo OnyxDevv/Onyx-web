@@ -1,4 +1,4 @@
--- XeroHub | DUELS MURDERS VS SHERIFF | R62 PERF FACES EFFECTS SOUNDS | R59 SHARED C
+-- XeroHub | DUELS MURDERS VS SHERIFF | R62 PERF FACES EFFECTS SOUNDS | R59 SHARED COMBAT SNAPSHOT
 
 local SoundCatalogCore = {
     TARGET_SOUND_ID = "10209603",
@@ -269,6 +269,7 @@ function runtime.Cleanup()
     if runtime.ClearTeamCorpseCache then pcall(runtime.ClearTeamCorpseCache) end
     if runtime.SoundCleanup then pcall(runtime.SoundCleanup) end
     if runtime.TextureCleanup then pcall(runtime.TextureCleanup) end
+    if runtime.ResetBimoAutoGunSync then pcall(runtime.ResetBimoAutoGunSync) end
 
     for i = #runtime.Connections, 1, -1 do
         local connection = runtime.Connections[i]
@@ -14087,7 +14088,7 @@ placeAppearanceElement(restoreAppearanceButton, nextAppearanceOrder())
 runtime.RefreshAppearanceControls()
 
 
--- XERO AIM BACKEND · BIMO AIMCONTEXT v8 360
+-- XERO AIM BACKEND · BIMO AIMCONTEXT v9 360 + AUTOSHOOT SYNC
 -- Bimo (PlaceId DUELS_BIMO_PLACE_ID):
 --   Pistola -> GetAimContext nativo (TOUCH + CENTER/ShiftLock + 360 off-screen)
 --   Cuchillo -> conserva el hook Raycast/FindPartOnRay existente.
@@ -14143,6 +14144,10 @@ aimHookState.BimoTool = nil
 aimHookState.BimoAimTable = nil
 aimHookState.BimoOriginalGetAimContext = nil
 aimHookState.BimoWrapper = nil
+-- v9: target lock corto para que AutoShoot -> Tool:Activate() -> GetAimContext()
+-- no pueda ser pisado por el refresco de Silent Aim entre esos pasos.
+aimHookState.ShotTarget = nil
+aimHookState.ShotTargetUntil = 0
 
 local function wrapAimHook(fn)
     if type(newcclosure) == "function" then
@@ -14271,10 +14276,18 @@ function runtime.InstallBimoAimContext()
     wrapper = function(...)
         local native = originalGetAimContext(...)
 
+        local nowAim = os.clock()
+        local lockedTarget = state.ShotTarget
+        if lockedTarget and (not lockedTarget.Parent or nowAim > (state.ShotTargetUntil or 0)) then
+            state.ShotTarget = nil
+            state.ShotTargetUntil = 0
+            lockedTarget = nil
+        end
+
         local target = state.RoundActive
             and state.BimoGunWanted
             and state.Wanted
-            and state.Target
+            and (lockedTarget or state.Target)
             or nil
 
         if not runtime.Alive
@@ -14542,6 +14555,8 @@ function runtime.UninstallAimHooks(force)
     runtime.RestoreBimoAimContext()
     runtime.UninstallRayAimHook()
     state.Target = nil
+    state.ShotTarget = nil
+    state.ShotTargetUntil = 0
 
     if force then
         state.Wanted = false
@@ -14781,6 +14796,12 @@ local mState = {
     hbCleanupPending = setmetatable({}, {__mode = "k"}),
     hbSpikeWorkerRunning = false,
     autoShootHeavyDue = false,
+    -- v9 AutoShoot gun sync: sólo un Activate por ventana nativa de disparo.
+    autoGunTool = nil,
+    autoGunshotConnection = nil,
+    autoGunNextAt = 0,
+    autoGunPendingUntil = 0,
+    autoGunAcceptedShots = 0,
     charCore = setmetatable({}, {__mode = "k"}),
     enemySnapshot = {},
     enemySnapshotCount = 0,
@@ -14802,6 +14823,71 @@ local mState = {
 mState.pHB.FilterType = Enum.RaycastFilterType.Exclude
 mState.pAS.FilterType = Enum.RaycastFilterType.Exclude
 mState.pSA.FilterType = Enum.RaycastFilterType.Exclude
+
+-- ==========================================================
+-- BIMO v9 · AUTOSHOOT SINCRONIZADO CON EL DISPARO NATIVO
+-- ==========================================================
+-- DefaultGun expone FireRate=2.5 y el callback nativo además valida su propio
+-- cooldown/CombatLockedUntil. Antes intentábamos Activate() cada 0.15 s.
+-- Ahora Gunshot.Played es el ACK local de que handleFire SÍ aceptó el intento.
+function runtime.ResetBimoAutoGunSync()
+    if mState.autoGunshotConnection then
+        pcall(function() mState.autoGunshotConnection:Disconnect() end)
+        mState.autoGunshotConnection = nil
+    end
+    mState.autoGunTool = nil
+    mState.autoGunNextAt = 0
+    mState.autoGunPendingUntil = 0
+    aimHookState.ShotTarget = nil
+    aimHookState.ShotTargetUntil = 0
+end
+
+function runtime.BindBimoAutoGunSync(tool)
+    if game.PlaceId ~= DUELS_BIMO_PLACE_ID or not tool or not esLaPistola(tool) then
+        return false
+    end
+    if mState.autoGunTool == tool
+        and (not mState.autoGunshotConnection or mState.autoGunshotConnection.Connected ~= false) then
+        return true
+    end
+
+    runtime.ResetBimoAutoGunSync()
+    mState.autoGunTool = tool
+
+    local gunshot = tool:FindFirstChild("Gunshot", true)
+    if not gunshot or not gunshot:IsA("Sound") then
+        return true -- fallback: pending gate sigue evitando spam aunque no haya ACK por sonido.
+    end
+
+    local connection
+    connection = gunshot.Played:Connect(function()
+        if not runtime.Alive or mState.autoGunTool ~= tool then return end
+
+        local fireRate = tonumber(tool:GetAttribute("FireRate")) or 2.5
+        fireRate = math.clamp(fireRate, 0.05, 10)
+        local now = os.clock()
+
+        -- El sonido se dispara sólo cuando handleFire pasó el cooldown nativo.
+        -- Un margen pequeño evita caer exactamente en el borde del siguiente tiro.
+        mState.autoGunNextAt = now + fireRate + 0.04
+        mState.autoGunPendingUntil = 0
+        mState.autoGunAcceptedShots = (mState.autoGunAcceptedShots or 0) + 1
+
+        -- GetAimContext ya consumió el lock antes de PlayShoot/Gunshot.Played.
+        -- Lo dejamos unas centésimas extra por seguridad frente al envío del hit.
+        aimHookState.ShotTargetUntil = math.max(aimHookState.ShotTargetUntil or 0, now + 0.18)
+        task_delay(0.20, function()
+            if not runtime.Alive then return end
+            if os.clock() >= (aimHookState.ShotTargetUntil or 0) then
+                aimHookState.ShotTarget = nil
+                aimHookState.ShotTargetUntil = 0
+            end
+        end)
+    end)
+
+    mState.autoGunshotConnection = runtime.Track(connection)
+    return true
+end
 
 function runtime.DisconnectCharCoreSignals(core)
     if not core then return end
@@ -15317,7 +15403,7 @@ runtime.Track(RunService.Heartbeat:Connect(function(deltaTime)
 
 
     -- ==========================================
-    -- 3. AUTO SHOOT (0.15s)
+    -- 3. AUTO SHOOT (scan 0.15s · Bimo gun fire synced to native FireRate)
     -- ==========================================
     if autoShootEnabled or autoShootCuchilloEnabled then
         mState.asAct = true
@@ -15381,10 +15467,30 @@ runtime.Track(RunService.Heartbeat:Connect(function(deltaTime)
                                 -- ocurra antes del refresco periódico de hooks.
                                 runtime.EnsureAimHooksReady()
                                 aimHookState.Target = closestTargetPart
-                                pcall(function() 
-                                    arma:Activate() 
-                                    task_delay(0.02, function() if arma.Parent == char then arma:Deactivate() end end)
-                                end)
+
+                                local canActivate = true
+                                if esGun and game.PlaceId == DUELS_BIMO_PLACE_ID then
+                                    runtime.BindBimoAutoGunSync(arma)
+                                    local now = os.clock()
+                                    -- nextAt viene de un tiro NATIVO aceptado (Gunshot.Played).
+                                    -- pending cubre intentos rechazados por CombatLockedUntil/cooldown
+                                    -- sin volver a martillar Activate cada 0.15 s.
+                                    canActivate = now >= (mState.autoGunNextAt or 0)
+                                        and now >= (mState.autoGunPendingUntil or 0)
+
+                                    if canActivate then
+                                        aimHookState.ShotTarget = closestTargetPart
+                                        aimHookState.ShotTargetUntil = now + 0.40
+                                        mState.autoGunPendingUntil = now + 0.38
+                                    end
+                                end
+
+                                if canActivate then
+                                    pcall(function()
+                                        arma:Activate()
+                                        task_delay(0.02, function() if arma.Parent == char then arma:Deactivate() end end)
+                                    end)
+                                end
                             else
                                 aimHookState.Target = nil
                             end
@@ -15397,6 +15503,9 @@ runtime.Track(RunService.Heartbeat:Connect(function(deltaTime)
         mState.asAct = false
         mState.tAS = 0
         aimHookState.Target = nil
+        if game.PlaceId == DUELS_BIMO_PLACE_ID then
+            runtime.ResetBimoAutoGunSync()
+        end
     end
 
 

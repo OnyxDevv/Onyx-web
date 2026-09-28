@@ -1,20 +1,20 @@
 --[[
-XeroHub | Bimo NativeBeam Probe v1
+XeroHub | Bimo NativeBeam Probe v2
 Creator: Kev
 
-Objetivo:
-- NO hookmetamethod
-- NO Mouse.Hit spoof
-- NO Mouse.Target spoof
-- NO Tool.Activated hook
-- NO setupvalue/u57
-- NO RemoteEvent directo
+Busca ShootLocalBeam SIN depender de debug.info/name/source.
 
-Encuentra la ShootLocalBeam() REAL de la pistola equipada y la llama con
-target.Position. ShootLocalBeam conserva internamente:
-LocalBeam -> fire -> showBeam -> kill/u50
+Estrategias:
+1) Tool.Activated -> callback -> Shoot -> ShootLocalBeam
+2) getgc() -> función cuyos upvalues contienen EXACTAMENTE tool.fire + tool.showBeam
+3) getgc() -> función con firma estructural de Shoot -> función hija con fire/showBeam
 
-Usa el botón "DISPARAR AL TARGET" para probar una sola bala.
+No usa:
+- hookmetamethod
+- Mouse.Hit spoof
+- Mouse.Target spoof
+- setupvalue/u57
+- RemoteEvent directo
 ]]
 
 local Players = game:GetService("Players")
@@ -27,8 +27,8 @@ local LP = Players.LocalPlayer
 repeat task.wait() until LP
 
 local ENV = (getgenv and getgenv()) or _G
-if ENV.__XERO_BIMO_NATIVEBEAM_PROBE and ENV.__XERO_BIMO_NATIVEBEAM_PROBE.Cleanup then
-    pcall(ENV.__XERO_BIMO_NATIVEBEAM_PROBE.Cleanup)
+if ENV.__XERO_BIMO_NATIVEBEAM_PROBE_V2 and ENV.__XERO_BIMO_NATIVEBEAM_PROBE_V2.Cleanup then
+    pcall(ENV.__XERO_BIMO_NATIVEBEAM_PROBE_V2.Cleanup)
 end
 
 local RT = {
@@ -36,39 +36,91 @@ local RT = {
     Connections = {},
     Tool = nil,
     BeamFunction = nil,
+    ShootFunction = nil,
     TargetPlayer = nil,
     TargetPart = nil,
     LastScan = 0,
     LastShot = 0,
+    Strategy = "ninguna",
+    Detail = "",
 }
-ENV.__XERO_BIMO_NATIVEBEAM_PROBE = RT
+ENV.__XERO_BIMO_NATIVEBEAM_PROBE_V2 = RT
 
 local function track(c)
     if c then RT.Connections[#RT.Connections+1] = c end
     return c
 end
 
-local function fnInfo(fn)
-    local name, source = "", ""
-    if debug and type(debug.info) == "function" then
-        pcall(function()
-            name = debug.info(fn, "n") or ""
-            source = debug.info(fn, "s") or ""
-        end)
-    elseif debug and type(debug.getinfo) == "function" then
-        pcall(function()
-            local i = debug.getinfo(fn)
-            name = (i and i.name) or ""
-            source = (i and i.source) or ""
-        end)
-    end
-    return tostring(name), tostring(source)
-end
+local rawGetConnections =
+    (type(getconnections) == "function" and getconnections)
+    or (type(get_signal_cons) == "function" and get_signal_cons)
+    or nil
 
-local getUps =
+local rawGetUpvalues =
     (debug and type(debug.getupvalues) == "function" and debug.getupvalues)
     or (type(getupvalues) == "function" and getupvalues)
     or nil
+
+local rawGetUpvalue =
+    (debug and type(debug.getupvalue) == "function" and debug.getupvalue)
+    or (type(getupvalue) == "function" and getupvalue)
+    or nil
+
+local function getUpvaluesSafe(fn)
+    if type(fn) ~= "function" then return nil end
+
+    if rawGetUpvalues then
+        local ok, ups = pcall(rawGetUpvalues, fn)
+        if ok and type(ups) == "table" then
+            return ups
+        end
+    end
+
+    if rawGetUpvalue then
+        local out = {}
+        local found = false
+
+        for i = 1, 40 do
+            local ok, a, b = pcall(rawGetUpvalue, fn, i)
+            if not ok then break end
+
+            -- Algunas implementaciones: name, value
+            -- Otras: value
+            local value
+            if b ~= nil or type(a) == "string" then
+                value = b
+            else
+                value = a
+            end
+
+            if value == nil and a == nil and b == nil then
+                -- No asumimos fin inmediatamente; pero tras unos nil cortamos.
+                if i > 20 then break end
+            else
+                out[i] = value
+                found = true
+            end
+        end
+
+        if found then return out end
+    end
+
+    return nil
+end
+
+local function connectionFunction(conn)
+    if not conn then return nil end
+
+    local candidates = {"Function", "Callback", "ConnectedFunction"}
+    for _, key in ipairs(candidates) do
+        local ok, value = pcall(function() return conn[key] end)
+        if ok and type(value) == "function" then
+            return value
+        end
+    end
+
+    return nil
+end
 
 local function equippedTool()
     local char = LP.Character
@@ -78,40 +130,117 @@ end
 local function isGunTool(tool)
     if not tool then return false end
     local handle = tool:FindFirstChild("Handle")
-    if not handle then return false end
-    if handle:FindFirstChild("Gunshot") then return true end
-    if tool:FindFirstChild("showBeam") and tool:FindFirstChild("fire") then return true end
+    return (handle and handle:FindFirstChild("Gunshot") ~= nil)
+        or (tool:FindFirstChild("fire") ~= nil and tool:FindFirstChild("showBeam") ~= nil)
+end
+
+local function getGunRemotes(tool)
+    if not tool then return nil, nil end
+    local fireRemote = tool:FindFirstChild("fire")
+    local showBeam = tool:FindFirstChild("showBeam")
+    return fireRemote, showBeam
+end
+
+local function functionContainsExactRemote(fn, remote)
+    if not remote or type(fn) ~= "function" then return false end
+    local ups = getUpvaluesSafe(fn)
+    if not ups then return false end
+
+    for _, value in pairs(ups) do
+        if value == remote then return true end
+    end
     return false
 end
 
-local function hasNativeBeamSignature(fn, tool)
+local function isBeamFunction(fn, tool)
     if type(fn) ~= "function" or not tool then return false end
 
-    local name, source = fnInfo(fn)
-    if name == "ShootLocalBeam" then
-        return true
+    local fireRemote, showBeam = getGunRemotes(tool)
+    if not fireRemote or not showBeam then return false end
+
+    local ups = getUpvaluesSafe(fn)
+    if not ups then return false end
+
+    local hasFire, hasShow = false, false
+    for _, value in pairs(ups) do
+        if value == fireRemote then
+            hasFire = true
+        elseif value == showBeam then
+            hasShow = true
+        end
     end
 
-    if not getUps then return false end
-    local ok, ups = pcall(getUps, fn)
-    if not ok or type(ups) ~= "table" then return false end
+    return hasFire and hasShow
+end
 
-    local hasFire, hasShowBeam = false, false
-    for _, v in pairs(ups) do
-        if typeof(v) == "Instance" and v:IsA("RemoteEvent") then
-            if v.Name == "fire" and v:IsDescendantOf(tool) then
-                hasFire = true
-            elseif v.Name == "showBeam" and v:IsDescendantOf(tool) then
-                hasShowBeam = true
+local function findBeamInsideFunction(fn, tool, visited, depth)
+    if type(fn) ~= "function" then return nil end
+    visited = visited or {}
+    depth = depth or 0
+    if visited[fn] or depth > 4 then return nil end
+    visited[fn] = true
+
+    if isBeamFunction(fn, tool) then
+        return fn
+    end
+
+    local ups = getUpvaluesSafe(fn)
+    if not ups then return nil end
+
+    for _, value in pairs(ups) do
+        if type(value) == "function" then
+            if isBeamFunction(value, tool) then
+                return value
+            end
+            local found = findBeamInsideFunction(value, tool, visited, depth + 1)
+            if found then return found end
+        end
+    end
+
+    return nil
+end
+
+local function findViaActivated(tool)
+    if not rawGetConnections then
+        return nil, nil, "getconnections no disponible"
+    end
+
+    local ok, cons = pcall(rawGetConnections, tool.Activated)
+    if not ok or type(cons) ~= "table" then
+        return nil, nil, "no pude leer Tool.Activated"
+    end
+
+    local readable = 0
+    for _, conn in ipairs(cons) do
+        local fn = connectionFunction(conn)
+        if fn then
+            readable += 1
+            local beam = findBeamInsideFunction(fn, tool)
+            if beam then
+                -- Intentamos además recuperar Shoot como la función padre inmediata
+                local ups = getUpvaluesSafe(fn)
+                if ups then
+                    for _, value in pairs(ups) do
+                        if type(value) == "function" then
+                            local nested = findBeamInsideFunction(value, tool)
+                            if nested == beam then
+                                return beam, value, "Activated readable=" .. tostring(readable)
+                            end
+                        end
+                    end
+                end
+                return beam, nil, "Activated readable=" .. tostring(readable)
             end
         end
     end
 
-    return hasFire and hasShowBeam
+    return nil, nil,
+        "Activated connections=" .. tostring(#cons) ..
+        ", callbacks legibles=" .. tostring(readable)
 end
 
-local function findNativeBeam(tool)
-    if not tool or type(getgc) ~= "function" then
+local function getGCObjects()
+    if type(getgc) ~= "function" then
         return nil, "getgc no disponible"
     end
 
@@ -119,29 +248,94 @@ local function findNativeBeam(tool)
     if not ok or type(objects) ~= "table" then
         ok, objects = pcall(getgc)
     end
+
     if not ok or type(objects) ~= "table" then
         return nil, "getgc falló"
     end
+    return objects
+end
 
-    local fallback
+local function findViaExactRemoteSignature(tool)
+    local objects, err = getGCObjects()
+    if not objects then return nil, nil, err end
+
+    local functionCount = 0
+    local upvalueReadable = 0
+
     for _, obj in ipairs(objects) do
         if type(obj) == "function" then
-            local name, source = fnInfo(obj)
-
-            if name == "ShootLocalBeam" then
-                if source ~= "" and string.find(string.lower(source), string.lower(tool.Name), 1, true) then
-                    return obj
+            functionCount += 1
+            local ups = getUpvaluesSafe(obj)
+            if ups then
+                upvalueReadable += 1
+                if isBeamFunction(obj, tool) then
+                    return obj, nil,
+                        "GC funcs=" .. tostring(functionCount) ..
+                        ", upvalues legibles=" .. tostring(upvalueReadable)
                 end
-                fallback = fallback or obj
-            end
-
-            if hasNativeBeamSignature(obj, tool) then
-                return obj
             end
         end
     end
 
-    return fallback, fallback and nil or "ShootLocalBeam no encontrada"
+    return nil, nil,
+        "GC funcs=" .. tostring(functionCount) ..
+        ", upvalues legibles=" .. tostring(upvalueReadable)
+end
+
+local function findViaShootTree(tool)
+    local objects, err = getGCObjects()
+    if not objects then return nil, nil, err end
+
+    local scanned = 0
+    for _, obj in ipairs(objects) do
+        if type(obj) == "function" then
+            scanned += 1
+            local beam = findBeamInsideFunction(obj, tool)
+            if beam and beam ~= obj then
+                return beam, obj, "tree scanned=" .. tostring(scanned)
+            end
+        end
+    end
+
+    return nil, nil, "tree scanned=" .. tostring(scanned)
+end
+
+local function discover(tool)
+    if not tool or not isGunTool(tool) then
+        return nil, nil, "ninguna", "Equipa la pistola primero."
+    end
+
+    local fireRemote, showBeam = getGunRemotes(tool)
+    if not fireRemote or not showBeam then
+        return nil, nil, "ninguna", "La Tool no tiene fire/showBeam."
+    end
+
+    local beam, shoot, detail = findViaActivated(tool)
+    if beam then
+        return beam, shoot, "Tool.Activated", detail
+    end
+
+    local firstDetail = detail
+
+    beam, shoot, detail = findViaExactRemoteSignature(tool)
+    if beam then
+        return beam, shoot, "GC remote signature", detail
+    end
+
+    local secondDetail = detail
+
+    beam, shoot, detail = findViaShootTree(tool)
+    if beam then
+        return beam, shoot, "GC recursive tree", detail
+    end
+
+    return nil, nil, "NO ENCONTRADA",
+        "Activated: " .. tostring(firstDetail) ..
+        "\nGC signature: " .. tostring(secondDetail) ..
+        "\nGC tree: " .. tostring(detail) ..
+        "\ngetupvalues=" .. tostring(rawGetUpvalues ~= nil) ..
+        " getupvalue=" .. tostring(rawGetUpvalue ~= nil) ..
+        " getconnections=" .. tostring(rawGetConnections ~= nil)
 end
 
 local function sameTeam(p)
@@ -183,66 +377,77 @@ local function getTarget()
     return bestPlayer, bestPart
 end
 
-local function getParent()
-    local ok, gui = pcall(function()
+local function guiParent()
+    local ok, parent = pcall(function()
         if gethui then return gethui() end
         return CoreGui
     end)
-    return ok and gui or LP:WaitForChild("PlayerGui")
+    return ok and parent or LP:WaitForChild("PlayerGui")
 end
 
-local old = getParent():FindFirstChild("Xero_BimoNativeBeamProbe")
+local old = guiParent():FindFirstChild("Xero_BimoNativeBeamProbeV2")
 if old then old:Destroy() end
 
 local gui = Instance.new("ScreenGui")
-gui.Name = "Xero_BimoNativeBeamProbe"
+gui.Name = "Xero_BimoNativeBeamProbeV2"
 gui.ResetOnSpawn = false
 gui.DisplayOrder = 2147483647
-gui.Parent = getParent()
+gui.Parent = guiParent()
 
 local card = Instance.new("Frame")
-card.Size = UDim2.fromOffset(370, 210)
-card.Position = UDim2.new(0.5, -185, 0.5, -105)
+card.Size = UDim2.fromOffset(420, 300)
+card.Position = UDim2.new(0.5, -210, 0.5, -150)
 card.BackgroundColor3 = Color3.fromRGB(10,10,10)
 card.BorderSizePixel = 0
 card.Parent = gui
 Instance.new("UICorner", card).CornerRadius = UDim.new(0,16)
 
 local stroke = Instance.new("UIStroke")
-stroke.Color = Color3.fromRGB(70,70,70)
+stroke.Color = Color3.fromRGB(65,65,65)
 stroke.Parent = card
 
 local title = Instance.new("TextLabel")
 title.BackgroundTransparency = 1
 title.Position = UDim2.fromOffset(18,12)
-title.Size = UDim2.new(1,-36,0,25)
+title.Size = UDim2.new(1,-56,0,25)
 title.Font = Enum.Font.GothamBold
 title.TextSize = 17
 title.TextColor3 = Color3.new(1,1,1)
 title.TextXAlignment = Enum.TextXAlignment.Left
-title.Text = "XERO · BIMO NATIVE BEAM"
+title.Text = "XERO · BIMO NATIVE BEAM v2"
 title.Parent = card
 
 local status = Instance.new("TextLabel")
 status.BackgroundTransparency = 1
 status.Position = UDim2.fromOffset(18,46)
-status.Size = UDim2.new(1,-36,0,68)
-status.Font = Enum.Font.Gotham
-status.TextSize = 12
+status.Size = UDim2.new(1,-36,0,160)
+status.Font = Enum.Font.Code
+status.TextSize = 11
 status.TextWrapped = true
-status.TextColor3 = Color3.fromRGB(185,185,185)
+status.TextColor3 = Color3.fromRGB(190,190,190)
 status.TextXAlignment = Enum.TextXAlignment.Left
 status.TextYAlignment = Enum.TextYAlignment.Top
 status.Text = "Equipa la pistola..."
 status.Parent = card
 
+local rescanBtn = Instance.new("TextButton")
+rescanBtn.Position = UDim2.fromOffset(18,214)
+rescanBtn.Size = UDim2.new(0.5,-24,0,46)
+rescanBtn.BackgroundColor3 = Color3.fromRGB(35,35,35)
+rescanBtn.TextColor3 = Color3.new(1,1,1)
+rescanBtn.Font = Enum.Font.GothamBold
+rescanBtn.TextSize = 12
+rescanBtn.Text = "REESCANEAR"
+rescanBtn.Parent = card
+Instance.new("UICorner", rescanBtn).CornerRadius = UDim.new(0,12)
+
 local fireBtn = Instance.new("TextButton")
-fireBtn.Position = UDim2.fromOffset(18,126)
-fireBtn.Size = UDim2.new(1,-36,0,45)
+fireBtn.Position = UDim2.new(0.5,6,0,214)
+fireBtn.Size = UDim2.new(0.5,-24,0,46)
 fireBtn.BackgroundColor3 = Color3.fromRGB(235,235,235)
 fireBtn.TextColor3 = Color3.fromRGB(10,10,10)
 fireBtn.Font = Enum.Font.GothamBold
-fireBtn.TextSize = 13
+fireBtn.TextSize = 12
 fireBtn.Text = "DISPARAR AL TARGET"
 fireBtn.Parent = card
 Instance.new("UICorner", fireBtn).CornerRadius = UDim.new(0,12)
@@ -257,39 +462,55 @@ close.Font = Enum.Font.GothamBold
 close.TextSize = 20
 close.Parent = card
 
-local function rescan()
+local function fullRescan()
     local tool = equippedTool()
-    if tool ~= RT.Tool then
-        RT.Tool = tool
-        RT.BeamFunction = nil
-    end
+    RT.Tool = tool
+    RT.BeamFunction = nil
+    RT.ShootFunction = nil
+    RT.Strategy = "ninguna"
+    RT.Detail = ""
 
-    if tool and isGunTool(tool) and not RT.BeamFunction then
-        RT.BeamFunction = select(1, findNativeBeam(tool))
+    if tool and isGunTool(tool) then
+        local beam, shoot, strategy, detail = discover(tool)
+        RT.BeamFunction = beam
+        RT.ShootFunction = shoot
+        RT.Strategy = strategy
+        RT.Detail = detail
     end
 end
+
+track(rescanBtn.Activated:Connect(fullRescan))
 
 track(RunService.Heartbeat:Connect(function()
     if not RT.Alive then return end
 
     local now = os.clock()
-    if now - RT.LastScan >= 0.20 then
+    local current = equippedTool()
+
+    if current ~= RT.Tool or now - RT.LastScan >= 1.0 then
         RT.LastScan = now
-        rescan()
-        RT.TargetPlayer, RT.TargetPart = getTarget()
+        if current ~= RT.Tool or not RT.BeamFunction then
+            fullRescan()
+        end
     end
 
+    RT.TargetPlayer, RT.TargetPart = getTarget()
+
     local toolText = RT.Tool and RT.Tool.Name or "ninguna"
-    local beamText = RT.BeamFunction and "ENCONTRADA" or "NO ENCONTRADA"
     local targetText = RT.TargetPlayer and RT.TargetPlayer.Name or "ninguno"
+
     status.Text =
-        "Pistola: " .. toolText ..
-        "\nShootLocalBeam: " .. beamText ..
-        "\nTarget: " .. targetText
+        "Tool: " .. toolText ..
+        "\nBeam: " .. (RT.BeamFunction and "ENCONTRADA" or "NO ENCONTRADA") ..
+        "\nEstrategia: " .. tostring(RT.Strategy) ..
+        "\nTarget: " .. targetText ..
+        "\n\n" .. tostring(RT.Detail)
 end))
 
-local function fireNativeBeam()
-    rescan()
+local function fireBeam()
+    if not RT.BeamFunction then
+        fullRescan()
+    end
 
     local tool = RT.Tool
     local beam = RT.BeamFunction
@@ -298,50 +519,49 @@ local function fireNativeBeam()
     local hrp = char and char:FindFirstChild("HumanoidRootPart")
 
     if not tool or not isGunTool(tool) then
-        status.Text = "ERROR: equipa una pistola."
+        RT.Detail = "ERROR: equipa la pistola."
         return
     end
     if not beam then
-        local _, err = findNativeBeam(tool)
-        status.Text = "ERROR: " .. tostring(err or "ShootLocalBeam no encontrada")
+        RT.Detail = "ERROR: Beam sigue sin encontrarse.\n" .. tostring(RT.Detail)
         return
     end
     if not target or not target.Parent then
-        status.Text = "ERROR: no hay target visible."
+        RT.Detail = "ERROR: no hay target visible."
         return
     end
     if not hrp then
-        status.Text = "ERROR: no hay HumanoidRootPart."
+        RT.Detail = "ERROR: no hay HRP."
         return
     end
 
     local now = os.clock()
     if now - RT.LastShot < 2.55 then
-        status.Text = "Cooldown nativo: espera un poco."
+        RT.Detail = "Cooldown: espera ~2.5 s."
         return
     end
     RT.LastShot = now
 
     local ok, err = pcall(beam, target.Position, hrp.Position, tool)
     if ok then
-        status.Text =
-            "LLAMADA NATIVA OK\nTarget: " ..
-            tostring(RT.TargetPlayer and RT.TargetPlayer.Name or "?") ..
-            "\nMira si salió Gunshot/beam y si contó daño."
+        RT.Detail =
+            "LLAMADA OK a Beam real.\n" ..
+            "Target=" .. tostring(RT.TargetPlayer and RT.TargetPlayer.Name or "?") ..
+            "\nRevisa Gunshot / beam / daño."
     else
-        status.Text = "ERROR al llamar ShootLocalBeam:\n" .. tostring(err)
-        warn("[Xero Bimo NativeBeam] " .. tostring(err))
+        RT.Detail = "ERROR llamando Beam:\n" .. tostring(err)
+        warn("[Xero Bimo Beam v2] " .. tostring(err))
     end
 end
 
-track(fireBtn.Activated:Connect(fireNativeBeam))
+track(fireBtn.Activated:Connect(fireBeam))
 track(close.Activated:Connect(function()
     if RT.Cleanup then RT.Cleanup() end
 end))
 
--- Drag simple
 do
     local dragging, dragStart, startPos = false, nil, nil
+
     track(card.InputBegan:Connect(function(input)
         if input.UserInputType == Enum.UserInputType.MouseButton1
             or input.UserInputType == Enum.UserInputType.Touch then
@@ -350,6 +570,7 @@ do
             startPos = card.Position
         end
     end))
+
     track(UIS.InputChanged:Connect(function(input)
         if dragging and dragStart
             and (input.UserInputType == Enum.UserInputType.MouseMovement
@@ -361,6 +582,7 @@ do
             )
         end
     end))
+
     track(UIS.InputEnded:Connect(function(input)
         if input.UserInputType == Enum.UserInputType.MouseButton1
             or input.UserInputType == Enum.UserInputType.Touch then
@@ -372,14 +594,18 @@ end
 function RT.Cleanup()
     if not RT.Alive then return end
     RT.Alive = false
+
     for i = #RT.Connections, 1, -1 do
         pcall(function() RT.Connections[i]:Disconnect() end)
         RT.Connections[i] = nil
     end
+
     if gui and gui.Parent then gui:Destroy() end
-    if ENV.__XERO_BIMO_NATIVEBEAM_PROBE == RT then
-        ENV.__XERO_BIMO_NATIVEBEAM_PROBE = nil
+
+    if ENV.__XERO_BIMO_NATIVEBEAM_PROBE_V2 == RT then
+        ENV.__XERO_BIMO_NATIVEBEAM_PROBE_V2 = nil
     end
 end
 
-print("[XeroHub] Bimo NativeBeam Probe v1 listo.")
+fullRescan()
+print("[XeroHub] Bimo NativeBeam Probe v2 listo.")

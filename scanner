@@ -1,25 +1,22 @@
 --[[
-    XeroHub - Kill All PoC v5
+    XeroHub - Kill All PoC v6
     Creator: Kev
 
-    Objetivo:
-    - Replicar mejor la secuencia observada en el scanner.
-    - Sin escribir HumanoidRootPart.CFrame.
-    - Sin hookmetamethod.
-    - Sin disparar directamente el remote FINAL de daño.
+    Cambios clave:
+    - Corrige resolución del remote de throw:
+        el scanner muestra nombres tipo "RE/<hash>" dentro de Net,
+        no necesariamente una carpeta "RE".
+    - Intenta PRIMERO la activación nativa de Tool.Activated.
+    - Si la activación nativa no crea ningún cuchillo,
+      usa fallback manual con el remote de THROW + LocalThrowingKnife.
+    - Registra en consola si aparecen:
+        LocalThrowingKnife
+        ThrowingLocalKnife
+        ThrowingServerKnife
+        ThrowingKnifeServer
+    - NO dispara directamente el remote final de daño.
 
-    Flujo:
-      1) Plataforma invisible bajo el jugador.
-      2) Noclip local de ActiveMaps.
-      3) Equipar DefaultKnife.
-      4) Crear HitboxPart 30x30x30 soldado al enemigo.
-      5) Acercarse con Humanoid:MoveTo() pero detenerse ANTES de entrar al enemigo.
-      6) Frenar movimiento/giro.
-      7) Lanzar cuchillos replicando LocalThrowingKnife + remote nativo de THROW.
-      8) Dejar que ThrowingKinfeHandlerScript haga el hit final.
-      9) Cleanup.
-
-    Es PoC separado. No modifica XeroHub.
+    Es un PoC separado.
 ]]
 
 local Players = game:GetService("Players")
@@ -35,11 +32,7 @@ local Camera = workspace.CurrentCamera
 
 local PLATFORM_SIZE = Vector3.new(10, 1, 10)
 
--- Distancia a la que dejamos de acercarnos.
 local APPROACH_DISTANCE = 14
-
--- Consideramos que ya llegamos si estamos dentro de este margen
--- del punto de aproximación.
 local APPROACH_TOLERANCE = 2.5
 
 local RETARGET_RATE = 0.08
@@ -48,14 +41,11 @@ local PLATFORM_RATE = 1 / 30
 local HITBOX_SIZE = Vector3.new(30, 30, 30)
 local HITBOX_TRANSPARENCY = 0.45
 
--- El otro script hace muchos throws muy rápidos.
--- Esta prueba usa menos para no meter carga absurda.
-local MAX_THROWS = 14
-local THROW_DELAY = 0.035
-local AFTER_THROW_WAIT = 1.25
+local MAX_NATIVE_ATTEMPTS = 3
+local MAX_MANUAL_THROWS = 12
+local THROW_DELAY = 0.045
 
--- Valores observados en ESTE build del juego.
-local THROW_REMOTE_NAME =
+local THROW_HASH =
     "2b789bb88cbd439d2c8a04ef507c52a5d3cad6c302d7755858ffb1afab45d869"
 
 local THROW_TOKEN =
@@ -66,17 +56,15 @@ local THROW_TOKEN =
 -- ============================================================
 
 local running = true
-
-local platform = nil
-local hitbox = nil
-local platformConnection = nil
+local platform
+local hitbox
+local platformConn
 
 local mapBackup = {}
-
-local savedAutoRotate = nil
+local savedAutoRotate
 
 -- ============================================================
--- BASIC HELPERS
+-- CHARACTER HELPERS
 -- ============================================================
 
 local function getCharacter(player)
@@ -101,7 +89,6 @@ local function isEnemy(player)
     end
 
     local char, hum = getCharacter(player)
-
     if not char or not hum then
         return false
     end
@@ -118,13 +105,12 @@ end
 
 local function nearestEnemy()
     local _, _, root = getCharacter(LP)
-
     if not root then
         return nil
     end
 
     local best
-    local bestDistance = math.huge
+    local bestDist = math.huge
 
     for _, player in ipairs(Players:GetPlayers()) do
         if isEnemy(player) then
@@ -133,15 +119,15 @@ local function nearestEnemy()
             if targetRoot then
                 local d = (targetRoot.Position - root.Position).Magnitude
 
-                if d < bestDistance then
-                    bestDistance = d
+                if d < bestDist then
+                    bestDist = d
                     best = player
                 end
             end
         end
     end
 
-    return best, bestDistance
+    return best, bestDist
 end
 
 local function supportOffset(hum, root)
@@ -158,7 +144,7 @@ local function disableMapCollision()
     local activeMaps = workspace:FindFirstChild("ActiveMaps")
 
     if not activeMaps then
-        warn("[XERO v5] workspace.ActiveMaps no existe.")
+        warn("[XERO v6] workspace.ActiveMaps no existe")
         return
     end
 
@@ -173,20 +159,19 @@ local function disableMapCollision()
 
             obj.CanQuery = true
             obj.CanCollide = false
-
             count += 1
         end
     end
 
-    print(("[XERO v5] Noclip aplicado a %d partes."):format(count))
+    print(("[XERO v6] noclip -> %d partes"):format(count))
 end
 
 local function restoreMapCollision()
-    for obj, old in pairs(mapBackup) do
+    for obj, props in pairs(mapBackup) do
         if obj and obj.Parent then
             pcall(function()
-                obj.CanCollide = old.CanCollide
-                obj.CanQuery = old.CanQuery
+                obj.CanCollide = props.CanCollide
+                obj.CanQuery = props.CanQuery
             end)
         end
     end
@@ -200,7 +185,6 @@ end
 
 local function createPlatform()
     local _, hum, root = getCharacter(LP)
-
     if not hum or not root then
         return nil
     end
@@ -226,39 +210,31 @@ local function createPlatform()
     p.Parent = Camera
 
     platform = p
-
     return p
 end
 
 local function startPlatformFollow()
-    local accumulator = 0
+    local acc = 0
 
-    platformConnection = RunService.Heartbeat:Connect(function(dt)
-        if not running
-            or not platform
-            or not platform.Parent
-        then
+    platformConn = RunService.Heartbeat:Connect(function(dt)
+        if not running or not platform or not platform.Parent then
             return
         end
 
-        accumulator += dt
-
-        if accumulator < PLATFORM_RATE then
+        acc += dt
+        if acc < PLATFORM_RATE then
             return
         end
 
-        accumulator = 0
+        acc = 0
 
         local _, hum, root = getCharacter(LP)
-
         if not hum or not root then
             return
         end
 
         local offset = supportOffset(hum, root)
 
-        -- Plataforma únicamente debajo del jugador.
-        -- NO arrastra el HRP.
         platform.CFrame = CFrame.new(
             root.Position.X,
             root.Position.Y - offset,
@@ -288,7 +264,7 @@ local function equipKnife()
     local char, hum = getCharacter(LP)
 
     if not char or not hum then
-        return nil, "personaje no disponible"
+        return nil, "character inválido"
     end
 
     local knife = findKnife()
@@ -311,6 +287,8 @@ local function equipKnife()
         return nil, "DefaultKnife no se equipó"
     end
 
+    print("[XERO v6] DefaultKnife equipado")
+
     return knife
 end
 
@@ -326,7 +304,6 @@ local function createTargetHitbox(target)
     end
 
     local old = char:FindFirstChild("HitboxPart")
-
     if old then
         pcall(function()
             old:Destroy()
@@ -357,75 +334,33 @@ local function createTargetHitbox(target)
 
     hitbox = p
 
+    print("[XERO v6] HitboxPart 30x30x30 creado")
+
     return p
 end
 
 -- ============================================================
--- APPROACH WITHOUT SPINNING
+-- APPROACH
 -- ============================================================
 
-local function horizontalUnit(fromPos, toPos)
-    local delta = Vector3.new(
-        toPos.X - fromPos.X,
-        0,
-        toPos.Z - fromPos.Z
-    )
-
-    if delta.Magnitude < 0.001 then
-        return Vector3.new(0, 0, -1)
-    end
-
-    return delta.Unit
-end
-
 local function approachTarget(target)
-    print("[XERO v5] Acercándome sin entrar encima del target...")
-
     while running do
         local _, hum, root = getCharacter(LP)
         local _, targetHum, targetRoot = getCharacter(target)
 
-        if not hum or not root then
+        if not hum or not root or not targetHum or not targetRoot then
             return false
         end
 
-        if not targetHum or not targetRoot then
-            return false
-        end
-
-        local targetPos = targetRoot.Position
-
-        local dir = horizontalUnit(root.Position, targetPos)
-
-        -- Punto a APPROACH_DISTANCE del enemigo.
-        local standPos =
-            targetPos
-            - (dir * APPROACH_DISTANCE)
-
-        -- Conserva altura actual para que MoveTo no intente trepar/
-        -- hundirse dentro del enemigo.
-        standPos = Vector3.new(
-            standPos.X,
-            root.Position.Y,
-            standPos.Z
+        local flatDelta = Vector3.new(
+            targetRoot.Position.X - root.Position.X,
+            0,
+            targetRoot.Position.Z - root.Position.Z
         )
 
-        local horizontalToStand = Vector3.new(
-            standPos.X - root.Position.X,
-            0,
-            standPos.Z - root.Position.Z
-        ).Magnitude
+        local distance = flatDelta.Magnitude
 
-        local enemyDistance = Vector3.new(
-            targetPos.X - root.Position.X,
-            0,
-            targetPos.Z - root.Position.Z
-        ).Magnitude
-
-        if horizontalToStand <= APPROACH_TOLERANCE
-            or enemyDistance <= APPROACH_DISTANCE + 1.5
-        then
-            -- Frenar completamente ANTES de tocar al enemigo.
+        if distance <= APPROACH_DISTANCE + APPROACH_TOLERANCE then
             pcall(function()
                 hum:MoveTo(root.Position)
                 hum:Move(Vector3.zero, false)
@@ -433,14 +368,27 @@ local function approachTarget(target)
 
             savedAutoRotate = hum.AutoRotate
             hum.AutoRotate = false
-
-            -- Solo corta giro físico residual. No toca CFrame.
             root.AssemblyAngularVelocity = Vector3.zero
 
-            print(("[XERO v5] En rango: %.2f studs"):format(enemyDistance))
+            print(("[XERO v6] en rango -> %.2f studs"):format(distance))
 
             return true
         end
+
+        local dir =
+            flatDelta.Magnitude > 0.001
+            and flatDelta.Unit
+            or Vector3.new(0, 0, -1)
+
+        local standPos =
+            targetRoot.Position
+            - (dir * APPROACH_DISTANCE)
+
+        standPos = Vector3.new(
+            standPos.X,
+            root.Position.Y,
+            standPos.Z
+        )
 
         hum:MoveTo(standPos)
 
@@ -451,36 +399,197 @@ local function approachTarget(target)
 end
 
 -- ============================================================
--- THROW REMOTE
+-- THROW OBJECT WATCH
 -- ============================================================
 
-local function getThrowRemote()
-    local packages = ReplicatedStorage:FindFirstChild("Packages")
-    if not packages then
-        return nil
+local watchedNames = {
+    LocalThrowingKnife = true,
+    ThrowingLocalKnife = true,
+    ThrowingServerKnife = true,
+    ThrowingKnifeServer = true,
+}
+
+local function isThrowName(name)
+    if watchedNames[name] then
+        return true
     end
 
-    local net = packages:FindFirstChild("Net")
+    local lower = string.lower(name)
+
+    return string.find(lower, "throwing")
+        and string.find(lower, "knife")
+end
+
+local function startThrowWatch()
+    local seen = 0
+    local cons = {}
+
+    local function hook(parent, label)
+        table.insert(cons, parent.ChildAdded:Connect(function(obj)
+            if isThrowName(obj.Name) then
+                seen += 1
+                print(("[XERO v6] APARECIÓ %s -> %s"):format(
+                    label,
+                    obj.Name
+                ))
+            end
+        end))
+    end
+
+    hook(workspace, "Workspace")
+
+    local rendered = workspace:FindFirstChild("RenderedObjects")
+    if rendered then
+        hook(rendered, "RenderedObjects")
+    end
+
+    return function()
+        for _, con in ipairs(cons) do
+            con:Disconnect()
+        end
+
+        return seen
+    end
+end
+
+-- ============================================================
+-- NATIVE ACTIVATED
+-- ============================================================
+
+local function nativeActivate(knife)
+    print("[XERO v6] intentando Activated nativo...")
+
+    local used = 0
+
+    if type(getconnections) == "function" then
+        local ok, connections = pcall(getconnections, knife.Activated)
+
+        if ok and type(connections) == "table" then
+            print(("[XERO v6] getconnections -> %d conexiones"):format(
+                #connections
+            ))
+
+            for index, con in ipairs(connections) do
+                local fired = false
+
+                -- Primero el método Fire de la conexión, que es lo más
+                -- parecido a lo observado.
+                local okFire = pcall(function()
+                    if con.Fire then
+                        con:Fire()
+                        fired = true
+                    end
+                end)
+
+                if fired and okFire then
+                    used += 1
+                    print(("[XERO v6] connection %d -> Fire() OK"):format(index))
+                else
+                    local fn
+
+                    pcall(function()
+                        fn = con.Function
+                    end)
+
+                    if type(fn) == "function" then
+                        local okFn = pcall(fn)
+
+                        if okFn then
+                            used += 1
+                            print(("[XERO v6] connection %d -> Function() OK"):format(index))
+                        end
+                    end
+                end
+            end
+        else
+            warn("[XERO v6] getconnections falló")
+        end
+    else
+        warn("[XERO v6] executor sin getconnections")
+    end
+
+    if used == 0 then
+        if type(firesignal) == "function" then
+            local ok = pcall(firesignal, knife.Activated)
+
+            if ok then
+                used += 1
+                print("[XERO v6] firesignal(Activated) OK")
+            end
+        end
+    end
+
+    if used == 0 then
+        local ok = pcall(function()
+            knife:Activate()
+        end)
+
+        if ok then
+            used += 1
+            print("[XERO v6] Tool:Activate() fallback")
+        end
+    end
+
+    return used > 0
+end
+
+-- ============================================================
+-- THROW REMOTE RESOLUTION
+-- ============================================================
+
+local function resolveThrowRemote()
+    local packages = ReplicatedStorage:FindFirstChild("Packages")
+    local net = packages and packages:FindFirstChild("Net")
+
     if not net then
         return nil
     end
 
-    local re = net:FindFirstChild("RE")
-    if not re then
-        return nil
+    -- FORMA 1:
+    -- Lo más probable según el log:
+    -- Instance.Name == "RE/<hash>"
+    local direct =
+        net:FindFirstChild("RE/" .. THROW_HASH)
+
+    if direct and direct:IsA("RemoteEvent") then
+        print("[XERO v6] remote throw encontrado como Net['RE/<hash>']")
+        return direct
     end
 
-    local remote = re:FindFirstChild(THROW_REMOTE_NAME)
+    -- FORMA 2:
+    -- por si RE sí fuera Folder.
+    local reFolder = net:FindFirstChild("RE")
 
-    if remote and remote:IsA("RemoteEvent") then
-        return remote
+    if reFolder then
+        local nested = reFolder:FindFirstChild(THROW_HASH)
+
+        if nested and nested:IsA("RemoteEvent") then
+            print("[XERO v6] remote throw encontrado como Net.RE.<hash>")
+            return nested
+        end
+    end
+
+    -- FORMA 3:
+    -- scan recursivo por nombre exacto o suffix.
+    for _, obj in ipairs(net:GetDescendants()) do
+        if obj:IsA("RemoteEvent") then
+            if obj.Name == THROW_HASH
+                or obj.Name == ("RE/" .. THROW_HASH)
+                or string.find(obj.Name, THROW_HASH, 1, true)
+            then
+                print(("[XERO v6] remote throw encontrado recursivo -> %s"):format(
+                    obj:GetFullName()
+                ))
+                return obj
+            end
+        end
     end
 
     return nil
 end
 
 -- ============================================================
--- LOCAL THROWING KNIFE
+-- MANUAL LOCAL THROW
 -- ============================================================
 
 local function getRenderedObjects()
@@ -495,78 +604,63 @@ local function getRenderedObjects()
     return folder
 end
 
-local function createLocalThrowingKnife(knife, targetPos)
-    if not knife or not knife.Parent then
-        return nil, "knife inválido"
-    end
-
+local function makeLocalThrow(knife, targetPos)
     local handle = knife:FindFirstChild("Handle")
     local animations = knife:FindFirstChild("Animations")
     local localScript = knife:FindFirstChild("LocalScript")
 
-    if not handle then
-        return nil, "Handle no encontrado"
-    end
-
-    if not animations then
-        return nil, "Animations no encontrado"
-    end
-
-    if not localScript then
-        return nil, "LocalScript no encontrado"
+    if not handle or not animations or not localScript then
+        return false, "faltan Handle/Animations/LocalScript"
     end
 
     local handlerTemplate =
         localScript:FindFirstChild("ThrowingKinfeHandlerScript")
 
     if not handlerTemplate then
-        return nil, "ThrowingKinfeHandlerScript no encontrado"
+        return false, "no existe ThrowingKinfeHandlerScript"
     end
 
     local origin = handle.Position
+    local delta = targetPos - origin
 
-    local dir = targetPos - origin
-
-    if dir.Magnitude < 0.01 then
-        return nil, "dirección inválida"
+    if delta.Magnitude < 0.01 then
+        return false, "distancia inválida"
     end
 
-    dir = dir.Unit
-
+    local dir = delta.Unit
     local cf = CFrame.lookAt(origin, targetPos)
 
-    local throwing = handle:Clone()
-    throwing.Name = "LocalThrowingKnife"
-    throwing.Anchored = true
-    throwing.CanCollide = false
-    throwing.Transparency = 1
-    throwing.CFrame = cf
+    local obj = handle:Clone()
+    obj.Name = "LocalThrowingKnife"
+    obj.Anchored = true
+    obj.CanCollide = false
+    obj.Transparency = 1
+    obj.CFrame = cf
 
-    local animClone = animations:Clone()
-    animClone.Parent = throwing
+    animations:Clone().Parent = obj
 
-    local velocityV = Instance.new("Vector3Value")
-    velocityV.Name = "VelocityV"
-    velocityV.Value = dir
-    velocityV.Parent = throwing
+    local v1 = Instance.new("Vector3Value")
+    v1.Name = "VelocityV"
+    v1.Value = dir
+    v1.Parent = obj
 
-    local velocityClient = Instance.new("Vector3Value")
-    velocityClient.Name = "VelocityVClient"
-    velocityClient.Value = dir
-    velocityClient.Parent = throwing
+    local v2 = Instance.new("Vector3Value")
+    v2.Name = "VelocityVClient"
+    v2.Value = dir
+    v2.Parent = obj
 
-    throwing.AssemblyLinearVelocity = Vector3.zero
-    throwing.AssemblyAngularVelocity = Vector3.zero
+    obj.AssemblyLinearVelocity = Vector3.zero
+    obj.AssemblyAngularVelocity = Vector3.zero
 
     local grip = Instance.new("CFrameValue")
     grip.Name = "ToolGrip"
     grip.Value = CFrame.new(0, -1, -0.1)
-    grip.Parent = throwing
+    grip.Parent = obj
 
-    throwing.Parent = getRenderedObjects()
+    obj.Parent = getRenderedObjects()
 
     local handler = handlerTemplate:Clone()
-    handler.Parent = throwing
+    handler.Parent = obj
 
     local creator = handler:FindFirstChild("creator")
 
@@ -576,44 +670,46 @@ local function createLocalThrowingKnife(knife, targetPos)
 
     handler.Disabled = false
 
-    local activateThrowing = knife:FindFirstChild("ActivateThrowing")
+    local activateThrowing =
+        knife:FindFirstChild("ActivateThrowing")
 
     if activateThrowing and activateThrowing:IsA("BindableEvent") then
-        activateThrowing:Fire(throwing, LP)
+        activateThrowing:Fire(obj, LP)
+        print("[XERO v6] ActivateThrowing:Fire()")
+    else
+        warn("[XERO v6] no existe ActivateThrowing BindableEvent")
     end
 
-    return throwing, nil, origin
+    return true, nil, origin
 end
 
-local function fireOneThrow(knife, target)
+local function manualThrow(knife, target)
     local targetChar, targetHum, targetRoot = getCharacter(target)
 
-    if not targetRoot then
+    if not targetHum or not targetRoot then
         return false, "target inválido"
     end
 
-    local remote = getThrowRemote()
+    local remote = resolveThrowRemote()
 
     if not remote then
-        return false, "throw remote no encontrado"
+        return false, "REMOTE THROW NO ENCONTRADO"
     end
 
-    local aimPart =
+    local aim =
         targetChar:FindFirstChild("HitboxPart")
         or targetRoot
 
-    local targetPos = aimPart.Position
+    local targetPos = aim.Position
 
     local handle = knife:FindFirstChild("Handle")
 
     if not handle then
-        return false, "Handle desapareció"
+        return false, "Handle no existe"
     end
 
     local origin = handle.Position
 
-    -- Remote de THROW observado.
-    -- target position + matriz identidad + knife origin.
     local okRemote, remoteErr = pcall(function()
         remote:FireServer(
             THROW_TOKEN,
@@ -633,77 +729,116 @@ local function fireOneThrow(knife, target)
     end)
 
     if not okRemote then
-        return false, "FireServer throw: " .. tostring(remoteErr)
+        return false, "FireServer: " .. tostring(remoteErr)
     end
 
-    local throwing, makeErr =
-        createLocalThrowingKnife(knife, targetPos)
+    print("[XERO v6] throw remote FireServer OK")
 
-    if not throwing then
-        return false, makeErr
+    local okLocal, localErr =
+        makeLocalThrow(knife, targetPos)
+
+    if not okLocal then
+        return false, localErr
     end
 
     return true
 end
 
-local function attackTarget(knife, target)
+-- ============================================================
+-- ATTACK
+-- ============================================================
+
+local function attack(knife, target)
     local _, targetHum = getCharacter(target)
 
     if not targetHum then
         return false
     end
 
-    local startHealth = targetHum.Health
+    local stopWatch = startThrowWatch()
 
-    print(("[XERO v5] Atacando %s | HP %.1f"):format(
-        target.Name,
-        startHealth
-    ))
+    -- Fase A: intentar la conexión nativa.
+    for i = 1, MAX_NATIVE_ATTEMPTS do
+        local _, humNow = getCharacter(target)
 
-    local successfulThrows = 0
-
-    for i = 1, MAX_THROWS do
-        local _, currentHum = getCharacter(target)
-
-        if not currentHum or currentHum.Health <= 0 then
+        if not humNow or humNow.Health <= 0 then
             break
         end
 
-        local ok, err = fireOneThrow(knife, target)
+        print(("[XERO v6] native attempt %d/%d"):format(
+            i,
+            MAX_NATIVE_ATTEMPTS
+        ))
 
-        if ok then
-            successfulThrows += 1
-        else
-            warn(("[XERO v5] Throw %d falló: %s"):format(
+        nativeActivate(knife)
+
+        task.wait(0.18)
+    end
+
+    local seenAfterNative = stopWatch()
+
+    if seenAfterNative > 0 then
+        print(("[XERO v6] Activated nativo creó %d objetos de throw"):format(
+            seenAfterNative
+        ))
+    else
+        warn("[XERO v6] Activated nativo NO creó cuchillos")
+    end
+
+    local _, humAfterNative = getCharacter(target)
+
+    if not humAfterNative or humAfterNative.Health <= 0 then
+        print("[XERO v6] target murió con Activated nativo")
+        return true
+    end
+
+    -- Fase B: fallback manual, ahora con el remote bien resuelto.
+    print("[XERO v6] entrando a fallback manual...")
+
+    local stopWatch2 = startThrowWatch()
+
+    for i = 1, MAX_MANUAL_THROWS do
+        local _, humNow = getCharacter(target)
+
+        if not humNow or humNow.Health <= 0 then
+            break
+        end
+
+        local ok, err = manualThrow(knife, target)
+
+        if not ok then
+            warn(("[XERO v6] manual throw %d falló -> %s"):format(
                 i,
                 tostring(err)
             ))
+
+            -- Si el remote ni existe, no tiene sentido seguir spameando.
+            if tostring(err):find("REMOTE THROW NO ENCONTRADO", 1, true) then
+                break
+            end
         end
 
         task.wait(THROW_DELAY)
     end
 
-    local deadline = os.clock() + AFTER_THROW_WAIT
+    local seenManual = stopWatch2()
+
+    print(("[XERO v6] objetos de throw vistos en fallback: %d"):format(
+        seenManual
+    ))
+
+    local deadline = os.clock() + 1.3
 
     while os.clock() < deadline do
-        local _, currentHum = getCharacter(target)
+        local _, humNow = getCharacter(target)
 
-        if not currentHum or currentHum.Health <= 0 then
-            print(("[XERO v5] ÉXITO: %s murió."):format(target.Name))
+        if not humNow or humNow.Health <= 0 then
+            print("[XERO v6] ÉXITO -> target muerto")
             return true
         end
 
-        task.wait(0.04)
+        task.wait(0.05)
     end
-
-    local char = target.Character
-    local hum = char and char:FindFirstChildOfClass("Humanoid")
-
-    warn(("[XERO v5] No murió. Throws=%d | HP %.1f -> %.1f"):format(
-        successfulThrows,
-        startHealth,
-        hum and hum.Health or -1
-    ))
 
     return false
 end
@@ -715,16 +850,19 @@ end
 local function cleanup()
     running = false
 
-    if platformConnection then
-        platformConnection:Disconnect()
-        platformConnection = nil
+    if platformConn then
+        platformConn:Disconnect()
+        platformConn = nil
     end
 
     local _, hum, root = getCharacter(LP)
 
     if hum then
         pcall(function()
-            hum:MoveTo(root and root.Position or Vector3.zero)
+            if root then
+                hum:MoveTo(root.Position)
+            end
+
             hum:Move(Vector3.zero, false)
         end)
 
@@ -753,7 +891,7 @@ local function cleanup()
 
     restoreMapCollision()
 
-    print("[XERO v5] Cleanup terminado.")
+    print("[XERO v6] cleanup")
 end
 
 -- ============================================================
@@ -761,30 +899,22 @@ end
 -- ============================================================
 
 local function main()
-    print("[XERO v5] ===== MOVEMENT + NATIVE THROW =====")
-
-    local _, _, root = getCharacter(LP)
-
-    if not root then
-        warn("[XERO v5] Tu personaje no está listo.")
-        return
-    end
+    print("[XERO v6] ===== NATIVE ACTIVATED + FIXED REMOTE =====")
 
     local target, distance = nearestEnemy()
 
     if not target then
-        warn("[XERO v5] No hay enemigo vivo.")
+        warn("[XERO v6] no hay enemigo")
         return
     end
 
-    print(("[XERO v5] Target: %s | %.2f studs"):format(
+    print(("[XERO v6] target -> %s | %.2f studs"):format(
         target.Name,
         distance
     ))
 
-    -- Scanner: primero piso/noclip, luego equipa.
     if not createPlatform() then
-        warn("[XERO v5] No pude crear plataforma.")
+        warn("[XERO v6] plataforma falló")
         return
     end
 
@@ -798,38 +928,32 @@ local function main()
     local knife, knifeErr = equipKnife()
 
     if not knife then
-        warn("[XERO v5] " .. tostring(knifeErr))
+        warn("[XERO v6] " .. tostring(knifeErr))
         cleanup()
         return
     end
-
-    print("[XERO v5] DefaultKnife equipado.")
 
     if not createTargetHitbox(target) then
-        warn("[XERO v5] No pude crear HitboxPart.")
+        warn("[XERO v6] hitbox falló")
         cleanup()
         return
     end
 
-    print("[XERO v5] HitboxPart creado 30x30x30.")
-
-    local reached = approachTarget(target)
-
-    if not reached then
-        warn("[XERO v5] No pude llegar al target.")
+    if not approachTarget(target) then
+        warn("[XERO v6] no llegué")
         cleanup()
         return
     end
 
-    local success = attackTarget(knife, target)
+    local killed = attack(knife, target)
 
-    if success then
-        print("[XERO v5] PRUEBA COMPLETA: movimiento + kill.")
+    if killed then
+        print("[XERO v6] PRUEBA COMPLETA OK")
     else
-        warn("[XERO v5] Movimiento OK, ataque todavía no.")
+        warn("[XERO v6] movimiento OK, kill todavía NO")
     end
 
-    task.wait(0.35)
+    task.wait(0.4)
 
     cleanup()
 end
@@ -837,6 +961,6 @@ end
 local ok, err = xpcall(main, debug.traceback)
 
 if not ok then
-    warn("[XERO v5] ERROR:\n" .. tostring(err))
+    warn("[XERO v6] ERROR:\n" .. tostring(err))
     cleanup()
 end

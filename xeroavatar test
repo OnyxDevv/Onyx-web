@@ -5275,9 +5275,10 @@ local uiOk, uiResult = pcall(function()
         return copy
     end
     local function xeroPayloadType(data)
-        if type(data) ~= "string" or #data < 512 then return nil end
+        if type(data) ~= "string" or #data < 12 then return nil end
         if data:sub(1, 8) == "\137PNG\r\n\26\n" then return "png" end
         if data:byte(1) == 0xFF and data:byte(2) == 0xD8 and data:byte(3) == 0xFF then return "jpg" end
+        if data:sub(1, 4) == "RIFF" and data:sub(9, 12) == "WEBP" then return "webp" end
         return nil
     end
     local function xeroUrlHash(text)
@@ -5287,6 +5288,130 @@ local uiOk, uiResult = pcall(function()
             hash = (hash * 33 + string.byte(text, i)) % 2147483647
         end
         return tostring(hash)
+    end
+    local function xeroTrim(text)
+        return (tostring(text or ""):match("^%s*(.-)%s*$") or "")
+    end
+    local function xeroHtmlDecode(text)
+        text = tostring(text or "")
+        text = text:gsub("&amp;", "&")
+        text = text:gsub("&quot;", '"')
+        text = text:gsub("&#39;", "'")
+        text = text:gsub("&#x27;", "'")
+        text = text:gsub("&#x2F;", "/")
+        text = text:gsub("&lt;", "<")
+        text = text:gsub("&gt;", ">")
+        return text
+    end
+    local function xeroUrlOrigin(url)
+        return tostring(url or ""):match("^(https?://[^/]+)")
+    end
+    local function xeroUrlDirectory(url)
+        local noFragment = tostring(url or ""):gsub("#.*$", "")
+        local noQuery = noFragment:gsub("%?.*$", "")
+        return noQuery:match("^(https?://.*/)")
+    end
+    local function xeroAbsoluteUrl(baseUrl, candidate)
+        candidate = xeroHtmlDecode(xeroTrim(candidate))
+        if candidate == "" then return nil end
+        if candidate:match("^https?://") then return candidate end
+        if candidate:sub(1, 2) == "//" then
+            local scheme = tostring(baseUrl or ""):match("^(https?):") or "https"
+            return scheme .. ":" .. candidate
+        end
+        if candidate:sub(1, 1) == "/" then
+            local origin = xeroUrlOrigin(baseUrl)
+            return origin and (origin .. candidate) or nil
+        end
+        local dir = xeroUrlDirectory(baseUrl)
+        return dir and (dir .. candidate) or nil
+    end
+    local function xeroHeader(response, wanted)
+        local headers = response and response.Headers
+        if type(headers) ~= "table" then return nil end
+        wanted = tostring(wanted or ""):lower()
+        for key, value in pairs(headers) do
+            if tostring(key):lower() == wanted then return tostring(value) end
+        end
+        return nil
+    end
+    local function xeroFetchUrl(url)
+        local req = (syn and syn.request) or (http and http.request) or http_request or request
+        if type(req) == "function" then
+            local okRequest, response = pcall(req, {
+                Url = url,
+                Method = "GET",
+                Headers = {
+                    ["User-Agent"] = "Mozilla/5.0 XeroHub/3.1",
+                    ["Accept"] = "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8",
+                },
+            })
+            if okRequest and response then
+                local status = tonumber(response.StatusCode or response.Status)
+                local body = type(response.Body) == "string" and response.Body or nil
+                return body, status, xeroHeader(response, "content-type"), xeroHeader(response, "location")
+            end
+        end
+        local okHttp, data = pcall(function() return game:HttpGet(url) end)
+        if okHttp and type(data) == "string" then return data, 200, nil, nil end
+        return nil, nil, nil, nil
+    end
+    local function xeroExtractPageImage(html, pageUrl)
+        if type(html) ~= "string" then return nil end
+        local patterns = {
+            -- OpenGraph / Twitter: attribute order varies across sites.
+            '<meta[^>]-property=["\']og:image["\'][^>]-content=["\']([^"\']+)["\']',
+            '<meta[^>]-content=["\']([^"\']+)["\'][^>]-property=["\']og:image["\']',
+            '<meta[^>]-name=["\']twitter:image["\'][^>]-content=["\']([^"\']+)["\']',
+            '<meta[^>]-content=["\']([^"\']+)["\'][^>]-name=["\']twitter:image["\']',
+            '<link[^>]-rel=["\']image_src["\'][^>]-href=["\']([^"\']+)["\']',
+            '<link[^>]-href=["\']([^"\']+)["\'][^>]-rel=["\']image_src["\']',
+            -- Fallback: first ordinary image on the page.
+            '<img[^>]-src=["\']([^"\']+)["\']',
+        }
+        for _, pattern in ipairs(patterns) do
+            local found = html:match(pattern)
+            local absolute = found and xeroAbsoluteUrl(pageUrl, found)
+            if absolute and absolute:match("^https?://") then return absolute end
+        end
+        return nil
+    end
+    local function xeroResolveImage(url)
+        local current = url
+        local visited = {}
+        for _ = 1, 4 do
+            if not current or visited[current] then break end
+            visited[current] = true
+
+            local body, status, contentType, location = xeroFetchUrl(current)
+            if status and status >= 300 and status < 400 and location then
+                current = xeroAbsoluteUrl(current, location)
+            elseif body then
+                if #body > 12 * 1024 * 1024 then
+                    return nil, nil, nil, "La imagen es demasiado pesada. Usa un fondo de 12 MB o menos."
+                end
+
+                local kind = xeroPayloadType(body)
+                if kind then return body, kind, current end
+
+                local ct = tostring(contentType or ""):lower()
+                local looksHtml = ct:find("text/html", 1, true)
+                    or body:sub(1, 512):lower():find("<html", 1, true)
+                    or body:sub(1, 512):lower():find("<!doctype html", 1, true)
+                if not looksHtml then
+                    return nil, nil, nil, "La URL respondió, pero no devolvió una imagen PNG/JPG/WEBP compatible."
+                end
+
+                local discovered = xeroExtractPageImage(body, current)
+                if not discovered or visited[discovered] then
+                    return nil, nil, nil, "El enlace es una página web y no pude encontrar automáticamente su imagen principal."
+                end
+                current = discovered
+            else
+                return nil, nil, nil, "No se pudo descargar esa URL. Puede requerir cookies, sesión o bloquear peticiones externas."
+            end
+        end
+        return nil, nil, nil, "No se pudo resolver la imagen desde esa URL."
     end
     local function xeroApplyCustomBackgroundVisuals(self)
         if not self or self.Destroyed then return end
@@ -5304,7 +5429,7 @@ local uiOk, uiResult = pcall(function()
         return self
     end
     function w:SetCustomBackground(url, silent)
-        url = tostring(url or ""):match("^%s*(.-)%s*$") or ""
+        url = xeroTrim(url)
         if url == "" then return false, "Escribe una URL de imagen." end
         if not url:match("^https?://") then return false, "La URL debe comenzar con http:// o https://" end
 
@@ -5315,7 +5440,7 @@ local uiOk, uiResult = pcall(function()
 
         local basePath = XERO_BACKGROUND_FOLDER .. "/custom_" .. xeroUrlHash(url)
         if type(isfile) == "function" then
-            for _, ext in ipairs({".png", ".jpg"}) do
+            for _, ext in ipairs({".png", ".jpg", ".webp"}) do
                 local cachedPath = basePath .. ext
                 if isfile(cachedPath) then
                     local okAsset, cachedAsset = pcall(assetFn, cachedPath)
@@ -5334,46 +5459,26 @@ local uiOk, uiResult = pcall(function()
             end
         end
 
-        local body
-        local req = (syn and syn.request) or (http and http.request) or http_request or request
-        if type(req) == "function" then
-            local okRequest, response = pcall(req, {
-                Url = url,
-                Method = "GET",
-                Headers = { ["User-Agent"] = "XeroHub/3.0" },
-            })
-            if okRequest and response then
-                local status = tonumber(response.StatusCode or response.Status)
-                if (not status or (status >= 200 and status < 300)) and type(response.Body) == "string" then
-                    body = response.Body
-                end
-            end
-        end
-        if not body then
-            local okHttp, data = pcall(function() return game:HttpGet(url) end)
-            if okHttp and type(data) == "string" then body = data end
-        end
-
-        if type(body) == "string" and #body > 12 * 1024 * 1024 then
-            return false, "La imagen es demasiado pesada. Usa un fondo de 12 MB o menos."
-        end
-        local payloadType = xeroPayloadType(body)
-        if not payloadType then
-            return false, "El enlace no devolvió un PNG/JPG directo. Usa una URL raw/directa de imagen."
-        end
+        local body, payloadType, resolvedUrl, resolveErr = xeroResolveImage(url)
+        if not body or not payloadType then return false, resolveErr or "No se pudo obtener una imagen compatible." end
 
         ensureFolderTree(XERO_BACKGROUND_FOLDER)
-        local path = basePath .. (payloadType == "png" and ".png" or ".jpg")
+        local ext = payloadType == "png" and ".png" or (payloadType == "webp" and ".webp" or ".jpg")
+        local path = basePath .. ext
         local okWrite = pcall(writefile, path, body)
         if not okWrite then return false, "No se pudo guardar la imagen en caché." end
 
         local okAsset, asset = pcall(assetFn, path)
         if not okAsset or type(asset) ~= "string" or asset == "" then
-            return false, "No se pudo convertir la imagen a un asset local."
+            pcall(function() if type(delfile) == "function" and isfile(path) then delfile(path) end end)
+            return false, payloadType == "webp"
+                and "Tu ejecutor descargó el WEBP, pero no puede usarlo como asset local. Prueba una URL PNG/JPG."
+                or "No se pudo convertir la imagen a un asset local."
         end
 
         self._themeGeneration = (self._themeGeneration or 0) + 1
         self._customBackgroundURL = url
+        self._customBackgroundResolvedURL = resolvedUrl
         self._customBackgroundActive = true
         applyAnimeBackground(asset, self.ThemeDef)
         xeroApplyCustomBackgroundVisuals(self)
@@ -5754,8 +5859,8 @@ PersonalizationTab:Section({Title = "Fondo"})
 
 local backgroundInput = PersonalizationTab:Input({
     Title = "URL del fondo",
-    Desc = "Pega un enlace directo a .png/.jpg, por ejemplo raw.githubusercontent.com.",
-    Placeholder = "https://.../fondo.png",
+    Desc = "Pega una URL de imagen o una página que contenga una imagen principal. Funciona con cualquier dominio compatible.",
+    Placeholder = "https://sitio.com/imagen-o-pagina",
     Callback = function(text)
         runtime.Personalization.BackgroundURL = tostring(text or "")
     end,
@@ -5763,7 +5868,7 @@ local backgroundInput = PersonalizationTab:Input({
 
 PersonalizationTab:Button({
     Title = "Aplicar fondo desde URL",
-    Desc = "Descarga la imagen, la guarda en caché local y la aplica sin reiniciar.",
+    Desc = "Acepta imágenes directas o intenta resolver automáticamente la imagen principal de una página.",
     Callback = function()
         local url = tostring(runtime.Personalization.BackgroundURL or "")
         if url:gsub("%s+", "") == "" then

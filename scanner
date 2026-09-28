@@ -1,23 +1,19 @@
 --[[
-    XeroHub - Movement Only PoC v3
+    XeroHub - Movement Only PoC v4
     Creator: Kev
 
-    PRUEBA DE AISLAMIENTO:
-    - NO toca HumanoidRootPart.CFrame
-    - NO usa hookmetamethod
-    - NO usa getconnections/firesignal
-    - NO usa cuchillo
-    - NO crea hitbox
+    Corrección respecto a v3:
+    - La plataforma NO viaja hacia el enemigo por sí sola.
+    - La plataforma únicamente sigue debajo del personaje.
+    - El Humanoid usa MoveTo() nativo hacia el enemigo.
+    - WalkSpeed NO se modifica.
+    - HumanoidRootPart.CFrame NO se modifica.
 
-    Solo replica la parte observada en el scanner:
-      * plataforma invisible 10x1x10
-      * Anchored = true
-      * CanCollide = true
-      * CanQuery = false
-      * CanTouch = false
-      * Parent = CurrentCamera
-      * movimiento continuo hacia el enemigo
-      * geometría de ActiveMaps con CanCollide=false / CanQuery=true
+    Esto encaja mejor con el scanner:
+    - velocidad observada ~16 studs/s (WalkSpeed normal)
+    - plataforma X/Z pegada al personaje
+    - plataforma invisible sirve como "piso portátil"
+      mientras ActiveMaps está sin colisión.
 ]]
 
 local Players = game:GetService("Players")
@@ -26,28 +22,31 @@ local RunService = game:GetService("RunService")
 local LP = Players.LocalPlayer
 local Camera = workspace.CurrentCamera
 
--- =========================
+-- ============================================================
 -- CONFIG
--- =========================
+-- ============================================================
 
-local SPEED = 16                 -- aprox. lo observado en el log
 local STOP_DISTANCE = 15
 local PLATFORM_SIZE = Vector3.new(10, 1, 10)
 
--- El otro script parecía escribir la posición ~30 veces/s.
-local UPDATE_RATE = 1 / 30
+-- Reenvía MoveTo para seguir a un enemigo que se esté moviendo.
+local RETARGET_RATE = 0.10
 
--- =========================
+-- Seguimiento de plataforma.
+local PLATFORM_RATE = 1 / 30
+
+-- ============================================================
 -- STATE
--- =========================
+-- ============================================================
 
-local platform
-local backup = {}
+local platform = nil
+local collisionBackup = {}
 local running = true
+local followConnection = nil
 
--- =========================
+-- ============================================================
 -- HELPERS
--- =========================
+-- ============================================================
 
 local function getCharacter(player)
     local char = player and player.Character
@@ -109,26 +108,20 @@ local function nearestEnemy()
     return best, bestDistance
 end
 
-local function getPlatformOffset(hum, root)
-    -- Scanner:
-    -- HRP ~Y 123.09
-    -- plataforma ~Y 119.59
-    -- diferencia ~3.50
-    --
-    -- Esto suele coincidir con:
-    -- HipHeight + medio HRP + media plataforma.
+local function supportOffset(hum, root)
+    -- Posición de soporte bajo los pies.
     return hum.HipHeight + (root.Size.Y * 0.5) + (PLATFORM_SIZE.Y * 0.5)
 end
 
--- =========================
--- MAP COLLISION
--- =========================
+-- ============================================================
+-- MAP NOCLIP
+-- ============================================================
 
 local function disableMapCollision()
     local activeMaps = workspace:FindFirstChild("ActiveMaps")
 
     if not activeMaps then
-        warn("[XERO MOVE TEST] No existe workspace.ActiveMaps")
+        warn("[XERO MOVE v4] No existe workspace.ActiveMaps")
         return
     end
 
@@ -136,24 +129,22 @@ local function disableMapCollision()
 
     for _, obj in ipairs(activeMaps:GetDescendants()) do
         if obj:IsA("BasePart") then
-            backup[obj] = {
+            collisionBackup[obj] = {
                 CanCollide = obj.CanCollide,
                 CanQuery = obj.CanQuery
             }
 
-            -- Exactamente el patrón que vimos en el log.
             obj.CanQuery = true
             obj.CanCollide = false
-
             count += 1
         end
     end
 
-    print(("[XERO MOVE TEST] Noclip aplicado a %d partes"):format(count))
+    print(("[XERO MOVE v4] Noclip aplicado a %d partes."):format(count))
 end
 
 local function restoreMapCollision()
-    for obj, props in pairs(backup) do
+    for obj, props in pairs(collisionBackup) do
         if obj and obj.Parent then
             pcall(function()
                 obj.CanCollide = props.CanCollide
@@ -162,12 +153,12 @@ local function restoreMapCollision()
         end
     end
 
-    table.clear(backup)
+    table.clear(collisionBackup)
 end
 
--- =========================
--- PLATFORM
--- =========================
+-- ============================================================
+-- PORTABLE FLOOR
+-- ============================================================
 
 local function createPlatform()
     local _, hum, root = getCharacter(LP)
@@ -176,7 +167,7 @@ local function createPlatform()
         return nil
     end
 
-    local offset = getPlatformOffset(hum, root)
+    local offset = supportOffset(hum, root)
 
     local p = Instance.new("Part")
     p.Name = "p" .. tostring(math.random(100000, 999999))
@@ -187,15 +178,71 @@ local function createPlatform()
     p.CanTouch = false
     p.Transparency = 1
     p.CastShadow = false
-    p.CFrame = CFrame.new(root.Position - Vector3.new(0, offset, 0))
+    p.CFrame = CFrame.new(
+        root.Position.X,
+        root.Position.Y - offset,
+        root.Position.Z
+    )
     p.Parent = Camera
 
     platform = p
     return p
 end
 
+local function startPlatformFollow()
+    local accumulator = 0
+
+    followConnection = RunService.Heartbeat:Connect(function(dt)
+        if not running or not platform or not platform.Parent then
+            return
+        end
+
+        accumulator += dt
+
+        if accumulator < PLATFORM_RATE then
+            return
+        end
+
+        accumulator = 0
+
+        local _, hum, root = getCharacter(LP)
+
+        if not hum or not root then
+            return
+        end
+
+        local offset = supportOffset(hum, root)
+
+        -- CLAVE:
+        -- la plataforma sigue al jugador.
+        -- No mueve al jugador.
+        platform.CFrame = CFrame.new(
+            root.Position.X,
+            root.Position.Y - offset,
+            root.Position.Z
+        )
+    end)
+end
+
+-- ============================================================
+-- CLEANUP
+-- ============================================================
+
 local function cleanup()
     running = false
+
+    if followConnection then
+        followConnection:Disconnect()
+        followConnection = nil
+    end
+
+    local _, hum = getCharacter(LP)
+
+    if hum then
+        pcall(function()
+            hum:Move(Vector3.zero, false)
+        end)
+    end
 
     if platform and platform.Parent then
         pcall(function()
@@ -204,121 +251,104 @@ local function cleanup()
     end
 
     platform = nil
+
     restoreMapCollision()
 
-    print("[XERO MOVE TEST] Cleanup terminado.")
+    print("[XERO MOVE v4] Cleanup terminado.")
 end
 
--- =========================
--- MOVEMENT
--- =========================
+-- ============================================================
+-- NATIVE MOVEMENT
+-- ============================================================
 
-local function moveToward(target)
-    local _, hum, root = getCharacter(LP)
-    local _, targetHum, targetRoot = getCharacter(target)
-
-    if not hum or not root or not targetRoot or not platform then
-        return false
-    end
-
-    local offset = getPlatformOffset(hum, root)
-
-    print("[XERO MOVE TEST] Moviendo plataforma...")
-    print("[XERO MOVE TEST] NO se escribirá el CFrame de tu HRP.")
-
-    local accumulator = 0
+local function moveToEnemy(target)
+    print("[XERO MOVE v4] Moviendo con Humanoid:MoveTo() nativo...")
+    print("[XERO MOVE v4] WalkSpeed intacto.")
+    print("[XERO MOVE v4] HRP.CFrame intacto.")
 
     while running do
-        local dt = RunService.Heartbeat:Wait()
-        accumulator += dt
+        local _, hum, root = getCharacter(LP)
+        local _, targetHum, targetRoot = getCharacter(target)
 
-        if accumulator < UPDATE_RATE then
-            continue
-        end
-
-        local stepDt = accumulator
-        accumulator = 0
-
-        local _, currentHum, currentRoot = getCharacter(LP)
-        local _, currentTargetHum, currentTargetRoot = getCharacter(target)
-
-        if not currentHum or not currentRoot then
+        if not hum or not root then
             return false
         end
 
-        if not currentTargetHum or not currentTargetRoot then
+        if not targetHum or not targetRoot then
             return false
         end
 
-        local distance = (currentTargetRoot.Position - currentRoot.Position).Magnitude
+        local distance = (targetRoot.Position - root.Position).Magnitude
 
         if distance <= STOP_DISTANCE then
-            print(("[XERO MOVE TEST] Llegué a %.2f studs"):format(distance))
+            print(("[XERO MOVE v4] Llegué a %.2f studs."):format(distance))
+
+            pcall(function()
+                hum:MoveTo(root.Position)
+                hum:Move(Vector3.zero, false)
+            end)
+
             return true
         end
 
-        -- Importante:
-        -- SOLO movemos la plataforma.
-        -- Nunca hacemos root.CFrame = ...
-        local goal =
-            currentTargetRoot.Position
-            - Vector3.new(0, offset, 0)
+        -- Movimiento Roblox normal, sin CFrame ni velocidad artificial.
+        hum:MoveTo(targetRoot.Position)
 
-        local pos = platform.Position
-        local delta = goal - pos
-
-        if delta.Magnitude > 0.001 then
-            local step = math.min(SPEED * stepDt, delta.Magnitude)
-            local nextPos = pos + delta.Unit * step
-
-            platform.CFrame = CFrame.new(nextPos)
-        end
+        task.wait(RETARGET_RATE)
     end
 
     return false
 end
 
--- =========================
+-- ============================================================
 -- MAIN
--- =========================
+-- ============================================================
 
 local function main()
-    print("[XERO MOVE TEST] ===== v3 MOVEMENT ONLY =====")
+    print("[XERO MOVE v4] ===== HUMANOID + PORTABLE FLOOR =====")
 
     local _, _, root = getCharacter(LP)
 
     if not root then
-        warn("[XERO MOVE TEST] Tu personaje no está listo.")
+        warn("[XERO MOVE v4] Tu personaje no está listo.")
         return
     end
 
     local target, distance = nearestEnemy()
 
     if not target then
-        warn("[XERO MOVE TEST] No hay enemigo vivo.")
+        warn("[XERO MOVE v4] No encontré enemigo vivo.")
         return
     end
 
-    print(("[XERO MOVE TEST] Target: %s | %.2f studs"):format(
+    print(("[XERO MOVE v4] Target: %s | %.2f studs"):format(
         target.Name,
         distance
     ))
 
-    disableMapCollision()
-
+    -- Primero crea el piso debajo.
     if not createPlatform() then
-        warn("[XERO MOVE TEST] No pude crear la plataforma.")
-        cleanup()
+        warn("[XERO MOVE v4] No pude crear plataforma.")
         return
     end
 
-    local reached = moveToward(target)
+    startPlatformFollow()
+
+    -- Un par de frames para asegurarnos de que ya esté sosteniendo al jugador.
+    RunService.Heartbeat:Wait()
+    RunService.Heartbeat:Wait()
+    RunService.Heartbeat:Wait()
+
+    -- Después quitamos colisiones del mapa.
+    disableMapCollision()
+
+    local reached = moveToEnemy(target)
 
     if reached then
-        print("[XERO MOVE TEST] Movimiento completado SIN tocar HRP.CFrame.")
+        print("[XERO MOVE v4] ÉXITO: llegué sin TP ni CFrame directo.")
         task.wait(1)
     else
-        warn("[XERO MOVE TEST] Movimiento interrumpido.")
+        warn("[XERO MOVE v4] Movimiento interrumpido.")
     end
 
     cleanup()
@@ -327,6 +357,6 @@ end
 local ok, err = xpcall(main, debug.traceback)
 
 if not ok then
-    warn("[XERO MOVE TEST] ERROR:\n" .. tostring(err))
+    warn("[XERO MOVE v4] ERROR:\n" .. tostring(err))
     cleanup()
 end

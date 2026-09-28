@@ -1,4 +1,4 @@
--- XeroHub | DUELS MURDERS VS SHERIFF | R62 PERF FACES EFFECTS SOUNDS | R59 SHARED COMBAT SNAPSHOT
+-- XeroHub | DUELS MURDERS VS SHERIFF | R62 PERF FACES EFFECTS SOUNDS | R59 SHARED COMBAT SNAPSHOT BIMO LEGION
 
 local SoundCatalogCore = {
     TARGET_SOUND_ID = "10209603",
@@ -14087,203 +14087,271 @@ placeAppearanceElement(restoreAppearanceButton, nextAppearanceOrder())
 runtime.RefreshAppearanceControls()
 
 
--- XERO AIM A/B TEST: misma lógica que AimFix, pero SIN spoof de __index / Mouse.Hit / Mouse.Target.
-local AIM_HOOK_LIFECYCLE_VERSION = 3 -- EXPERIMENTO: __namecall únicamente, sin __index
-local aimHookState = runtimeEnv.__ILUNX_AIM_HOOK_STATE
+-- XERO BIMO NATIVE-SHOOT AIM v2
+-- Bimo móvil guarda Mouse.Hit en el upvalue u57 ANTES de Tool.Activated.
+-- En vez de falsear Mouse.Hit/Target o redirigir Raycast globalmente, esta build
+-- engancha la función nativa Shoot() y sustituye u57 en el ÚLTIMO instante,
+-- después del toque real y justo antes de ShootLocalBeam().
+-- Así la propia arma conserva su Raycast, fire/showBeam, sonido y remotes nativos.
+local AIM_HOOK_LIFECYCLE_VERSION = 7
+local aimHookState = {
+    Version = AIM_HOOK_LIFECYCLE_VERSION,
+    Target = nil,
+    Mouse = mouse,
+    Owner = runtime,
+    Wanted = false,
+    RoundActive = false,
+    Installed = false,
+    Tool = nil,
+    ShootFunction = nil,
+    OldShoot = nil,
+    UpvalueIndex = 5,
+    LastScanAt = 0,
+    LastError = nil,
+}
 
--- Un hook de una versión vieja no guardaba los metamethods originales, así que no
--- podemos desmontarlo de forma fiable sin una sesión limpia. No apilamos otro hook
--- encima: lo dejamos pasivo (Target=nil) hasta el próximo rejoin.
-local legacyAimHook = type(aimHookState) == "table"
-    and (aimHookState.LegacyPermanent == true
-        or aimHookState.Version ~= AIM_HOOK_LIFECYCLE_VERSION)
-
-if type(aimHookState) ~= "table" then
-    aimHookState = {}
+do
+    local previousAimState = runtimeEnv.__ILUNX_AIM_HOOK_STATE
+    if type(previousAimState) == "table" and previousAimState ~= aimHookState then
+        previousAimState.Target = nil
+        previousAimState.Wanted = false
+        previousAimState.RoundActive = false
+    end
     runtimeEnv.__ILUNX_AIM_HOOK_STATE = aimHookState
-end
 
-aimHookState.Version = AIM_HOOK_LIFECYCLE_VERSION
-aimHookState.Target = nil
-aimHookState.Mouse = mouse
-aimHookState.Owner = runtime
-aimHookState.Wanted = false
-aimHookState.RoundActive = false
-aimHookState.LegacyPermanent = legacyAimHook
-aimHookState.Installed = legacyAimHook and true or false
+    local setupValue = (debug and type(debug.setupvalue) == "function" and debug.setupvalue)
+        or (type(setupvalue) == "function" and setupvalue)
+        or nil
+    local getUpvalues = (debug and type(debug.getupvalues) == "function" and debug.getupvalues)
+        or (type(getupvalues) == "function" and getupvalues)
+        or nil
 
-aimHookState.OldNamecall = legacyAimHook and nil or aimHookState.OldNamecall
-aimHookState.OldIndex = nil
-local bimoMouseAimSpoof = game.PlaceId == DUELS_BIMO_PLACE_ID
-
-local function wrapAimHook(fn)
-    if type(newcclosure) == "function" then
-        local ok, wrapped = pcall(newcclosure, fn)
-        if ok and wrapped then return wrapped end
+    local function aimFnInfo(fn)
+        local name, source = "", ""
+        if debug and type(debug.info) == "function" then
+            pcall(function()
+                name = debug.info(fn, "n") or ""
+                source = debug.info(fn, "s") or ""
+            end)
+        elseif debug and type(debug.getinfo) == "function" then
+            pcall(function()
+                local info = debug.getinfo(fn)
+                name = (info and info.name) or ""
+                source = (info and info.source) or ""
+            end)
+        end
+        return tostring(name), tostring(source)
     end
-    return fn
-end
 
-function runtime.InstallAimHooks()
-    local state = aimHookState
-    if not runtime.Alive or state.Owner ~= runtime then return false end
-    if state.LegacyPermanent then
-        -- Sesión heredada: ya existe el hook viejo. Sólo lo usamos con Target
-        -- mientras haya ronda para no crear una segunda cadena de metamethods.
-        state.Installed = true
-        return true
+    local function currentAimTool()
+        local char = player.Character
+        return char and char:FindFirstChildOfClass("Tool") or nil
     end
-    if state.Installed then return true end
-    if type(hookmetamethod) ~= "function" then return false end
 
-    local namecallHook = wrapAimHook(function(self, ...)
-        local target = state.RoundActive and state.Wanted and state.Target or nil
-        if not checkcaller() and target then
-            if target.Parent then
-                local method = getnamecallmethod()
-                if self == workspace then
-                    if method == "Raycast" then
-                        local origin, direction, p3 = ...
-                        if typeof(direction) == "Vector3"
-                            and direction.Magnitude > 5
-                            and (origin - workspace.CurrentCamera.CFrame.Position).Magnitude > 1 then
-                            local newDir = (target.Position - origin).Unit * 5000
-                            return state.OldNamecall(self, origin, newDir, p3)
-                        end
-                    elseif method == "FindPartOnRay" or method == "FindPartOnRayWithIgnoreList" then
-                        local ray, p2, p3, p4 = ...
-                        if typeof(ray) == "Ray"
-                            and ray.Direction.Magnitude > 5
-                            and (ray.Origin - workspace.CurrentCamera.CFrame.Position).Magnitude > 1 then
-                            local newRay = Ray.new(ray.Origin, (target.Position - ray.Origin).Unit * 5000)
-                            return state.OldNamecall(self, newRay, p2, p3, p4)
+    local function isShootForTool(fn, tool)
+        if type(fn) ~= "function" or not tool then return false end
+        local name, source = aimFnInfo(fn)
+        if name ~= "Shoot" then return false end
+
+        -- La ruta fuerte es la firma de upvalues de la pistola de Bimo:
+        -- #5=u57, #6=ShootLocalBeam, #7=Parent/Tool.
+        if getUpvalues then
+            local ok, ups = pcall(getUpvalues, fn)
+            if ok and type(ups) == "table" then
+                local beamFn = ups[6]
+                local parentTool = ups[7]
+                if type(beamFn) == "function" then
+                    local beamName = aimFnInfo(beamFn)
+                    if beamName == "ShootLocalBeam" then
+                        if typeof(parentTool) ~= "Instance" or parentTool == tool then
+                            return true
                         end
                     end
                 end
-            else
-                state.Target = nil
             end
         end
-        return state.OldNamecall(self, ...)
-    end)
 
-    local okNamecall, oldNamecall = pcall(hookmetamethod, game, "__namecall", namecallHook)
-    if not okNamecall or type(oldNamecall) ~= "function" then
-        state.OldNamecall = nil
-        return false
+        -- Fallback conservador para ejecutores que no exponen getupvalues.
+        return source ~= ""
+            and string.find(string.lower(source), string.lower(tool.Name), 1, true) ~= nil
     end
 
-    state.OldNamecall = oldNamecall
+    local function findNativeShoot(tool)
+        if not tool or type(getgc) ~= "function" then return nil end
+        local ok, objects = pcall(getgc, true)
+        if not ok or type(objects) ~= "table" then
+            ok, objects = pcall(getgc)
+        end
+        if not ok or type(objects) ~= "table" then return nil end
 
-    -- Bimo lee Mouse.Hit/Mouse.Target al disparar. En ese place restauramos
-    -- el spoof de AimFix; en los demás juegos seguimos usando sólo __namecall.
-    if bimoMouseAimSpoof then
-        local indexHook = wrapAimHook(function(t, k)
-            local target = state.RoundActive and state.Wanted and state.Target or nil
-            if not checkcaller() and t == state.Mouse and target and target.Parent then
-                if k == "Hit" or k == "hit" then
-                    return target.CFrame
-                elseif k == "Target" or k == "target" then
-                    return target
-                end
+        for _, obj in ipairs(objects) do
+            if type(obj) == "function" and isShootForTool(obj, tool) then
+                return obj
             end
-            return state.OldIndex(t, k)
-        end)
+        end
+        return nil
+    end
 
-        local okIndex, oldIndex = pcall(hookmetamethod, game, "__index", indexHook)
-        if not okIndex or type(oldIndex) ~= "function" then
-            -- No dejamos __namecall instalado a medias si el spoof de Mouse falla.
-            pcall(hookmetamethod, game, "__namecall", state.OldNamecall)
-            state.OldNamecall = nil
-            state.OldIndex = nil
+    local function clearNativeDestination(fn)
+        if fn and setupValue then
+            pcall(setupValue, fn, aimHookState.UpvalueIndex, nil)
+        end
+    end
+
+    local function restoreShootHook()
+        local state = aimHookState
+        if state.ShootFunction and state.OldShoot and type(hookfunction) == "function" then
+            pcall(hookfunction, state.ShootFunction, state.OldShoot)
+        end
+        state.ShootFunction = nil
+        state.OldShoot = nil
+        state.Tool = nil
+        state.Installed = false
+    end
+
+    function runtime.InstallAimHooks()
+        local state = aimHookState
+        if not runtime.Alive or state.Owner ~= runtime then return false end
+
+        if game.PlaceId ~= DUELS_BIMO_PLACE_ID then
+            state.LastError = "NativeShoot v2 sólo está habilitado para Bimo"
             return false
         end
-        state.OldIndex = oldIndex
-    else
-        state.OldIndex = nil
+        if type(hookfunction) ~= "function" then
+            state.LastError = "hookfunction no disponible"
+            return false
+        end
+        if not setupValue then
+            state.LastError = "setupvalue no disponible"
+            return false
+        end
+
+        local tool = currentAimTool()
+        if not tool then return false end
+        local okGun, gun = pcall(esLaPistola, tool)
+        if not okGun or not gun then
+            -- Esta build de prueba sólo cambia la pistola; no toca el cuchillo.
+            return false
+        end
+
+        if state.Installed and state.Tool == tool and state.ShootFunction and state.OldShoot then
+            return true
+        end
+
+        if state.Installed then
+            clearNativeDestination(state.OldShoot or state.ShootFunction)
+            restoreShootHook()
+        end
+
+        local now = os.clock()
+        if now - (state.LastScanAt or 0) < 0.15 then return false end
+        state.LastScanAt = now
+
+        local shootFn = findNativeShoot(tool)
+        if not shootFn then
+            state.LastError = "No encontré Shoot() de " .. tostring(tool.Name)
+            return false
+        end
+
+        local oldShoot
+        local replacement = function(...)
+            local target = state.RoundActive and state.Wanted and state.Target or nil
+
+            -- CLAVE DEL FIX:
+            -- Mouse.Button1Down móvil ya pudo escribir su posición real en u57.
+            -- La reemplazamos AQUÍ, justo antes de que el Shoot original lea u57.
+            if target and target.Parent then
+                pcall(setupValue, oldShoot, state.UpvalueIndex, target.Position)
+            else
+                -- Sin target, vuelve al comportamiento nativo de Mouse.Hit.
+                pcall(setupValue, oldShoot, state.UpvalueIndex, nil)
+            end
+
+            return oldShoot(...)
+        end
+        if type(newcclosure) == "function" then
+            local okWrap, wrapped = pcall(newcclosure, replacement)
+            if okWrap and wrapped then replacement = wrapped end
+        end
+
+        local okHook, original = pcall(hookfunction, shootFn, replacement)
+        if not okHook or type(original) ~= "function" then
+            state.LastError = "No pude enganchar Shoot(): " .. tostring(original)
+            return false
+        end
+
+        oldShoot = original
+        state.Tool = tool
+        state.ShootFunction = shootFn
+        state.OldShoot = original
+        state.Installed = true
+        state.LastError = nil
+        return true
     end
 
-    state.Installed = true
-    return true
-end
+    function runtime.UninstallAimHooks(force)
+        local state = aimHookState
+        state.Target = nil
 
-function runtime.UninstallAimHooks(force)
-    local state = aimHookState
-    state.Target = nil
-
-    if state.LegacyPermanent then
-        -- El hook de una ejecución antigua no expuso sus originales. Lo mantenemos
-        -- completamente pasivo; una sesión nueva sí podrá usar desmontaje real.
-        state.Wanted = false
-        state.RoundActive = false
-        return false
+        -- Al apagar el toggle dejamos el wrapper instalado pero totalmente pasivo.
+        -- Así no estamos hook/unhook en cada toque. En Cleanup(force=true) sí restauramos.
+        if state.OldShoot then clearNativeDestination(state.OldShoot) end
+        if force then
+            restoreShootHook()
+            state.Wanted = false
+            state.RoundActive = false
+        end
+        return true
     end
 
-    if not state.Installed then return true end
+    function runtime.RefreshAimHooks(inMatchOverride)
+        local state = aimHookState
+        if state.Owner ~= runtime or not runtime.Alive then return end
 
-    local oldIndex = state.OldIndex
-    local oldNamecall = state.OldNamecall
-    state.Installed = false
-    state.OldIndex = nil
-    state.OldNamecall = nil
+        local wanted = autoShootEnabled or silentAimPistolaEnabled
+        local inMatch = inMatchOverride
+        if inMatch == nil then
+            local ok, result = pcall(runtime.IsCombatRound)
+            inMatch = ok and result == true or false
+        else
+            inMatch = inMatch == true
+        end
 
-    -- Restaurar en orden inverso al de instalación.
-    if oldIndex then pcall(hookmetamethod, game, "__index", oldIndex) end
-    if oldNamecall then pcall(hookmetamethod, game, "__namecall", oldNamecall) end
-
-    if force then
-        state.Wanted = false
-        state.RoundActive = false
-    end
-    return true
-end
-
-function runtime.RefreshAimHooks(inMatchOverride)
-    local state = aimHookState
-    if state.Owner ~= runtime or not runtime.Alive then return end
-
-    local wanted = autoShootEnabled or autoShootCuchilloEnabled
-        or silentAimPistolaEnabled or silentAimCuchilloEnabled
-
-    local inMatch = inMatchOverride
-    if inMatch == nil then
-        local ok, result = pcall(runtime.IsCombatRound)
-        inMatch = ok and result == true or false
-    else
-        inMatch = inMatch == true
-    end
-
-    state.Wanted = wanted == true
-    state.RoundActive = inMatch
-
-    if state.Wanted and state.RoundActive then
-        runtime.InstallAimHooks()
-    else
-        runtime.UninstallAimHooks(false)
-        -- Uninstall no debe borrar el estado real de ronda; sólo el hook.
-        state.RoundActive = inMatch
         state.Wanted = wanted == true
+        state.RoundActive = inMatch
+
+        if state.Wanted and state.RoundActive then
+            runtime.InstallAimHooks()
+        else
+            state.Target = nil
+            if state.OldShoot then clearNativeDestination(state.OldShoot) end
+        end
     end
-end
 
--- AutoShoot puede encontrar objetivo entre dos refrescos de lobby (0.25 s).
--- Antes de disparar garantizamos que el hook ya esté montado; esta función vuelve
--- a consultar IsCombatRound(), por lo que jamás lo fuerza dentro de zona segura.
-function runtime.EnsureAimHooksReady()
-    local state = aimHookState
-    if state.Owner ~= runtime or not runtime.Alive then return false end
-    if state.Installed and state.RoundActive and state.Wanted then return true end
-    runtime.RefreshAimHooks()
-    return state.Installed and state.RoundActive and state.Wanted
-end
+    function runtime.EnsureAimHooksReady()
+        local state = aimHookState
+        if state.Owner ~= runtime or not runtime.Alive then return false end
+        if not state.RoundActive or not state.Wanted then
+            runtime.RefreshAimHooks()
+        end
+        if not state.RoundActive or not state.Wanted then return false end
+        return runtime.InstallAimHooks()
+    end
 
--- Cambios nativos del juego que permiten cortar el hook antes del próximo tick.
-runtime.Track(player:GetPropertyChangedSignal("Team"):Connect(function()
-    task.defer(runtime.RefreshAimHooks)
-end))
-runtime.Track(player:GetPropertyChangedSignal("Neutral"):Connect(function()
-    task.defer(runtime.RefreshAimHooks)
-end))
+    runtime.Track(player:GetPropertyChangedSignal("Team"):Connect(function()
+        task.defer(runtime.RefreshAimHooks)
+    end))
+    runtime.Track(player:GetPropertyChangedSignal("Neutral"):Connect(function()
+        task.defer(runtime.RefreshAimHooks)
+    end))
+
+    -- Si cambia de arma, el siguiente Ensure/Refresh engancha el Shoot nuevo.
+    runtime.Track(player.CharacterAdded:Connect(function()
+        aimHookState.Target = nil
+        if aimHookState.OldShoot then clearNativeDestination(aimHookState.OldShoot) end
+        restoreShootHook()
+    end))
+end
 
 runtime.AimState = aimHookState
 

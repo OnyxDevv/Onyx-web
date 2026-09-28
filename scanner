@@ -1,30 +1,22 @@
 --[[
-XeroHub | Bimo Gun Internals SAFE v3
+XeroHub | Bimo Shoot Function SAFE v4
 Creator: Kev
 
-Versión anti-crash:
-- NO getgc
-- NO getprotos
-- NO recursion
-- NO hookfunction de RemoteEvent methods
-- NO Raycast logging
-- NO scans por frame
-
-Solo:
-1) Tool + GunScript
-2) decompile RAW (si existe)
-3) getsenv(GunScript) superficial
-4) getconnections(Tool.Activated) superficial
-5) constants/upvalues de máximo 12 funciones
-6) __namecall para FireServer/InvokeServer durante 5s
+Objetivo:
+- Tomar Tool.Activated[1]
+- Extraer SOLO su upvalue función (U[5] en tu reporte)
+- Inspeccionar constants/upvalues de esa función
+- Inspeccionar SOLO funciones hijas directas (1 nivel)
+- Opcional: capturar cuándo esa función es llamada al disparar
+- Sin getgc, sin getprotos, sin recursión profunda
 
 USO:
-1. Equipa DefaultGun
-2. Ejecuta
-3. ESCANEAR SAFE
-4. CAPTURAR DISPARO
-5. Haz UN disparo normal
-6. GUARDAR / COPIAR
+1) Equipa DefaultGun
+2) Ejecuta
+3) "INSPECCIONAR U5"
+4) "CAPTURAR LLAMADA"
+5) Haz UN tiro normal
+6) "GUARDAR / COPIAR"
 ]]
 
 local Players = game:GetService("Players")
@@ -35,8 +27,8 @@ local LP = Players.LocalPlayer
 repeat task.wait() until LP
 
 local ENV = (getgenv and getgenv()) or _G
-if ENV.__XERO_BIMO_GUN_SAFE_V3 and ENV.__XERO_BIMO_GUN_SAFE_V3.Cleanup then
-    pcall(ENV.__XERO_BIMO_GUN_SAFE_V3.Cleanup)
+if ENV.__XERO_BIMO_SHOOT_SAFE_V4 and ENV.__XERO_BIMO_SHOOT_SAFE_V4.Cleanup then
+    pcall(ENV.__XERO_BIMO_SHOOT_SAFE_V4.Cleanup)
 end
 
 local RT = {
@@ -44,12 +36,13 @@ local RT = {
     Connections = {},
     Report = {},
     Tool = nil,
-    GunScript = nil,
+    ActivatedFn = nil,
+    ShootFn = nil,
     Capturing = false,
-    CaptureEndsAt = 0,
-    Hooked = false,
+    HookInstalled = false,
+    OldShoot = nil,
 }
-ENV.__XERO_BIMO_GUN_SAFE_V3 = RT
+ENV.__XERO_BIMO_SHOOT_SAFE_V4 = RT
 
 local function track(c)
     if c then RT.Connections[#RT.Connections+1] = c end
@@ -66,336 +59,300 @@ local function fullName(obj)
     return ok and n or tostring(obj)
 end
 
-local function simpleValue(v)
+local function simple(v)
     local t = typeof(v)
     if t == "Instance" then
-        return "<" .. v.ClassName .. " " .. fullName(v) .. ">"
+        return "<"..v.ClassName.." "..fullName(v)..">"
     elseif t == "Vector3" then
-        return string.format("Vector3(%.2f, %.2f, %.2f)", v.X, v.Y, v.Z)
+        return string.format("Vector3(%.3f, %.3f, %.3f)",v.X,v.Y,v.Z)
     elseif t == "CFrame" then
-        local p = v.Position
-        return string.format("CFrame(%.2f, %.2f, %.2f)", p.X, p.Y, p.Z)
+        local p=v.Position
+        return string.format("CFrame(%.3f, %.3f, %.3f)",p.X,p.Y,p.Z)
     elseif t == "string" then
-        if #v > 120 then v = v:sub(1,120) .. "..." end
-        return string.format("%q", v)
-    elseif t == "number" or t == "boolean" or t == "nil" then
+        local s=v
+        if #s>160 then s=s:sub(1,160).."..." end
+        return string.format("%q",s)
+    elseif t=="number" or t=="boolean" or t=="nil" then
         return tostring(v)
-    elseif t == "function" then
+    elseif t=="function" then
         return "<function>"
-    elseif t == "table" then
+    elseif t=="table" then
         return "<table>"
     else
-        return "<" .. t .. ">"
+        return "<"..t..">"
     end
 end
 
 local getUps =
-    (debug and type(debug.getupvalues) == "function" and debug.getupvalues)
-    or (type(getupvalues) == "function" and getupvalues)
-    or nil
+    (debug and type(debug.getupvalues)=="function" and debug.getupvalues)
+    or (type(getupvalues)=="function" and getupvalues)
 
 local getConsts =
-    (debug and type(debug.getconstants) == "function" and debug.getconstants)
-    or (type(getconstants) == "function" and getconstants)
-    or nil
+    (debug and type(debug.getconstants)=="function" and debug.getconstants)
+    or (type(getconstants)=="function" and getconstants)
 
-local function safeUpvalues(fn)
-    if not getUps or type(fn) ~= "function" then return nil end
-    local ok, ups = pcall(getUps, fn)
-    if ok and type(ups) == "table" then return ups end
-    return nil
+local getUp =
+    (debug and type(debug.getupvalue)=="function" and debug.getupvalue)
+    or (type(getupvalue)=="function" and getupvalue)
+
+local function ups(fn)
+    if not getUps or type(fn)~="function" then return nil end
+    local ok,x=pcall(getUps,fn)
+    return ok and type(x)=="table" and x or nil
 end
 
-local function safeConstants(fn)
-    if not getConsts or type(fn) ~= "function" then return nil end
-    local ok, cs = pcall(getConsts, fn)
-    if ok and type(cs) == "table" then return cs end
-    return nil
+local function consts(fn)
+    if not getConsts or type(fn)~="function" then return nil end
+    local ok,x=pcall(getConsts,fn)
+    return ok and type(x)=="table" and x or nil
 end
 
-local function functionInfo(fn)
-    local name, source = "", ""
-    if debug and type(debug.info) == "function" then
+local function finfo(fn)
+    local name,src,line="","",""
+    if debug and type(debug.info)=="function" then
         pcall(function()
-            name = debug.info(fn, "n") or ""
-            source = debug.info(fn, "s") or ""
+            name=debug.info(fn,"n") or ""
+            src=debug.info(fn,"s") or ""
+            line=tostring(debug.info(fn,"l") or "")
         end)
-    elseif debug and type(debug.getinfo) == "function" then
+    elseif debug and type(debug.getinfo)=="function" then
         pcall(function()
-            local i = debug.getinfo(fn)
-            name = i and i.name or ""
-            source = i and i.source or ""
+            local i=debug.getinfo(fn)
+            if i then
+                name=i.name or ""
+                src=i.source or ""
+                line=tostring(i.linedefined or "")
+            end
         end)
     end
-    return tostring(name), tostring(source)
+    return name,src,line
 end
 
-local function dumpFunctionShallow(fn, label)
-    if type(fn) ~= "function" then
-        add(label .. ": not a function")
-        return
-    end
-
-    local name, source = functionInfo(fn)
-    add("")
-    add("FUNCTION " .. label)
-    add("name=" .. name)
-    add("source=" .. source)
-
-    local ups = safeUpvalues(fn)
-    if ups then
-        add("UPVALUES:")
-        local count = 0
-        for k, v in pairs(ups) do
-            count += 1
-            if count > 20 then
-                add("  ... capped at 20 ...")
-                break
-            end
-            add("  U[" .. tostring(k) .. "]=" .. simpleValue(v))
-        end
-        if count == 0 then add("  <none>") end
-    else
-        add("UPVALUES: unavailable")
-    end
-
-    local cs = safeConstants(fn)
-    if cs then
-        add("CONSTANTS:")
-        local count = 0
-        for k, v in pairs(cs) do
-            local t = typeof(v)
-            if t == "string" or t == "number" or t == "boolean" then
-                count += 1
-                if count > 40 then
-                    add("  ... capped at 40 ...")
-                    break
-                end
-                add("  C[" .. tostring(k) .. "]=" .. simpleValue(v))
-            end
-        end
-        if count == 0 then add("  <none printable>") end
-    else
-        add("CONSTANTS: unavailable")
+local function connectionFunction(conn)
+    for _,k in ipairs({"Function","Callback","ConnectedFunction"}) do
+        local ok,v=pcall(function() return conn[k] end)
+        if ok and type(v)=="function" then return v end
     end
 end
 
 local function equippedTool()
-    local char = LP.Character
-    return char and char:FindFirstChildOfClass("Tool") or nil
+    local ch=LP.Character
+    return ch and ch:FindFirstChildOfClass("Tool")
 end
 
-local function connectionFunction(conn)
-    for _, key in ipairs({"Function","Callback","ConnectedFunction"}) do
-        local ok, v = pcall(function() return conn[key] end)
-        if ok and type(v) == "function" then
-            return v
+local function dumpFn(fn,label,includeChildren)
+    if type(fn)~="function" then
+        add(label.." = not function")
+        return
+    end
+
+    local name,src,line=finfo(fn)
+    add("")
+    add("===== FUNCTION "..label.." =====")
+    add("name="..tostring(name))
+    add("source="..tostring(src))
+    add("line="..tostring(line))
+
+    local cs=consts(fn)
+    if cs then
+        add("CONSTANTS:")
+        local printed=0
+        for k,v in pairs(cs) do
+            local t=typeof(v)
+            if t=="string" or t=="number" or t=="boolean" then
+                printed+=1
+                if printed>80 then
+                    add("  ... capped at 80 ...")
+                    break
+                end
+                add("  C["..tostring(k).."]="..simple(v))
+            end
+        end
+        if printed==0 then add("  <none printable>") end
+    else
+        add("CONSTANTS: unavailable")
+    end
+
+    local us=ups(fn)
+    local children={}
+    if us then
+        add("UPVALUES:")
+        local n=0
+        for k,v in pairs(us) do
+            n+=1
+            if n>30 then
+                add("  ... capped at 30 ...")
+                break
+            end
+            add("  U["..tostring(k).."]="..simple(v))
+            if includeChildren and type(v)=="function" and #children<8 then
+                children[#children+1]={k=k,fn=v}
+            end
+        end
+        if n==0 then add("  <none>") end
+    else
+        add("UPVALUES: unavailable")
+    end
+
+    if includeChildren then
+        for _,child in ipairs(children) do
+            dumpFn(child.fn,label..".U["..tostring(child.k).."]",false)
         end
     end
-    return nil
 end
 
-local function scanSafe()
+local function resolve()
     table.clear(RT.Report)
 
-    local tool = equippedTool()
-    RT.Tool = tool
-    RT.GunScript = tool and (tool:FindFirstChild("GunScript") or tool:FindFirstChildOfClass("LocalScript"))
+    local tool=equippedTool()
+    RT.Tool=tool
+    RT.ActivatedFn=nil
+    RT.ShootFn=nil
 
-    add("XERO BIMO GUN INTERNALS SAFE v3")
+    add("XERO BIMO SHOOT FUNCTION SAFE v4")
     add("Creator: Kev")
-    add("PlaceId=" .. tostring(game.PlaceId))
-    add("Player=" .. tostring(LP.Name))
+    add("PlaceId="..tostring(game.PlaceId))
+    add("Player="..tostring(LP.Name))
     add("")
 
     if not tool then
-        add("ERROR: no equipped Tool")
+        add("ERROR: no Tool equipped")
         return false
     end
 
-    add("TOOL=" .. fullName(tool))
-    add("ToolClass=" .. tostring(tool:GetAttribute("ToolClass")))
-    add("FireRate=" .. tostring(tool:GetAttribute("FireRate")))
-    add("GunScript=" .. fullName(RT.GunScript))
+    add("TOOL="..fullName(tool))
+    add("ToolClass="..tostring(tool:GetAttribute("ToolClass")))
+    add("FireRate="..tostring(tool:GetAttribute("FireRate")))
 
-    add("")
-    add("===== CHILDREN =====")
-    local childCount = 0
-    for _, obj in ipairs(tool:GetDescendants()) do
-        childCount += 1
-        if childCount > 80 then
-            add("... descendants capped at 80 ...")
-            break
-        end
-        add(obj.ClassName .. " | " .. fullName(obj))
+    if type(getconnections)~="function" then
+        add("ERROR: getconnections unavailable")
+        return false
     end
 
-    add("")
-    add("===== DECOMPILE RAW =====")
-    if RT.GunScript and type(decompile) == "function" then
-        local ok, src = pcall(decompile, RT.GunScript)
-        add("ok=" .. tostring(ok))
-        add("type=" .. type(src))
-        add("length=" .. tostring(type(src) == "string" and #src or 0))
-        if type(src) == "string" then
-            local clipped = src
-            if #clipped > 3000 then
-                clipped = clipped:sub(1,3000) .. "\n... clipped ..."
-            end
-            add("RAW >>>")
-            add(clipped)
-            add("<<< RAW")
-        else
-            add("value=" .. tostring(src))
-        end
+    local ok,cons=pcall(getconnections,tool.Activated)
+    if not ok or type(cons)~="table" or #cons==0 then
+        add("ERROR: no readable Tool.Activated connections")
+        return false
+    end
+
+    add("Activated connections="..tostring(#cons))
+
+    local fn=connectionFunction(cons[1])
+    if not fn then
+        add("ERROR: Activated[1] callback unreadable")
+        return false
+    end
+    RT.ActivatedFn=fn
+
+    dumpFn(fn,"Tool.Activated[1]",false)
+
+    -- Buscar el primer upvalue function; en tu reporte es U[5].
+    local us=ups(fn)
+    if not us then
+        add("ERROR: Activated upvalues unavailable")
+        return false
+    end
+
+    local candidate=nil
+    local candidateIndex=nil
+
+    if type(us[5])=="function" then
+        candidate=us[5]
+        candidateIndex=5
     else
-        add("decompile unavailable")
-    end
-
-    add("")
-    add("===== GETSENV =====")
-    if RT.GunScript and type(getsenv) == "function" then
-        local ok, env = pcall(getsenv, RT.GunScript)
-        if ok and type(env) == "table" then
-            local fnCount = 0
-            local keyCount = 0
-
-            for k, v in pairs(env) do
-                keyCount += 1
-                if keyCount > 120 then
-                    add("ENV ... capped at 120 keys ...")
-                    break
-                end
-
-                add("ENV[" .. tostring(k) .. "]=" .. simpleValue(v))
-
-                if type(v) == "function" and fnCount < 8 then
-                    fnCount += 1
-                    dumpFunctionShallow(v, "ENV." .. tostring(k))
-                end
+        for k,v in pairs(us) do
+            if type(v)=="function" then
+                candidate=v
+                candidateIndex=k
+                break
             end
-
-            add("ENV keys scanned=" .. tostring(keyCount))
-            add("ENV functions dumped=" .. tostring(fnCount))
-        else
-            add("getsenv failed: " .. tostring(env))
         end
-    else
-        add("getsenv unavailable")
     end
 
-    add("")
-    add("===== TOOL.ACTIVATED =====")
-    if type(getconnections) == "function" then
-        local ok, cons = pcall(getconnections, tool.Activated)
-        if ok and type(cons) == "table" then
-            add("connections=" .. tostring(#cons))
-            local dumped = 0
-
-            for i, conn in ipairs(cons) do
-                if i > 12 then
-                    add("... connections capped at 12 ...")
-                    break
-                end
-
-                local fn = connectionFunction(conn)
-                add("Activated[" .. tostring(i) .. "] function=" .. tostring(fn ~= nil))
-
-                if fn and dumped < 6 then
-                    dumped += 1
-                    dumpFunctionShallow(fn, "Tool.Activated[" .. tostring(i) .. "]")
-                end
-            end
-        else
-            add("getconnections failed")
-        end
-    else
-        add("getconnections unavailable")
+    if not candidate then
+        add("ERROR: no function upvalue found in Activated callback")
+        return false
     end
 
+    RT.ShootFn=candidate
     add("")
-    add("===== LIVE NETWORK =====")
-    add("Use CAPTURAR DISPARO and fire ONE normal shot.")
+    add("SHOOT CANDIDATE = Activated U["..tostring(candidateIndex).."]")
+    dumpFn(candidate,"ShootCandidate",true)
 
     return true
 end
 
-local function formatArgs(...)
-    local p = table.pack(...)
-    local out = {}
-    for i = 1, math.min(p.n, 12) do
-        out[#out+1] = "[" .. i .. "]=" .. simpleValue(p[i])
+local function installCallCapture()
+    if RT.HookInstalled then return true end
+    if not RT.ShootFn then
+        if not resolve() then return false end
     end
-    return table.concat(out, " | ")
-end
-
-local function installNetworkHook()
-    if RT.Hooked then return true end
-    if type(hookmetamethod) ~= "function"
-        or type(getnamecallmethod) ~= "function" then
-        add("NETWORK HOOK unavailable")
+    if type(hookfunction)~="function" then
+        add("hookfunction unavailable")
         return false
     end
 
+    local target=RT.ShootFn
     local old
-    old = hookmetamethod(game, "__namecall", function(self, ...)
-        local method = getnamecallmethod()
 
-        if RT.Alive
-            and RT.Capturing
-            and os.clock() <= RT.CaptureEndsAt
-            and (method == "FireServer" or method == "InvokeServer") then
-
+    local replacement=function(...)
+        if RT.Alive and RT.Capturing then
+            local p=table.pack(...)
+            local out={}
+            for i=1,math.min(p.n,10) do
+                out[#out+1]="["..i.."]="..simple(p[i])
+            end
             add(string.format(
-                "[NET %.6f] %s | %s | %s",
-                os.clock(),
-                method,
-                fullName(self),
-                formatArgs(...)
+                "[CALL %.6f] ShootCandidate args(%d): %s",
+                os.clock(),p.n,table.concat(out," | ")
             ))
         end
+        return old(...)
+    end
 
-        return old(self, ...)
-    end)
+    if type(newcclosure)=="function" then
+        local ok,cc=pcall(newcclosure,replacement)
+        if ok and cc then replacement=cc end
+    end
 
-    RT.Hooked = true
+    local ok,res=pcall(hookfunction,target,replacement)
+    if not ok or type(res)~="function" then
+        add("hookfunction failed: "..tostring(res))
+        return false
+    end
+
+    old=res
+    RT.OldShoot=old
+    RT.HookInstalled=true
+    add("ShootCandidate call hook INSTALLED")
     return true
 end
 
 local function startCapture()
-    if not RT.Tool or RT.Tool.Parent == nil then
-        scanSafe()
+    if not RT.ShootFn then
+        if not resolve() then return false end
     end
-    if not RT.Tool then return false end
 
-    installNetworkHook()
+    installCallCapture()
 
-    RT.Capturing = true
-    RT.CaptureEndsAt = os.clock() + 5
-
+    RT.Capturing=true
     add("")
-    add("===== CAPTURE START " .. tostring(os.clock()) .. " =====")
+    add("===== CALL CAPTURE START "..tostring(os.clock()).." =====")
     add("Haz UN disparo normal ahora.")
 
-    local gunshot = RT.Tool:FindFirstChild("Gunshot", true)
+    local gunshot=RT.Tool and RT.Tool:FindFirstChild("Gunshot",true)
     if gunshot and gunshot:IsA("Sound") then
-        local connection
-        connection = gunshot.Played:Connect(function()
-            if RT.Alive and RT.Capturing then
-                add(string.format(
-                    "[SHOT %.6f] Gunshot.Played | %s",
-                    os.clock(),
-                    fullName(gunshot)
-                ))
+        track(gunshot.Played:Connect(function()
+            if RT.Capturing then
+                add(string.format("[SHOT %.6f] Gunshot.Played",os.clock()))
             end
-        end)
-        track(connection)
+        end))
     end
 
-    task.delay(5.1, function()
+    task.delay(5,function()
         if RT.Alive and RT.Capturing then
-            RT.Capturing = false
-            add("===== CAPTURE END " .. tostring(os.clock()) .. " =====")
+            RT.Capturing=false
+            add("===== CALL CAPTURE END "..tostring(os.clock()).." =====")
         end
     end)
 
@@ -403,9 +360,9 @@ local function startCapture()
 end
 
 local function copyText(s)
-    for _, fn in ipairs({setclipboard, toclipboard}) do
-        if type(fn) == "function" then
-            local ok = pcall(fn, s)
+    for _,f in ipairs({setclipboard,toclipboard}) do
+        if type(f)=="function" then
+            local ok=pcall(f,s)
             if ok then return true end
         end
     end
@@ -413,124 +370,117 @@ local function copyText(s)
 end
 
 local function save()
-    RT.Capturing = false
-    local text = table.concat(RT.Report, "\n")
-
-    local wrote = false
-    if type(writefile) == "function" then
-        wrote = pcall(
-            writefile,
-            "Xero_Bimo_GunInternals_SAFE_v3.txt",
-            text
-        )
+    RT.Capturing=false
+    local s=table.concat(RT.Report,"\n")
+    local wrote=false
+    if type(writefile)=="function" then
+        wrote=pcall(writefile,"Xero_Bimo_ShootFunction_SAFE_v4.txt",s)
     end
-
-    local copied = copyText(text)
-    return wrote, copied
+    local copied=copyText(s)
+    return wrote,copied
 end
 
 local function guiParent()
-    local ok, p = pcall(function()
+    local ok,p=pcall(function()
         if gethui then return gethui() end
         return CoreGui
     end)
     return ok and p or LP:WaitForChild("PlayerGui")
 end
 
-local root = guiParent()
-local oldGui = root:FindFirstChild("XeroBimoGunSafeV3")
+local root=guiParent()
+local oldGui=root:FindFirstChild("XeroBimoShootSafeV4")
 if oldGui then oldGui:Destroy() end
 
-local gui = Instance.new("ScreenGui")
-gui.Name = "XeroBimoGunSafeV3"
-gui.ResetOnSpawn = false
-gui.DisplayOrder = 2147483647
-gui.Parent = root
+local gui=Instance.new("ScreenGui")
+gui.Name="XeroBimoShootSafeV4"
+gui.ResetOnSpawn=false
+gui.DisplayOrder=2147483647
+gui.Parent=root
 
-local frame = Instance.new("Frame")
-frame.Size = UDim2.fromOffset(430, 310)
-frame.Position = UDim2.new(0.5, -215, 0.5, -155)
-frame.BackgroundColor3 = Color3.fromRGB(10,10,10)
-frame.BorderSizePixel = 0
-frame.Parent = gui
-Instance.new("UICorner", frame).CornerRadius = UDim.new(0,16)
+local frame=Instance.new("Frame")
+frame.Size=UDim2.fromOffset(430,310)
+frame.Position=UDim2.new(.5,-215,.5,-155)
+frame.BackgroundColor3=Color3.fromRGB(10,10,10)
+frame.BorderSizePixel=0
+frame.Parent=gui
+Instance.new("UICorner",frame).CornerRadius=UDim.new(0,16)
 
-local stroke = Instance.new("UIStroke")
-stroke.Color = Color3.fromRGB(65,65,65)
-stroke.Parent = frame
+local stroke=Instance.new("UIStroke")
+stroke.Color=Color3.fromRGB(65,65,65)
+stroke.Parent=frame
 
-local title = Instance.new("TextLabel")
-title.BackgroundTransparency = 1
-title.Position = UDim2.fromOffset(18,12)
-title.Size = UDim2.new(1,-55,0,26)
-title.Text = "XERO · BIMO GUN SAFE v3"
-title.TextColor3 = Color3.new(1,1,1)
-title.Font = Enum.Font.GothamBold
-title.TextSize = 16
-title.TextXAlignment = Enum.TextXAlignment.Left
-title.Parent = frame
+local title=Instance.new("TextLabel")
+title.BackgroundTransparency=1
+title.Position=UDim2.fromOffset(18,12)
+title.Size=UDim2.new(1,-55,0,26)
+title.Text="XERO · BIMO SHOOT SAFE v4"
+title.TextColor3=Color3.new(1,1,1)
+title.Font=Enum.Font.GothamBold
+title.TextSize=16
+title.TextXAlignment=Enum.TextXAlignment.Left
+title.Parent=frame
 
-local status = Instance.new("TextLabel")
-status.BackgroundTransparency = 1
-status.Position = UDim2.fromOffset(18,48)
-status.Size = UDim2.new(1,-36,0,78)
-status.Text = "Equipa DefaultGun y pulsa ESCANEAR SAFE."
-status.TextColor3 = Color3.fromRGB(185,185,185)
-status.Font = Enum.Font.Gotham
-status.TextSize = 12
-status.TextWrapped = true
-status.TextXAlignment = Enum.TextXAlignment.Left
-status.TextYAlignment = Enum.TextYAlignment.Top
-status.Parent = frame
+local status=Instance.new("TextLabel")
+status.BackgroundTransparency=1
+status.Position=UDim2.fromOffset(18,48)
+status.Size=UDim2.new(1,-36,0,78)
+status.Text="Equipa DefaultGun y pulsa INSPECCIONAR U5."
+status.TextColor3=Color3.fromRGB(185,185,185)
+status.Font=Enum.Font.Gotham
+status.TextSize=12
+status.TextWrapped=true
+status.TextXAlignment=Enum.TextXAlignment.Left
+status.TextYAlignment=Enum.TextYAlignment.Top
+status.Parent=frame
 
-local function button(text, y)
-    local b = Instance.new("TextButton")
-    b.Position = UDim2.fromOffset(18,y)
-    b.Size = UDim2.new(1,-36,0,44)
-    b.BackgroundColor3 = Color3.fromRGB(235,235,235)
-    b.TextColor3 = Color3.fromRGB(10,10,10)
-    b.Font = Enum.Font.GothamBold
-    b.TextSize = 12
-    b.Text = text
-    b.Parent = frame
-    Instance.new("UICorner", b).CornerRadius = UDim.new(0,12)
+local function button(txt,y)
+    local b=Instance.new("TextButton")
+    b.Position=UDim2.fromOffset(18,y)
+    b.Size=UDim2.new(1,-36,0,44)
+    b.BackgroundColor3=Color3.fromRGB(235,235,235)
+    b.TextColor3=Color3.fromRGB(10,10,10)
+    b.Font=Enum.Font.GothamBold
+    b.TextSize=12
+    b.Text=txt
+    b.Parent=frame
+    Instance.new("UICorner",b).CornerRadius=UDim.new(0,12)
     return b
 end
 
-local scanBtn = button("ESCANEAR SAFE", 138)
-local captureBtn = button("CAPTURAR 1 DISPARO · 5 s", 190)
-local saveBtn = button("GUARDAR / COPIAR", 242)
+local inspectBtn=button("INSPECCIONAR U5",138)
+local captureBtn=button("CAPTURAR LLAMADA · 5 s",190)
+local saveBtn=button("GUARDAR / COPIAR",242)
 
-local close = Instance.new("TextButton")
-close.Position = UDim2.new(1,-42,0,10)
-close.Size = UDim2.fromOffset(30,30)
-close.BackgroundTransparency = 1
-close.Text = "×"
-close.TextColor3 = Color3.new(1,1,1)
-close.Font = Enum.Font.GothamBold
-close.TextSize = 20
-close.Parent = frame
+local close=Instance.new("TextButton")
+close.Position=UDim2.new(1,-42,0,10)
+close.Size=UDim2.fromOffset(30,30)
+close.BackgroundTransparency=1
+close.Text="×"
+close.TextColor3=Color3.new(1,1,1)
+close.Font=Enum.Font.GothamBold
+close.TextSize=20
+close.Parent=frame
 
-track(scanBtn.Activated:Connect(function()
-    local ok = scanSafe()
-    status.Text = ok
-        and "Escaneo SAFE terminado.\nAhora captura UN disparo normal."
-        or "No detecté Tool equipada."
+track(inspectBtn.Activated:Connect(function()
+    local ok=resolve()
+    status.Text=ok
+        and "U5 encontrada e inspeccionada.\nAhora captura UN disparo normal."
+        or "No pude resolver la función U5."
 end))
 
 track(captureBtn.Activated:Connect(function()
-    local ok = startCapture()
-    status.Text = ok
-        and "CAPTURANDO 5 s...\nHaz UN disparo normal."
-        or "Equipa DefaultGun primero."
+    local ok=startCapture()
+    status.Text=ok
+        and "CAPTURANDO llamada...\nHaz UN disparo normal."
+        or "No pude hookear la función candidata."
 end))
 
 track(saveBtn.Activated:Connect(function()
-    local wrote, copied = save()
-    status.Text =
-        "Reporte listo.\nTXT: " .. (wrote and "GUARDADO" or "NO")
-        .. " · Clipboard: " .. (copied and "COPIADO" or "NO")
-        .. "\nXero_Bimo_GunInternals_SAFE_v3.txt"
+    local w,c=save()
+    status.Text="Reporte listo.\nTXT: "..(w and "GUARDADO" or "NO")
+        .." · Clipboard: "..(c and "COPIADO" or "NO")
+        .."\nXero_Bimo_ShootFunction_SAFE_v4.txt"
 end))
 
 track(close.Activated:Connect(function()
@@ -538,55 +488,56 @@ track(close.Activated:Connect(function()
 end))
 
 do
-    local dragging = false
-    local dragStart, startPos
-
-    track(frame.InputBegan:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.MouseButton1
-            or input.UserInputType == Enum.UserInputType.Touch then
-            dragging = true
-            dragStart = input.Position
-            startPos = frame.Position
+    local dragging=false
+    local dragStart,startPos
+    track(frame.InputBegan:Connect(function(i)
+        if i.UserInputType==Enum.UserInputType.MouseButton1
+            or i.UserInputType==Enum.UserInputType.Touch then
+            dragging=true
+            dragStart=i.Position
+            startPos=frame.Position
         end
     end))
-
-    track(UIS.InputChanged:Connect(function(input)
+    track(UIS.InputChanged:Connect(function(i)
         if dragging and dragStart
-            and (input.UserInputType == Enum.UserInputType.MouseMovement
-                or input.UserInputType == Enum.UserInputType.Touch) then
-            local d = input.Position - dragStart
-            frame.Position = UDim2.new(
-                startPos.X.Scale, startPos.X.Offset + d.X,
-                startPos.Y.Scale, startPos.Y.Offset + d.Y
+            and (i.UserInputType==Enum.UserInputType.MouseMovement
+                or i.UserInputType==Enum.UserInputType.Touch) then
+            local d=i.Position-dragStart
+            frame.Position=UDim2.new(
+                startPos.X.Scale,startPos.X.Offset+d.X,
+                startPos.Y.Scale,startPos.Y.Offset+d.Y
             )
         end
     end))
-
-    track(UIS.InputEnded:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.MouseButton1
-            or input.UserInputType == Enum.UserInputType.Touch then
-            dragging = false
+    track(UIS.InputEnded:Connect(function(i)
+        if i.UserInputType==Enum.UserInputType.MouseButton1
+            or i.UserInputType==Enum.UserInputType.Touch then
+            dragging=false
         end
     end))
 end
 
 function RT.Cleanup()
     if not RT.Alive then return end
-    RT.Alive = false
-    RT.Capturing = false
+    RT.Alive=false
+    RT.Capturing=false
 
-    for i = #RT.Connections, 1, -1 do
+    for i=#RT.Connections,1,-1 do
         pcall(function() RT.Connections[i]:Disconnect() end)
-        RT.Connections[i] = nil
+        RT.Connections[i]=nil
+    end
+
+    if RT.HookInstalled and RT.ShootFn and RT.OldShoot and type(hookfunction)=="function" then
+        pcall(hookfunction,RT.ShootFn,RT.OldShoot)
     end
 
     if gui and gui.Parent then
         pcall(function() gui:Destroy() end)
     end
 
-    if ENV.__XERO_BIMO_GUN_SAFE_V3 == RT then
-        ENV.__XERO_BIMO_GUN_SAFE_V3 = nil
+    if ENV.__XERO_BIMO_SHOOT_SAFE_V4==RT then
+        ENV.__XERO_BIMO_SHOOT_SAFE_V4=nil
     end
 end
 
-print("[XeroHub] Bimo Gun Internals SAFE v3 listo.")
+print("[XeroHub] Bimo Shoot Function SAFE v4 listo.")

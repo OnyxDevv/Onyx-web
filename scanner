@@ -1,4 +1,4 @@
--- XeroHub | DUELS MURDERS VS SHERIFF | R62 PERF FACES EFFECTS SOUNDS | R59 SHARED COMBAT SNAPSHOT
+-- XeroHub | DUELS MURDERS VS SHERIFF | R62 PERF FACES EFFECTS SOUNDS | R59 SHARED C
 
 local SoundCatalogCore = {
     TARGET_SOUND_ID = "10209603",
@@ -14087,9 +14087,9 @@ placeAppearanceElement(restoreAppearanceButton, nextAppearanceOrder())
 runtime.RefreshAppearanceControls()
 
 
--- XERO AIM BACKEND
+-- XERO AIM BACKEND · BIMO AIMCONTEXT v8 360
 -- Bimo (PlaceId DUELS_BIMO_PLACE_ID):
---   Pistola -> GetAimContext nativo (TOUCH + CENTER/ShiftLock)
+--   Pistola -> GetAimContext nativo (TOUCH + CENTER/ShiftLock + 360 off-screen)
 --   Cuchillo -> conserva el hook Raycast/FindPartOnRay existente.
 -- Otros places:
 --   Conservan el hook Raycast/FindPartOnRay existente.
@@ -14301,7 +14301,8 @@ function runtime.InstallBimoAimContext()
         local currentCamera = workspace.CurrentCamera
         if not currentCamera then return native end
 
-        local screen3 = currentCamera:WorldToViewportPoint(worldHit)
+        local screen3, targetOnScreen = currentCamera:WorldToViewportPoint(worldHit)
+        local targetVisibleToCamera = targetOnScreen and screen3.Z > 0
         local redirected = {}
         for key, value in pairs(native) do
             redirected[key] = value
@@ -14314,35 +14315,106 @@ function runtime.InstallBimoAimContext()
 
         -- INPUT_KIND probado en Bimo:
         -- 1=MOUSE, 2=TOUCH, 3=CENTER (candadito/shiftlock móvil).
-        if native.inputKind == 3 then
-            -- CENTER debe conservar la retícula central NATIVA. Para mantener
-            -- coherencia espacial, únicamente el CFrame enviado en el contexto
-            -- mira al target; la cámara REAL del jugador jamás se modifica.
+        if targetVisibleToCamera then
+            if native.inputKind == 3 then
+                -- Ruta v7 confirmada: CENTER conserva la retícula nativa y
+                -- sólo virtualiza la orientación enviada al servidor.
+                if typeof(native.camCFrame) == "CFrame" then
+                    local camPos = native.camCFrame.Position
+                    local camTargetDelta = worldHit - camPos
+                    if camTargetDelta.Magnitude > 0.001 then
+                        local okLook, spoofCam = pcall(
+                            CFrame.lookAt,
+                            camPos,
+                            worldHit,
+                            native.camCFrame.UpVector
+                        )
+                        if okLook and spoofCam then
+                            redirected.camCFrame = spoofCam
+                        end
+                    end
+                end
+
+                redirected.screenAim = native.screenAim
+                redirected.rawScreenPos = native.rawScreenPos
+                redirected.inputPos = native.inputPos
+            else
+                -- TOUCH visible: ruta v6 confirmada. La posición 2D real del
+                -- target y los campos 3D describen el mismo disparo.
+                local sx, sy = screen3.X, screen3.Y
+                redirected.screenAim = Vector2.new(sx, sy)
+                redirected.rawScreenPos = Vector3.new(sx, sy, 0)
+                redirected.inputPos = Vector3.new(sx, sy, 0)
+            end
+        else
+            -- v8 360°: el enemigo está detrás/fuera del viewport.
+            --
+            -- NO inventamos un toque nuevo. Conservamos screenAim/inputPos
+            -- NATIVOS y construimos un camCFrame VIRTUAL cuya proyección del
+            -- mismo punto de pantalla cae exactamente sobre el target.
+            -- La cámara real nunca se mueve.
+            redirected.screenAim = native.screenAim
+            redirected.rawScreenPos = native.rawScreenPos
+            redirected.inputPos = native.inputPos
+
             if typeof(native.camCFrame) == "CFrame" then
                 local camPos = native.camCFrame.Position
-                local camTargetDelta = worldHit - camPos
-                if camTargetDelta.Magnitude > 0.001 then
-                    local okLook, spoofCam = pcall(
+                local desiredDelta = worldHit - camPos
+                if desiredDelta.Magnitude > 0.001 then
+                    local width, height, fovDegrees
+                    if typeof(native.viewFOV) == "Vector3" then
+                        width = native.viewFOV.X
+                        height = native.viewFOV.Y
+                        fovDegrees = native.viewFOV.Z
+                    end
+
+                    if not width or width <= 1 then width = currentCamera.ViewportSize.X end
+                    if not height or height <= 1 then height = currentCamera.ViewportSize.Y end
+                    if not fovDegrees or fovDegrees <= 1 then fovDegrees = currentCamera.FieldOfView end
+
+                    local aimX, aimY
+                    if typeof(native.screenAim) == "Vector2" then
+                        aimX, aimY = native.screenAim.X, native.screenAim.Y
+                    elseif typeof(native.rawScreenPos) == "Vector3" then
+                        aimX, aimY = native.rawScreenPos.X, native.rawScreenPos.Y
+                    else
+                        aimX, aimY = width * 0.5, height * 0.5
+                    end
+
+                    local halfTan = math.tan(math.rad(fovDegrees) * 0.5)
+                    local aspect = width / math.max(height, 1)
+                    local nx = (aimX / width) * 2 - 1
+                    local ny = 1 - (aimY / height) * 2
+                    local localRay = Vector3.new(
+                        nx * aspect * halfTan,
+                        ny * halfTan,
+                        -1
+                    ).Unit
+
+                    -- base: -Z mira al enemigo.
+                    local okBase, base = pcall(
                         CFrame.lookAt,
                         camPos,
                         worldHit,
                         native.camCFrame.UpVector
                     )
-                    if okLook and spoofCam then
-                        redirected.camCFrame = spoofCam
+                    if okBase and base then
+                        -- correction^{-1}: hace que el rayo local correspondiente
+                        -- al punto NATIVO de pantalla se convierta en -Z.
+                        local okLocal, localLook = pcall(
+                            CFrame.lookAt,
+                            Vector3.zero,
+                            localRay,
+                            Vector3.yAxis
+                        )
+                        if okLocal and localLook then
+                            redirected.camCFrame = base * localLook.Rotation:Inverse()
+                        else
+                            redirected.camCFrame = base
+                        end
                     end
                 end
             end
-
-            redirected.screenAim = native.screenAim
-            redirected.rawScreenPos = native.rawScreenPos
-            redirected.inputPos = native.inputPos
-        else
-            -- TOUCH normal (y fallback): exactamente la ruta confirmada en v6.
-            local sx, sy = screen3.X, screen3.Y
-            redirected.screenAim = Vector2.new(sx, sy)
-            redirected.rawScreenPos = Vector3.new(sx, sy, 0)
-            redirected.inputPos = Vector3.new(sx, sy, 0)
         end
 
         -- Permanecen nativos:

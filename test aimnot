@@ -1,4 +1,4 @@
--- XeroHub | DUELS MURDERS VS SHERIFF 
+-- XeroHub | DUELS MURDERS VS SHERIFF | R62 PERF FACES EFFECTS SOUNDS | R59 SHARED COMBAT SNAPSHOT
 
 local SoundCatalogCore = {
     TARGET_SOUND_ID = "10209603",
@@ -14894,48 +14894,56 @@ placeAppearanceElement(restoreAppearanceButton, nextAppearanceOrder())
 runtime.RefreshAppearanceControls()
 
 
--- XERO MOBILE SHOOT-ONLY AIM BACKEND · DELTA REPEAT FIX
--- Pistola: SIEMPRE usa la misma ruta nativa del PC (Shoot() upvalue #5).
--- NO existe fallback de pistola por __namecall / Raycast / Mouse.Hit.
--- Si el executor no soporta getgc + setupvalue y la inspección necesaria,
--- el aim de pistola falla de forma explícita para que la prueba sea concluyente.
--- Cuchillo mantiene su backend propio porque no usa Shoot().
+-- XERO MOBILE DELTA · SHOOT-ONLY V2
+-- Pistola: usa EXCLUSIVAMENTE la ruta nativa Shoot() -> upvalue #5.
+-- No existe fallback de pistola por __namecall / Raycast / Mouse.Hit.
+-- Detección visual y backend nativo están separados para que el FOV no dependa
+-- del tiempo que tarde en resolverse la closure Shoot().
 local aimHookState = {
-    Version = 8,
-    Target = nil,
-    LegacyTarget = nil,
-    Mouse = mouse,
+    Version = 9,
     Owner = runtime,
+    Mouse = mouse,
+
     Wanted = false,
     WantedGun = false,
     WantedKnife = false,
     RoundActive = false,
 
-    -- Backend nativo de pistola.
-    Installed = false,
+    -- Estado de detección: NO depende de getgc/setupvalue.
+    Target = nil, -- compatibilidad con código viejo
+    SilentDetectedTarget = nil,
+    AutoDetectedTarget = nil,
+    AppliedTarget = nil,
+
+    -- Backend Shoot-only de pistola.
+    NativeAvailable = false,
+    NativeMissing = "",
     Tool = nil,
     ShootFunction = nil,
-    UpvalueIndex = 5,
-    LastWriteOK = false,
-    LastScanAt = 0,
-    CacheCheckedTool = nil,
+    OriginalUpvalue5 = nil,
+    OriginalUpvalue5Known = false,
+    Installed = false,
     ScanRunning = false,
     ScanTool = nil,
     ScanSerial = 0,
-    ValidateRunning = false,
-    NextDeepValidateAt = 0,
-    DeepValidateInterval = 2.0,
+    LastScanAt = 0,
+    LastWriteOK = false,
+    NativeFailureShown = false,
 
-    -- Hook reservado EXCLUSIVAMENTE para cuchillo. Nunca puede apuntar la pistola.
+    -- Backend viejo reservado EXCLUSIVAMENTE al cuchillo.
+    LegacyTarget = nil,
     LegacyHookInstalled = false,
     OldNamecall = nil,
-    NativeFailureShown = false,
 }
 
+-- Apaga el estado de una ejecución anterior. runtime.Cleanup ya intenta desmontar
+-- sus hooks; aquí además impedimos que una tabla vieja conserve target.
 do
     local previousAimState = runtimeEnv.__ILUNX_AIM_HOOK_STATE
     if type(previousAimState) == "table" and previousAimState ~= aimHookState then
         previousAimState.Target = nil
+        previousAimState.SilentDetectedTarget = nil
+        previousAimState.AutoDetectedTarget = nil
         previousAimState.LegacyTarget = nil
         previousAimState.Wanted = false
         previousAimState.RoundActive = false
@@ -14951,27 +14959,8 @@ do
     local mobileGetUpvalue = (debug and type(debug.getupvalue) == "function" and debug.getupvalue)
         or (type(getupvalue) == "function" and getupvalue)
         or nil
+    local mobileGetConnections = type(getconnections) == "function" and getconnections or nil
     local mobileShootCache = setmetatable({}, {__mode = "k"})
-
-    local mobileHasFnInfo = debug and (type(debug.info) == "function" or type(debug.getinfo) == "function")
-    aimHookState.NativeAvailable = mobileSetupValue ~= nil
-        and type(getgc) == "function"
-        and (mobileGetUpvalues ~= nil or mobileGetUpvalue ~= nil or mobileHasFnInfo)
-
-    do
-        local missing = {}
-        if type(getgc) ~= "function" then missing[#missing + 1] = "getgc" end
-        if not mobileSetupValue then missing[#missing + 1] = "debug.setupvalue/setupvalue" end
-        if not mobileGetUpvalues and not mobileGetUpvalue and not mobileHasFnInfo then
-            missing[#missing + 1] = "debug.getupvalues/getupvalue/info"
-        end
-        aimHookState.NativeMissing = table.concat(missing, ", ")
-        if aimHookState.NativeAvailable then
-            warn("[XeroHub] Delta Shoot-only: backend nativo disponible; pistola usara Shoot() upvalue #5.")
-        else
-            warn("[XeroHub] Delta Shoot-only: backend nativo NO disponible. Falta: " .. aimHookState.NativeMissing)
-        end
-    end
 
     local function mobileFnInfo(fn)
         local name, source = "", ""
@@ -14990,6 +14979,28 @@ do
         return tostring(name), tostring(source)
     end
 
+    -- Compatibilidad con executors donde debug.getupvalue devuelve (name, value)
+    -- y con implementaciones que sólo devuelven value.
+    local function mobileReadUpvalue(fn, index)
+        if mobileGetUpvalues then
+            local ok, ups = pcall(mobileGetUpvalues, fn)
+            if ok and type(ups) == "table" then
+                return true, ups[index]
+            end
+        end
+        if mobileGetUpvalue then
+            local ok, first, second = pcall(mobileGetUpvalue, fn, index)
+            if ok then
+                if second ~= nil then return true, second end
+                -- Si sólo regresó un valor y no parece el nombre estándar del upvalue,
+                -- lo tratamos como value de una implementación custom.
+                if first ~= nil and type(first) ~= "string" then return true, first end
+                return true, nil
+            end
+        end
+        return false, nil
+    end
+
     local function mobileCurrentTool()
         local char = player.Character
         return char and char:FindFirstChildOfClass("Tool") or nil
@@ -15001,107 +15012,143 @@ do
         return ok and result == true
     end
 
-    local function mobileClearFunctionValue(fn)
-        if fn and mobileSetupValue then
-            pcall(mobileSetupValue, fn, aimHookState.UpvalueIndex, nil)
+    local hasInfo = debug and (type(debug.info) == "function" or type(debug.getinfo) == "function")
+    aimHookState.NativeAvailable = mobileSetupValue ~= nil
+        and (type(getgc) == "function" or mobileGetConnections ~= nil)
+        and (hasInfo or mobileGetUpvalues ~= nil or mobileGetUpvalue ~= nil)
+
+    do
+        local missing = {}
+        if not mobileSetupValue then missing[#missing + 1] = "setupvalue" end
+        if type(getgc) ~= "function" and not mobileGetConnections then missing[#missing + 1] = "getgc/getconnections" end
+        if not hasInfo and not mobileGetUpvalues and not mobileGetUpvalue then missing[#missing + 1] = "debug info/upvalues" end
+        aimHookState.NativeMissing = table.concat(missing, ", ")
+        if aimHookState.NativeAvailable then
+            warn("[XeroHub] Delta Shoot-only V2: backend Shoot disponible.")
+        else
+            warn("[XeroHub] Delta Shoot-only V2: faltan APIs: " .. tostring(aimHookState.NativeMissing))
         end
     end
 
+    -- Validación estricta. Nunca aceptamos una closure aleatoria sólo porque tenga
+    -- una función en cierto índice: tiene que parecer Shoot y/o pertenecer al Tool,
+    -- además de conservar la firma ShootLocalBeam en el upvalue #6 cuando es legible.
     local function mobileValidateShoot(fn, tool)
         if type(fn) ~= "function" or not tool then return false end
         local name, source = mobileFnInfo(fn)
-        local identityMatched = false
-
-        -- Algunos executors móviles no exponen el nombre/source de una closure.
-        -- Cuando sí existe, lo usamos como filtro fuerte; si no, la identidad del
-        -- Tool en los upvalues sirve como prueba equivalente.
-        if name ~= "" then
-            if name ~= "Shoot" then return false end
-            identityMatched = true
-        end
-        if source ~= "" then
-            if not string.find(string.lower(source), string.lower(tool.Name), 1, true) then return false end
-            identityMatched = true
+        local nameMatched = name == "Shoot"
+        if name ~= "" and not nameMatched then return false end
+        if source ~= "" and not string.find(string.lower(source), string.lower(tool.Name), 1, true) then
+            return false
         end
 
-        if mobileGetUpvalues then
-            local ok, ups = pcall(mobileGetUpvalues, fn)
-            if ok and type(ups) == "table" then
-                local beamFn = ups[6]
-                if type(beamFn) ~= "function" then return false end
-                local beamName = mobileFnInfo(beamFn)
-                if beamName ~= "" and beamName ~= "ShootLocalBeam" then return false end
-
-                local parentTool = ups[7]
-                if typeof(parentTool) == "Instance" then
-                    if parentTool ~= tool then return false end
-                    identityMatched = true
-                end
-            end
-        elseif mobileGetUpvalue then
-            local okBeam, beamFn = pcall(mobileGetUpvalue, fn, 6)
-            if okBeam and type(beamFn) == "function" then
-                local beamName = mobileFnInfo(beamFn)
-                if beamName ~= "" and beamName ~= "ShootLocalBeam" then return false end
-                identityMatched = true
-            end
-            local okTool, parentTool = pcall(mobileGetUpvalue, fn, 7)
-            if okTool and typeof(parentTool) == "Instance" then
-                if parentTool ~= tool then return false end
-                identityMatched = true
-            end
+        local beamKnown, beamFn = mobileReadUpvalue(fn, 6)
+        if beamKnown and beamFn ~= nil then
+            if type(beamFn) ~= "function" then return false end
+            local beamName = mobileFnInfo(beamFn)
+            if beamName ~= "" and beamName ~= "ShootLocalBeam" then return false end
         end
-        return identityMatched
+
+        local toolKnown, parentTool = mobileReadUpvalue(fn, 7)
+        local toolMatched = toolKnown and typeof(parentTool) == "Instance" and parentTool == tool
+        if toolKnown and typeof(parentTool) == "Instance" and parentTool ~= tool then return false end
+
+        -- Al menos una identidad fuerte tiene que coincidir.
+        if not nameMatched and not toolMatched then return false end
+        -- Si podemos leer #6, exigimos que sea función; esto reduce falsos positivos.
+        if beamKnown and type(beamFn) ~= "function" then return false end
+        return true
     end
 
-    local function mobileFinishShootScan(serial, tool, found)
+    local function storeOriginalUpvalue5(fn)
+        local state = aimHookState
+        local known, value = mobileReadUpvalue(fn, 5)
+        state.OriginalUpvalue5Known = known
+        state.OriginalUpvalue5 = value
+    end
+
+    local function restoreOriginalUpvalue5()
+        local state = aimHookState
+        if state.LastWriteOK and state.ShootFunction and mobileSetupValue and state.OriginalUpvalue5Known then
+            pcall(mobileSetupValue, state.ShootFunction, 5, state.OriginalUpvalue5)
+        end
+        state.LastWriteOK = false
+        state.AppliedTarget = nil
+    end
+
+    local function finishShootScan(serial, tool, found)
         local state = aimHookState
         if state.ScanSerial ~= serial then return end
         state.ScanRunning = false
         state.ScanTool = nil
-
+        if not found or not runtime.Alive then return end
         local char = player.Character
-        if found and runtime.Alive and state.Tool == tool and char and tool.Parent == char then
-            mobileShootCache[tool] = found
-            state.ShootFunction = found
-            state.Installed = true
-            state.NextDeepValidateAt = os.clock() + (state.DeepValidateInterval or 2.0)
-        end
+        if not char or tool.Parent ~= char then return end
+        state.Tool = tool
+        state.ShootFunction = found
+        state.Installed = true
+        mobileShootCache[tool] = found
+        storeOriginalUpvalue5(found)
+        warn("[XeroHub] Shoot() resuelto y cacheado para " .. tostring(tool.Name))
     end
 
-    local function mobileStartShootScan(tool)
+    -- Fast path: Tool.Activated suele apuntar directamente a Shoot(). Si Delta expone
+    -- getconnections evitamos recorrer todo getgc(). Si no, usamos el scan del PC.
+    local function findShootFromActivated(tool)
+        if not mobileGetConnections or not tool then return nil end
+        local ok, connections = pcall(mobileGetConnections, tool.Activated)
+        if not ok or type(connections) ~= "table" then return nil end
+        for i = 1, #connections do
+            local conn = connections[i]
+            local fn = nil
+            pcall(function() fn = conn.Function end)
+            if type(fn) == "function" and mobileValidateShoot(fn, tool) then
+                return fn
+            end
+        end
+        return nil
+    end
+
+    local function startShootScan(tool)
         local state = aimHookState
-        if not tool or not state.NativeAvailable then return false end
+        if not tool or not state.NativeAvailable or not mobileToolIsGun(tool) then return false end
         if state.ScanRunning and state.ScanTool == tool then return true end
 
         local now = os.clock()
-        if now - (state.LastScanAt or 0) < 0.30 then return false end
+        if now - (state.LastScanAt or 0) < 0.20 then return false end
         state.LastScanAt = now
         state.ScanSerial = (state.ScanSerial or 0) + 1
         local serial = state.ScanSerial
         state.ScanRunning = true
         state.ScanTool = tool
+        state.Tool = tool
 
         task_spawn(function()
+            -- Intento inmediato sin getgc.
+            local found = findShootFromActivated(tool)
+            if found then
+                finishShootScan(serial, tool, found)
+                return
+            end
+
+            if type(getgc) ~= "function" then
+                finishShootScan(serial, tool, nil)
+                return
+            end
+
             local ok, objects = pcall(getgc)
             if not ok or type(objects) ~= "table" then ok, objects = pcall(getgc, false) end
             if not ok or type(objects) ~= "table" then ok, objects = pcall(getgc, true) end
             if not ok or type(objects) ~= "table" then
-                mobileFinishShootScan(serial, tool, nil)
+                finishShootScan(serial, tool, nil)
                 return
             end
 
-            local found = nil
             local batch = 0
             for i = 1, #objects do
+                if not runtime.Alive or state.ScanSerial ~= serial then break end
                 local char = player.Character
-                if not runtime.Alive
-                    or state.ScanSerial ~= serial
-                    or state.Tool ~= tool
-                    or not char
-                    or tool.Parent ~= char then
-                    break
-                end
+                if not char or tool.Parent ~= char then break end
 
                 local obj = objects[i]
                 if type(obj) == "function" and mobileValidateShoot(obj, tool) then
@@ -15110,53 +15157,53 @@ do
                 end
 
                 batch += 1
-                -- Móvil: tandas pequeñas para que el primer escaneo no produzca un frame largo.
-                if batch >= 64 then
+                -- Más rápido que la build anterior (64), pero aún cede para no meter
+                -- un frame largo en teléfonos lentos.
+                if batch >= 160 then
                     batch = 0
                     task_wait()
                 end
             end
-
-            mobileFinishShootScan(serial, tool, found)
+            finishShootScan(serial, tool, found)
         end)
         return true
     end
 
-    local function mobileScheduleDeepValidate(tool)
-        -- DELTA FIX: conservada sólo por compatibilidad interna; desactivada.
-        return
-        --[[
+    local function ensureNativeGunBackend(tool)
         local state = aimHookState
-        if state.ValidateRunning or not state.ShootFunction or not state.Installed then return end
-        local now = os.clock()
-        if now < (state.NextDeepValidateAt or 0) then return end
+        tool = tool or mobileCurrentTool()
+        if not runtime.Alive or state.Owner ~= runtime or not state.NativeAvailable then return false end
+        if not tool or not mobileToolIsGun(tool) then return false end
 
-        state.ValidateRunning = true
-        state.NextDeepValidateAt = now + (state.DeepValidateInterval or 2.0)
-        local fn = state.ShootFunction
-        task_spawn(function()
-            -- Nunca validamos la closure en el mismo hot path de ApplyPCAimTarget.
-            task_wait()
-            local valid = runtime.Alive
-                and state.Tool == tool
-                and state.ShootFunction == fn
-                and tool.Parent == player.Character
-                and mobileValidateShoot(fn, tool)
+        if state.Tool ~= tool then
+            restoreOriginalUpvalue5()
+            state.ScanSerial = (state.ScanSerial or 0) + 1
+            state.ScanRunning = false
+            state.ScanTool = nil
+            state.Tool = tool
+            state.ShootFunction = nil
+            state.Installed = false
+            state.OriginalUpvalue5 = nil
+            state.OriginalUpvalue5Known = false
+        end
 
-            if not valid and state.Tool == tool and state.ShootFunction == fn then
-                if state.LastWriteOK then mobileClearFunctionValue(fn) end
-                mobileShootCache[tool] = nil
-                state.ShootFunction = nil
-                state.Installed = false
-                state.LastWriteOK = false
-                state.CacheCheckedTool = nil
-                mobileStartShootScan(tool)
-            end
-            state.ValidateRunning = false
-        end)
-        ]]
+        if state.ShootFunction and state.Installed then return true end
+
+        local cached = mobileShootCache[tool]
+        if cached and mobileValidateShoot(cached, tool) then
+            state.ShootFunction = cached
+            state.Installed = true
+            storeOriginalUpvalue5(cached)
+            return true
+        elseif cached then
+            mobileShootCache[tool] = nil
+        end
+
+        startShootScan(tool)
+        return false
     end
 
+    -- ===================== CUCHILLO: hook legacy aislado =====================
     local function wrapLegacyAimHook(fn)
         if type(newcclosure) == "function" then
             local ok, wrapped = pcall(newcclosure, fn)
@@ -15167,9 +15214,7 @@ do
 
     local function uninstallLegacyAimHook()
         local state = aimHookState
-        local oldLegacyTarget = state.LegacyTarget
         state.LegacyTarget = nil
-        if state.Target == oldLegacyTarget then state.Target = nil end
         if not state.LegacyHookInstalled then return true end
         local oldNamecall = state.OldNamecall
         state.LegacyHookInstalled = false
@@ -15186,39 +15231,32 @@ do
         if type(hookmetamethod) ~= "function" then return false end
 
         local hookFn = wrapLegacyAimHook(function(self, ...)
-            local target = state.RoundActive and state.Wanted and state.LegacyTarget or nil
+            local target = state.RoundActive and state.WantedKnife and state.LegacyTarget or nil
             if not checkcaller() and target and target.Parent and self == workspace then
+                -- Garantía Shoot-only: con una pistola equipada este hook jamás redirige.
                 local tool = mobileCurrentTool()
-                local gun = mobileToolIsGun(tool)
-                -- Shoot-only guarantee: este hook JAMAS redirige raycasts de pistola.
-                if not gun then
+                if not mobileToolIsGun(tool) then
                     local method = getnamecallmethod()
                     if method == "Raycast" then
                         local origin, direction, p3 = ...
-                        if typeof(direction) == "Vector3"
-                            and direction:Dot(direction) > 25
-                            and (origin - workspace.CurrentCamera.CFrame.Position):Dot(origin - workspace.CurrentCamera.CFrame.Position) > 1 then
-                            local delta = target.Position - origin
-                            if delta:Dot(delta) > 0.0001 then
-                                return state.OldNamecall(self, origin, delta.Unit * 5000, p3)
+                        if typeof(direction) == "Vector3" and direction:Dot(direction) > 25 then
+                            local targetDelta = target.Position - origin
+                            local camDelta = origin - workspace.CurrentCamera.CFrame.Position
+                            if targetDelta:Dot(targetDelta) > 0.0001 and camDelta:Dot(camDelta) > 1 then
+                                return state.OldNamecall(self, origin, targetDelta.Unit * 5000, p3)
                             end
                         end
                     elseif method == "FindPartOnRay" or method == "FindPartOnRayWithIgnoreList" then
                         local ray, p2, p3, p4 = ...
-                        if typeof(ray) == "Ray"
-                            and ray.Direction:Dot(ray.Direction) > 25 then
-                            local camDelta = ray.Origin - workspace.CurrentCamera.CFrame.Position
+                        if typeof(ray) == "Ray" and ray.Direction:Dot(ray.Direction) > 25 then
                             local targetDelta = target.Position - ray.Origin
-                            if camDelta:Dot(camDelta) > 1 and targetDelta:Dot(targetDelta) > 0.0001 then
-                                local newRay = Ray.new(ray.Origin, targetDelta.Unit * 5000)
-                                return state.OldNamecall(self, newRay, p2, p3, p4)
+                            local camDelta = ray.Origin - workspace.CurrentCamera.CFrame.Position
+                            if targetDelta:Dot(targetDelta) > 0.0001 and camDelta:Dot(camDelta) > 1 then
+                                return state.OldNamecall(self, Ray.new(ray.Origin, targetDelta.Unit * 5000), p2, p3, p4)
                             end
                         end
                     end
                 end
-            elseif target and not target.Parent then
-                state.LegacyTarget = nil
-                if state.Target == target then state.Target = nil end
             end
             return state.OldNamecall(self, ...)
         end)
@@ -15230,186 +15268,111 @@ do
         return true
     end
 
+    -- ===================== API usada por los loops existentes =====================
+    function runtime.SetSilentDetectedTarget(targetPart)
+        aimHookState.SilentDetectedTarget = targetPart
+        aimHookState.Target = targetPart or aimHookState.AutoDetectedTarget
+    end
+
+    function runtime.SetAutoDetectedTarget(targetPart)
+        aimHookState.AutoDetectedTarget = targetPart
+        aimHookState.Target = aimHookState.SilentDetectedTarget or targetPart
+    end
+
     function runtime.ClearPCAimTarget()
-        local state = aimHookState
-        -- DELTA FIX: NO escribimos nil en Shoot() upvalue #5 por pérdidas
-        -- momentáneas de target/FOV. El LocalScript del arma puede consumir ese
-        -- upvalue entre ticks y dejar de responder si lo encuentra vacío.
-        -- El próximo target válido simplemente sobrescribe la posición anterior.
-        state.LastWriteOK = false
-        if state.Target and state.Target ~= state.LegacyTarget then state.Target = nil end
+        -- Mientras la función esté activa NO metemos nil entre ticks. Sólo dejamos de
+        -- aplicar targets; al apagar/cambiar Tool restauramos el valor original.
+        aimHookState.AppliedTarget = nil
+        aimHookState.LastWriteOK = false
     end
 
     function runtime.ClearLegacyAimTarget()
-        local state = aimHookState
-        local old = state.LegacyTarget
-        state.LegacyTarget = nil
-        if state.Target == old then state.Target = nil end
+        aimHookState.LegacyTarget = nil
     end
 
     function runtime.ClearAimTarget()
+        runtime.SetSilentDetectedTarget(nil)
+        runtime.SetAutoDetectedTarget(nil)
         runtime.ClearPCAimTarget()
         runtime.ClearLegacyAimTarget()
-        aimHookState.Target = nil
     end
 
-    local function ensureNativeGunBackend()
-        local state = aimHookState
-        if not runtime.Alive or state.Owner ~= runtime or not state.NativeAvailable then return false end
-        local tool = mobileCurrentTool()
-
-        if tool ~= state.Tool then
-            -- No tocamos el upvalue de la closure vieja al cambiar de Tool.
-            -- Basta invalidar nuestro caché y resolver la nueva instancia.
-            state.ScanSerial = (state.ScanSerial or 0) + 1
-            state.ScanRunning = false
-            state.ScanTool = nil
-            state.ValidateRunning = false
-            state.Tool = tool
-            state.ShootFunction = nil
-            state.Installed = false
-            state.LastWriteOK = false
-            state.CacheCheckedTool = nil
-            state.NextDeepValidateAt = 0
-        end
-
-        if not tool or not mobileToolIsGun(tool) then return false end
-
-        -- DELTA FIX: una vez resuelta la closure Shoot() NO la volvemos a
-        -- inspeccionar periódicamente. En algunos executors móviles las APIs debug
-        -- devuelven metadata inconsistente después del primer disparo y una
-        -- revalidación falsa terminaba invalidando un backend que seguía siendo válido.
-        -- Sólo se rescanea si cambia la Tool o setupvalue falla de verdad.
-        if state.ShootFunction and state.Installed then
-            return true
-        end
-
-        if state.CacheCheckedTool ~= tool then
-            state.CacheCheckedTool = tool
-            local cached = mobileShootCache[tool]
-            if cached and mobileValidateShoot(cached, tool) then
-                state.ShootFunction = cached
-                state.Installed = true
-                state.NextDeepValidateAt = os.clock() + (state.DeepValidateInterval or 2.0)
-                return true
-            end
-            mobileShootCache[tool] = nil
-        end
-
-        mobileStartShootScan(tool)
-        return false
-    end
-
-    function runtime.ApplyLegacyAimTarget(targetPart)
-        local state = aimHookState
-        if not state.RoundActive or not state.Wanted or not targetPart or not targetPart.Parent then
-            runtime.ClearLegacyAimTarget()
-            return false
-        end
-        if not installLegacyAimHook() then
-            runtime.ClearLegacyAimTarget()
-            return false
-        end
-        state.LegacyTarget = targetPart
-        state.Target = targetPart
-        return true
-    end
-
-    function runtime.ApplyPCAimTarget(targetPart)
+    function runtime.ApplyPCAimTarget(targetPart, tool)
         local state = aimHookState
         if state.Owner ~= runtime or not runtime.Alive
             or not state.RoundActive or not state.WantedGun
             or not targetPart or not targetPart.Parent then
-            runtime.ClearPCAimTarget()
             return false
         end
 
-        -- SHOOT-ONLY: sin fallback. Si Delta no expone las APIs necesarias,
-        -- la pistola NO usa __namecall, Raycast spoof ni Mouse.Hit.
+        uninstallLegacyAimHook()
         if not state.NativeAvailable then
-            runtime.ClearPCAimTarget()
-            uninstallLegacyAimHook()
             if not state.NativeFailureShown then
                 state.NativeFailureShown = true
-                warn("[XeroHub] Shoot-only no puede iniciar en este executor. Falta: " .. tostring(state.NativeMissing or "API nativa"))
-                pcall(function()
-                    showBottomMessage("Shoot-only no disponible: " .. tostring(state.NativeMissing or "faltan APIs del executor"))
-                end)
+                warn("[XeroHub] Shoot-only no disponible: " .. tostring(state.NativeMissing))
+                pcall(function() showBottomMessage("Shoot-only: faltan APIs de Delta") end)
             end
             return false
         end
 
-        -- Con backend nativo no queremos __namecall activo durante disparos de pistola.
-        uninstallLegacyAimHook()
+        tool = tool or mobileCurrentTool()
+        if not ensureNativeGunBackend(tool) then return false end
 
-        if not ensureNativeGunBackend() then
-            state.Target = nil
-            state.LastWriteOK = false
-            return false
-        end
-
-        local ok = pcall(mobileSetupValue, state.ShootFunction, state.UpvalueIndex, targetPart.Position)
+        local ok = pcall(mobileSetupValue, state.ShootFunction, 5, targetPart.Position)
         if not ok then
             state.LastWriteOK = false
-            state.Target = nil
+            state.AppliedTarget = nil
             state.Installed = false
-            mobileShootCache[state.Tool] = nil
-            state.CacheCheckedTool = nil
-            mobileStartShootScan(state.Tool)
+            if state.Tool then mobileShootCache[state.Tool] = nil end
+            state.ShootFunction = nil
+            startShootScan(tool)
             return false
         end
 
         state.LastWriteOK = true
-        state.Target = targetPart
+        state.AppliedTarget = targetPart
         return true
     end
 
     function runtime.ApplyKnifeAimTarget(targetPart)
         local state = aimHookState
-        if not state.WantedKnife then
+        if not state.RoundActive or not state.WantedKnife or not targetPart or not targetPart.Parent then
             runtime.ClearLegacyAimTarget()
             return false
         end
-        runtime.ClearPCAimTarget()
-        return runtime.ApplyLegacyAimTarget(targetPart)
+        if not installLegacyAimHook() then return false end
+        state.LegacyTarget = targetPart
+        return true
     end
 
-    -- Nombre conservado para los callsites existentes.
     function runtime.InstallAimHooks()
         local state = aimHookState
-        if not runtime.Alive or state.Owner ~= runtime or not state.RoundActive or not state.Wanted then
-            return false
-        end
-
+        if not runtime.Alive or state.Owner ~= runtime then return false end
         local tool = mobileCurrentTool()
-        if not tool then return false end
-        if mobileToolIsGun(tool) then
-            if state.WantedGun then
-                -- Shoot-only: nunca instalamos el hook legacy para pistola.
-                uninstallLegacyAimHook()
-                return ensureNativeGunBackend()
-            end
+        if tool and mobileToolIsGun(tool) then
+            uninstallLegacyAimHook()
+            -- Precalentamos Shoot incluso antes de que exista target.
+            if state.WantedGun then return ensureNativeGunBackend(tool) end
             return false
         end
-
-        runtime.ClearPCAimTarget()
-        if state.WantedKnife then return installLegacyAimHook() end
+        if state.WantedKnife and state.RoundActive then return installLegacyAimHook() end
         uninstallLegacyAimHook()
         return false
     end
 
     function runtime.UninstallAimHooks(force)
         local state = aimHookState
-        runtime.ClearAimTarget()
+        restoreOriginalUpvalue5()
         uninstallLegacyAimHook()
+        runtime.ClearAimTarget()
         state.Installed = false
         state.ShootFunction = nil
         state.Tool = nil
-        state.CacheCheckedTool = nil
+        state.OriginalUpvalue5 = nil
+        state.OriginalUpvalue5Known = false
         state.ScanSerial = (state.ScanSerial or 0) + 1
         state.ScanRunning = false
         state.ScanTool = nil
-        state.ValidateRunning = false
         if force then
             state.Wanted = false
             state.WantedGun = false
@@ -15423,8 +15386,10 @@ do
         local state = aimHookState
         if state.Owner ~= runtime or not runtime.Alive then return end
 
-        local wantedGun = autoShootEnabled or silentAimPistolaEnabled
-        local wantedKnife = autoShootCuchilloEnabled or silentAimCuchilloEnabled
+        state.WantedGun = (autoShootEnabled or silentAimPistolaEnabled) == true
+        state.WantedKnife = (autoShootCuchilloEnabled or silentAimCuchilloEnabled) == true
+        state.Wanted = state.WantedGun or state.WantedKnife
+
         local inMatch = inMatchOverride
         if inMatch == nil then
             local ok, result = pcall(runtime.IsCombatRound)
@@ -15432,35 +15397,60 @@ do
         else
             inMatch = inMatch == true
         end
-
-        state.WantedGun = wantedGun == true
-        state.WantedKnife = wantedKnife == true
-        state.Wanted = state.WantedGun or state.WantedKnife
         state.RoundActive = inMatch
 
-        if not state.Wanted or not state.RoundActive then
-            runtime.ClearAimTarget()
-            uninstallLegacyAimHook()
-            return
+        local tool = mobileCurrentTool()
+        -- Discovery de Shoot no necesita esperar a RoundActive. Si ya equipaste la
+        -- pistola mientras activas la función, empieza a resolverla inmediatamente.
+        if state.WantedGun and tool and mobileToolIsGun(tool) then
+            ensureNativeGunBackend(tool)
         end
 
-        runtime.InstallAimHooks()
+        if not state.WantedKnife or not state.RoundActive or (tool and mobileToolIsGun(tool)) then
+            uninstallLegacyAimHook()
+        elseif state.WantedKnife then
+            installLegacyAimHook()
+        end
+
+        if not state.Wanted or not state.RoundActive then
+            runtime.SetSilentDetectedTarget(nil)
+            runtime.SetAutoDetectedTarget(nil)
+        end
     end
 
-    function runtime.EnsureAimHooksReady()
+    function runtime.EnsureAimHooksReady(tool)
         local state = aimHookState
         if state.Owner ~= runtime or not runtime.Alive then return false end
         if not state.RoundActive or not state.Wanted then runtime.RefreshAimHooks() end
         if not state.RoundActive or not state.Wanted then return false end
-        return runtime.InstallAimHooks()
+        tool = tool or mobileCurrentTool()
+        if tool and mobileToolIsGun(tool) then return ensureNativeGunBackend(tool) end
+        if state.WantedKnife then return installLegacyAimHook() end
+        return false
     end
 
-    runtime.Track(player:GetPropertyChangedSignal("Team"):Connect(function()
+    -- Prewarm instantáneo al equipar una Tool. Así el scan no empieza recién cuando
+    -- AutoShoot cumple su timer de 0.15 s.
+    local function bindAimCharacter(char)
+        if not char then return end
+        runtime.Track(char.ChildAdded:Connect(function(child)
+            if child:IsA("Tool") then
+                task.defer(function()
+                    if runtime.Alive and mobileToolIsGun(child) then
+                        -- Prewarm aunque el toggle se active justo después.
+                        if aimHookState.WantedGun then ensureNativeGunBackend(child) end
+                    end
+                end)
+            end
+        end))
+    end
+    bindAimCharacter(player.Character)
+    runtime.Track(player.CharacterAdded:Connect(function(char)
+        bindAimCharacter(char)
         task.defer(runtime.RefreshAimHooks)
     end))
-    runtime.Track(player:GetPropertyChangedSignal("Neutral"):Connect(function()
-        task.defer(runtime.RefreshAimHooks)
-    end))
+    runtime.Track(player:GetPropertyChangedSignal("Team"):Connect(function() task.defer(runtime.RefreshAimHooks) end))
+    runtime.Track(player:GetPropertyChangedSignal("Neutral"):Connect(function() task.defer(runtime.RefreshAimHooks) end))
 end
 
 runtime.AimState = aimHookState
@@ -16199,16 +16189,13 @@ runtime.Track(RunService.Heartbeat:Connect(function(deltaTime)
                             end
 
                             if closestTargetPart then
+                                runtime.SetAutoDetectedTarget(closestTargetPart)
                                 local aimReady
                                 if esGun then
-                                    aimReady = runtime.ApplyPCAimTarget(closestTargetPart)
+                                    aimReady = runtime.ApplyPCAimTarget(closestTargetPart, arma)
                                 else
                                     aimReady = runtime.ApplyKnifeAimTarget(closestTargetPart)
                                 end
-
-                                -- En pistola esperamos a que el scan nativo esté resuelto antes
-                                -- de disparar; así nunca sale un tiro sin redirección durante el
-                                -- primer escaneo. En cuchillo conserva su Activate normal.
                                 if aimReady then
                                     pcall(function()
                                         arma:Activate()
@@ -16216,17 +16203,18 @@ runtime.Track(RunService.Heartbeat:Connect(function(deltaTime)
                                     end)
                                 end
                             else
-                                runtime.ClearAimTarget()
+                                runtime.SetAutoDetectedTarget(nil)
                             end
-                        else runtime.ClearAimTarget() end
-                    else runtime.ClearAimTarget() end
-                else runtime.ClearAimTarget() end
-            else runtime.ClearAimTarget() end
+                        else runtime.SetAutoDetectedTarget(nil) end
+                    else runtime.SetAutoDetectedTarget(nil) end
+                else runtime.SetAutoDetectedTarget(nil) end
+            else runtime.SetAutoDetectedTarget(nil) end
         end
     elseif mState.asAct then
         mState.asAct = false
         mState.tAS = 0
-        runtime.ClearAimTarget()
+        runtime.SetAutoDetectedTarget(nil)
+        if not silentAimPistolaEnabled and not silentAimCuchilloEnabled then runtime.ClearPCAimTarget() end
     end
 
 
@@ -16343,20 +16331,32 @@ runtime.Track(RunService.Heartbeat:Connect(function(deltaTime)
                             end
                         end
                         if closestTargetPart then
+                            -- El verde del FOV se actualiza YA, aunque Shoot() siga precalentando.
+                            runtime.SetSilentDetectedTarget(closestTargetPart)
                             if silentWeaponIsGun then
-                                runtime.ApplyPCAimTarget(closestTargetPart)
+                                runtime.ApplyPCAimTarget(closestTargetPart, arma)
                             else
                                 runtime.ApplyKnifeAimTarget(closestTargetPart)
                             end
-                        elseif not autoShootEnabled and not autoShootCuchilloEnabled then runtime.ClearAimTarget() end
-                    elseif not autoShootEnabled and not autoShootCuchilloEnabled then runtime.ClearAimTarget() end
-                elseif not autoShootEnabled and not autoShootCuchilloEnabled then runtime.ClearAimTarget() end
+                        else
+                            runtime.SetSilentDetectedTarget(nil)
+                            if not autoShootEnabled and not autoShootCuchilloEnabled then runtime.ClearPCAimTarget() end
+                        end
+                    else
+                        runtime.SetSilentDetectedTarget(nil)
+                        if not autoShootEnabled and not autoShootCuchilloEnabled then runtime.ClearPCAimTarget() end
+                    end
+                else
+                    runtime.SetSilentDetectedTarget(nil)
+                    if not autoShootEnabled and not autoShootCuchilloEnabled then runtime.ClearPCAimTarget() end
+                end
             end
         end
     elseif mState.saAct then
         mState.saAct = false
         mState.tSA = 0
-        if not autoShootEnabled and not autoShootCuchilloEnabled then runtime.ClearAimTarget() end
+        runtime.SetSilentDetectedTarget(nil)
+        if not autoShootEnabled and not autoShootCuchilloEnabled then runtime.ClearPCAimTarget() end
     end
 end))
 
@@ -19002,7 +19002,7 @@ function runtime.RenderESP2D(deltaTime)
         FOVCircle.Position = centroVector
         FOVCircle.Radius = fovRadius
         FOVCircle.Visible = true
-        FOVCircle.Color = aimHookState.Target and fovTargetColor or fovIdleColor
+        FOVCircle.Color = aimHookState.SilentDetectedTarget and fovTargetColor or fovIdleColor
     elseif FOVCircle.Visible then
         FOVCircle.Visible = false
     end

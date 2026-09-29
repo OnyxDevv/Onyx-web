@@ -1,5 +1,5 @@
 --[[
-    XeroHub UI / Obsidian 2.9 — polish + compact sliders + open-button ghost
+    XeroHub UI / Obsidian 2.9 — polish + compact sliders + open-button ghost ICONS
     Creator: Kev
     Native Roblox interface. No WindUI runtime or icon render loops; remote icons use lazy local cache.
     Compatible with the control API used by XeroHub game scripts.

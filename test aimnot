@@ -1,4 +1,4 @@
--- XeroHub | DUELS MURDERS VS SHERIFF | R62 PEROT
+-- XeroHub | DUELS MURDERS VS SHERIFF |
 
 local SoundCatalogCore = {
     TARGET_SOUND_ID = "10209603",
@@ -14895,6 +14895,7 @@ runtime.RefreshAppearanceControls()
 
 
 -- XERO DUELS MOBILE AIM BACKEND · DIRECT SHOOT ROUTE
+-- R64 SMOOTH SCANNER: shared short LOS cache + AS/SA frame staggering.
 -- Ruta descubierta PASIVAMENTE en este Duels:
 -- DefaultGun.Activated -> callback upvalue #4 = Shoot
 -- Shoot upvalue #5 = Vector3 destino | #6 = ShootLocalBeam | #7 = Tool
@@ -15412,10 +15413,57 @@ local mState = {
     -- R60: derivados del FOV sólo se recalculan cuando cambia el slider.
     fovCacheRadius = -1, fovSq = 0, broadFovSq = 0,
     maxEspDistanceSq = MAX_ESP_DISTANCE * MAX_ESP_DISTANCE,
+
+    -- R64 MOBILE SMOOTH SCANNER:
+    -- Auto Shoot y Silent Aim suelen consultar la MISMA línea de visión con pocos
+    -- milisegundos de diferencia. Guardamos ese resultado por un intervalo mínimo
+    -- para no repetir Raycasts idénticos en frames consecutivos.
+    aimVisibilityCache = setmetatable({}, {__mode = "k"}),
+    aimVisibilityTTL = 0.045,
+    aimVisibilityMoveSq = 0.5625, -- 0.75 studs
 }
 mState.pHB.FilterType = Enum.RaycastFilterType.Exclude
 mState.pAS.FilterType = Enum.RaycastFilterType.Exclude
 mState.pSA.FilterType = Enum.RaycastFilterType.Exclude
+
+-- R64 MOBILE SMOOTH SCANNER
+-- Reutiliza un LOS únicamente cuando origen y objetivo casi no se movieron.
+-- El TTL es menor a 1/20 s: suficiente para evitar el Raycast duplicado SA/AS,
+-- pero corto para no volver pegajosa la selección cuando alguien se mueve/cubre.
+function runtime.AimPartVisibleCached(part, enemyChar, origin, partPosition, params)
+    if not part or not part.Parent or not enemyChar or not enemyChar.Parent then return false end
+
+    local now = os.clock()
+    local cache = mState.aimVisibilityCache
+    local entry = cache[part]
+    if entry and entry.EnemyChar == enemyChar
+        and now - (entry.At or 0) <= mState.aimVisibilityTTL then
+        local originDelta = origin - entry.Origin
+        local targetDelta = partPosition - entry.Target
+        local moveSq = mState.aimVisibilityMoveSq
+        if originDelta:Dot(originDelta) <= moveSq and targetDelta:Dot(targetDelta) <= moveSq then
+            return entry.Visible == true
+        end
+    end
+
+    local visible = not ws_Raycast(workspace, origin, partPosition - origin, params)
+    if entry then
+        entry.EnemyChar = enemyChar
+        entry.Origin = origin
+        entry.Target = partPosition
+        entry.Visible = visible
+        entry.At = now
+    else
+        cache[part] = {
+            EnemyChar = enemyChar,
+            Origin = origin,
+            Target = partPosition,
+            Visible = visible,
+            At = now,
+        }
+    end
+    return visible
+end
 
 function runtime.DisconnectCharCoreSignals(core)
     if not core then return end
@@ -15980,7 +16028,7 @@ runtime.Track(RunService.Heartbeat:Connect(function(deltaTime)
                                                 local partDelta = partPosition - myPos
                                                 local distSq = partDelta:Dot(partDelta)
                                                 if distSq < closestTargetDistSq
-                                                    and not ws_Raycast(workspace, headPos, partPosition - headPos, mState.pAS) then
+                                                    and runtime.AimPartVisibleCached(part, enemyChar, headPos, partPosition, mState.pAS) then
                                                     closestTargetDistSq = distSq
                                                     closestTargetPart = part
                                                 end
@@ -16030,7 +16078,10 @@ runtime.Track(RunService.Heartbeat:Connect(function(deltaTime)
     if silentAimPistolaEnabled or silentAimCuchilloEnabled then
         mState.saAct = true
         mState.tSA = mState.tSA + deltaTime
-        if mState.tSA >= 0.03 and not deathEffectBusy then
+        -- R64: si Auto Shoot ya va a hacer su scan pesado/disparo en ESTE Heartbeat,
+        -- Silent Aim conserva el target actual y hace su scan en el siguiente frame.
+        -- No reseteamos tSA aquí para que no pierda frecuencia acumulada.
+        if mState.tSA >= 0.03 and not deathEffectBusy and not mState.autoShootHeavyDue then
             mState.tSA = 0
             if not enLobby then
                 local localSnapshot = runtime.GetLocalCombatSnapshot()
@@ -16127,7 +16178,7 @@ runtime.Track(RunService.Heartbeat:Connect(function(deltaTime)
                                                 if candidateDistance < shortestDistanceFisica then pasaFiltro = true end
                                             end
                                             
-                                            if pasaFiltro and not ws_Raycast(workspace, headPos, partPosition - headPos, mState.pSA) then
+                                            if pasaFiltro and runtime.AimPartVisibleCached(part, enemyChar, headPos, partPosition, mState.pSA) then
                                                 if silentAimFovEnabled then shortestDistToCenter = candidateDistance else shortestDistanceFisica = candidateDistance end
                                                 closestTargetPart = part
                                             end

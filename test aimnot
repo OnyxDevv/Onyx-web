@@ -1,4 +1,4 @@
--- XeroHub | DUELS MURDERS VS SHERIFF | R62 PERF FACES EFFECTS SOUNDS | R59 SHARED COMBAT SNAPSHOT
+-- XeroHub | DUELS MURDERS VS
 
 local SoundCatalogCore = {
     TARGET_SOUND_ID = "10209603",
@@ -5498,105 +5498,165 @@ end
 local fpsBoostEnabled = false
 local FPS_SCAN_BUDGET = 0.0035
 local FPS_SCAN_CHECK_EVERY = 64
+local FPS_FLAT_COLOR = Color3.fromRGB(145, 145, 145)
 
 runtime.FPSBoost = {
     Cache = setmetatable({}, {__mode = "k"}),
     LightingState = nil,
     TerrainState = nil,
+    RenderingState = nil,
     CacheFolder = nil,
     Connection = nil,
     LightingConnection = nil,
+    PassSerial = 0,
 }
 
-function runtime.ApplyLowGraphics(v)
+local function fpsIsPlayerVisual(v)
+    local ancestor = v and v.Parent
+    while ancestor and ancestor ~= workspace do
+        if ancestor:IsA("Model") and Players:GetPlayerFromCharacter(ancestor) then
+            return true
+        end
+        ancestor = ancestor.Parent
+    end
+    return false
+end
+
+function runtime.ApplyLowGraphics(v, force)
     if not fpsBoostEnabled or not v or not v.Parent then return false end
 
     local supported = v:IsA("BasePart") or v:IsA("Decal") or v:IsA("Texture")
         or v:IsA("SpecialMesh") or v:IsA("Light") or v:IsA("PostEffect")
-        or v:IsA("SurfaceAppearance") or v:IsA("ParticleEmitter")
-        or v:IsA("Trail") or v:IsA("Beam") or v:IsA("Smoke")
-        or v:IsA("Fire") or v:IsA("Sparkles") or v:IsA("Atmosphere")
-        or v:IsA("Clouds")
+        or v:IsA("SurfaceAppearance") or v:IsA("BaseWrap") or v:IsA("Clothing")
+        or v:IsA("ParticleEmitter") or v:IsA("Trail") or v:IsA("Beam")
+        or v:IsA("Smoke") or v:IsA("Fire") or v:IsA("Sparkles")
+        or v:IsA("Atmosphere") or v:IsA("Clouds")
     if not supported then return false end
-
-    -- Excluye únicamente personajes REALES de jugadores. El resto de Workspace,
-    -- incluso NPCs/dummies/modelos anidados, se trata como geometría del mapa.
-    local ancestor = v.Parent
-    while ancestor and ancestor ~= workspace do
-        if ancestor:IsA("Model") and Players:GetPlayerFromCharacter(ancestor) then
-            return false
-        end
-        ancestor = ancestor.Parent
-    end
+    if fpsIsPlayerVisual(v) then return false end
 
     local cache = runtime.FPSBoost.Cache
-    if cache[v] then return true end
-    local data = {}
-    cache[v] = data
+    local data = cache[v]
+    if not data then
+        data = {}
+        cache[v] = data
 
-    -- IMPORTANTE: cada escritura va protegida. Un MeshPart/Union extraño ya no
-    -- puede abortar el escaneo completo del mapa.
-    if v:IsA("BasePart") and not v:IsA("Terrain") then
-        pcall(function() data.Material = v.Material end)
-        pcall(function() data.Reflectance = v.Reflectance end)
-        pcall(function() data.CastShadow = v.CastShadow end)
-        pcall(function() data.MaterialVariant = v.MaterialVariant end)
-        pcall(function() data.RenderFidelity = v.RenderFidelity end)
-        if v:IsA("UnionOperation") then
-            pcall(function() data.UsePartColor = v.UsePartColor end)
+        if v:IsA("BasePart") and not v:IsA("Terrain") then
+            pcall(function() data.Material = v.Material end)
+            pcall(function() data.Color = v.Color end)
+            pcall(function() data.Reflectance = v.Reflectance end)
+            pcall(function() data.CastShadow = v.CastShadow end)
+            pcall(function() data.MaterialVariant = v.MaterialVariant end)
+            if v:IsA("MeshPart") then
+                pcall(function() data.TextureID = v.TextureID end)
+                pcall(function() data.TextureContent = v.TextureContent end)
+                pcall(function() data.DoubleSided = v.DoubleSided end)
+                pcall(function() data.RenderFidelity = v.RenderFidelity end)
+            elseif v:IsA("UnionOperation") then
+                pcall(function() data.UsePartColor = v.UsePartColor end)
+            end
+        elseif v:IsA("SpecialMesh") then
+            pcall(function() data.TextureId = v.TextureId end)
+            pcall(function() data.VertexColor = v.VertexColor end)
+        elseif v:IsA("SurfaceAppearance") or v:IsA("BaseWrap") or v:IsA("Clothing") then
+            pcall(function() data.Parent = v.Parent end)
+        elseif v:IsA("Decal") or v:IsA("Texture") then
+            pcall(function() data.Transparency = v.Transparency end)
+        elseif v:IsA("Atmosphere") then
+            pcall(function() data.Density = v.Density end)
+            pcall(function() data.Haze = v.Haze end)
+            pcall(function() data.Glare = v.Glare end)
+        elseif v:IsA("Clouds") then
+            pcall(function() data.Enabled = v.Enabled end)
+        elseif v:IsA("Light") or v:IsA("PostEffect") or v:IsA("ParticleEmitter")
+            or v:IsA("Trail") or v:IsA("Beam") or v:IsA("Smoke")
+            or v:IsA("Fire") or v:IsA("Sparkles") then
+            pcall(function() data.Enabled = v.Enabled end)
         end
+    elseif not force then
+        return true
+    end
 
+    -- Reaplica siempre en los pases de refuerzo. Así, si el juego restaura una
+    -- textura/material una vez al cargar el mapa, el FPS Boost vuelve a ganarle.
+    if v:IsA("BasePart") and not v:IsA("Terrain") then
         pcall(function() v.Material = Enum.Material.SmoothPlastic end)
+        pcall(function() v.Color = FPS_FLAT_COLOR end)
         pcall(function() v.Reflectance = 0 end)
         pcall(function() v.CastShadow = false end)
         pcall(function() v.MaterialVariant = "" end)
-        pcall(function() v.RenderFidelity = Enum.RenderFidelity.Performance end)
-        if v:IsA("UnionOperation") then
+
+        if v:IsA("MeshPart") then
+            pcall(function() v.TextureID = "" end)
+            -- API moderna: TextureContent sí es editable en runtime.
+            pcall(function() v.TextureContent = Content.none end)
+            pcall(function() v.DoubleSided = false end)
+            pcall(function() v.RenderFidelity = Enum.RenderFidelity.Performance end)
+            if type(sethiddenproperty) == "function" then
+                pcall(sethiddenproperty, v, "TextureID", "")
+                pcall(sethiddenproperty, v, "RenderFidelity", Enum.RenderFidelity.Performance)
+            end
+        elseif v:IsA("UnionOperation") then
             pcall(function() v.UsePartColor = true end)
         end
 
-        if v:IsA("MeshPart") then
-            pcall(function() data.TextureID = v.TextureID end)
-            pcall(function() v.TextureID = "" end)
-            -- Algunos ejecutores/builds bloquean la escritura normal de TextureID.
-            if type(sethiddenproperty) == "function" then
-                pcall(sethiddenproperty, v, "TextureID", "")
-            end
+    elseif v:IsA("SpecialMesh") then
+        pcall(function() v.TextureId = "" end)
+        pcall(function() v.VertexColor = Vector3.new(1, 1, 1) end)
+
+    elseif v:IsA("SurfaceAppearance") or v:IsA("BaseWrap") or v:IsA("Clothing") then
+        if runtime.FPSBoost.CacheFolder and v.Parent ~= runtime.FPSBoost.CacheFolder then
+            pcall(function() v.Parent = runtime.FPSBoost.CacheFolder end)
         end
 
-    elseif v:IsA("SpecialMesh") then
-        pcall(function() data.TextureId = v.TextureId end)
-        pcall(function() v.TextureId = "" end)
-
-    elseif v:IsA("SurfaceAppearance") then
-        pcall(function() data.Parent = v.Parent end)
-        -- Sacarlo del MeshPart elimina PBR sin destruirlo; se restaura al apagar.
-        pcall(function() v.Parent = runtime.FPSBoost.CacheFolder end)
-
     elseif v:IsA("Decal") or v:IsA("Texture") then
-        pcall(function() data.Transparency = v.Transparency end)
         pcall(function() v.Transparency = 1 end)
 
     elseif v:IsA("Atmosphere") then
-        pcall(function() data.Density = v.Density end)
-        pcall(function() data.Haze = v.Haze end)
-        pcall(function() data.Glare = v.Glare end)
         pcall(function() v.Density = 0 end)
         pcall(function() v.Haze = 0 end)
         pcall(function() v.Glare = 0 end)
 
     elseif v:IsA("Clouds") then
-        pcall(function() data.Enabled = v.Enabled end)
         pcall(function() v.Enabled = false end)
 
     elseif v:IsA("Light") or v:IsA("PostEffect") or v:IsA("ParticleEmitter")
         or v:IsA("Trail") or v:IsA("Beam") or v:IsA("Smoke")
         or v:IsA("Fire") or v:IsA("Sparkles") then
-        pcall(function() data.Enabled = v.Enabled end)
         pcall(function() v.Enabled = false end)
     end
 
     return true
+end
+
+function runtime.FPSBoostPass(force)
+    if not fpsBoostEnabled then return 0, 0, 0 end
+    local descendants = workspace:GetDescendants()
+    local nextYieldAt = os.clock() + FPS_SCAN_BUDGET
+    local changed, flatParts, noTextures = 0, 0, 0
+
+    for i = 1, #descendants do
+        local v = descendants[i]
+        local okApply, didApply = pcall(runtime.ApplyLowGraphics, v, force == true)
+        if okApply and didApply then
+            changed += 1
+            if v:IsA("BasePart") and not v:IsA("Terrain") and not fpsIsPlayerVisual(v) then
+                local okFlat, isFlat = pcall(function()
+                    return v.Material == Enum.Material.SmoothPlastic and v.Color == FPS_FLAT_COLOR
+                end)
+                if okFlat and isFlat then flatParts += 1 end
+                if v:IsA("MeshPart") then
+                    local okTex, empty = pcall(function() return tostring(v.TextureID or "") == "" end)
+                    if okTex and empty then noTextures += 1 end
+                end
+            end
+        end
+        if i % FPS_SCAN_CHECK_EVERY == 0 and os.clock() >= nextYieldAt then
+            task.wait()
+            nextYieldAt = os.clock() + FPS_SCAN_BUDGET
+        end
+    end
+    table.clear(descendants)
+    return changed, flatParts, noTextures
 end
 
 function runtime.RestoreLowGraphics()
@@ -5605,13 +5665,17 @@ function runtime.RestoreLowGraphics()
             pcall(function()
                 if data.Parent and data.Parent.Parent then v.Parent = data.Parent end
                 if data.Material then v.Material = data.Material end
+                if data.Color then v.Color = data.Color end
                 if data.Reflectance ~= nil then v.Reflectance = data.Reflectance end
                 if data.CastShadow ~= nil then v.CastShadow = data.CastShadow end
-                if data.MaterialVariant ~= nil then pcall(function() v.MaterialVariant = data.MaterialVariant end) end
+                if data.MaterialVariant ~= nil then v.MaterialVariant = data.MaterialVariant end
+                if data.TextureID ~= nil then v.TextureID = data.TextureID end
+                if data.TextureContent ~= nil then v.TextureContent = data.TextureContent end
+                if data.DoubleSided ~= nil then v.DoubleSided = data.DoubleSided end
                 if data.RenderFidelity ~= nil then pcall(function() v.RenderFidelity = data.RenderFidelity end) end
-                if data.UsePartColor ~= nil then pcall(function() v.UsePartColor = data.UsePartColor end) end
-                if data.TextureID ~= nil then pcall(function() v.TextureID = data.TextureID end) end
-                if data.TextureId ~= nil then pcall(function() v.TextureId = data.TextureId end) end
+                if data.UsePartColor ~= nil then v.UsePartColor = data.UsePartColor end
+                if data.TextureId ~= nil then v.TextureId = data.TextureId end
+                if data.VertexColor ~= nil then v.VertexColor = data.VertexColor end
                 if data.Transparency ~= nil then v.Transparency = data.Transparency end
                 if data.Enabled ~= nil then v.Enabled = data.Enabled end
                 if data.Density ~= nil then v.Density = data.Density end
@@ -5627,6 +5691,7 @@ function runtime.RestoreFPSBoostEnvironment()
     local Lighting = game:GetService("Lighting")
     local Terrain = workspace:FindFirstChildOfClass("Terrain")
 
+    runtime.FPSBoost.PassSerial = (runtime.FPSBoost.PassSerial or 0) + 1
     if runtime.FPSBoost.Connection then
         runtime.FPSBoost.Connection:Disconnect()
         runtime.FPSBoost.Connection = nil
@@ -5654,6 +5719,11 @@ function runtime.RestoreFPSBoostEnvironment()
         pcall(function() Terrain.Decoration = terrainState.Decoration end)
     end
 
+    local renderingState = runtime.FPSBoost.RenderingState
+    if renderingState ~= nil then
+        pcall(function() settings().Rendering.QualityLevel = renderingState end)
+    end
+
     runtime.RestoreLowGraphics()
 
     if runtime.FPSBoost.CacheFolder and runtime.FPSBoost.CacheFolder.Parent then
@@ -5662,6 +5732,7 @@ function runtime.RestoreFPSBoostEnvironment()
     runtime.FPSBoost.CacheFolder = nil
     runtime.FPSBoost.LightingState = nil
     runtime.FPSBoost.TerrainState = nil
+    runtime.FPSBoost.RenderingState = nil
 end
 
 runtime.FPSBoostCleanup = function()
@@ -5671,15 +5742,15 @@ end
 
 UIElements.ToggleFPS = Tabs.Graficos:Toggle({
     Title = "FPS Boost",
-    Desc = "Simplifica todas las estructuras del mapa, texturas, materiales, sombras, shaders y efectos pesados sin tocar jugadores.",
+    Desc = "Modo potato: aplana TODAS las estructuras del mapa, quita texturas/PBR, sombras, shaders y baja la calidad de renderizado.",
     Value = false,
     Callback = function(state)
         if state and runtime.GraphicsCleanup then runtime.GraphicsCleanup() end
-        fpsBoostEnabled = state
+        fpsBoostEnabled = state == true
         local Lighting = game:GetService("Lighting")
         local Terrain = workspace:FindFirstChildOfClass("Terrain")
 
-        if state then
+        if fpsBoostEnabled then
             if not runtime.FPSBoost.CacheFolder or not runtime.FPSBoost.CacheFolder.Parent then
                 local folder = Instance.new("Folder")
                 folder.Name = "iLunX_PBRCache"
@@ -5694,13 +5765,16 @@ UIElements.ToggleFPS = Tabs.Graficos:Toggle({
                 EnvironmentDiffuseScale = Lighting.EnvironmentDiffuseScale,
                 EnvironmentSpecularScale = Lighting.EnvironmentSpecularScale,
             }
-
-            -- Parte "shaders/world": reduce cálculo de sombras y reflexión ambiental.
             Lighting.GlobalShadows = false
             Lighting.FogEnd = 9e9
             Lighting.ShadowSoftness = 0
             pcall(function() Lighting.EnvironmentDiffuseScale = 0 end)
             pcall(function() Lighting.EnvironmentSpecularScale = 0 end)
+
+            pcall(function()
+                runtime.FPSBoost.RenderingState = settings().Rendering.QualityLevel
+                settings().Rendering.QualityLevel = Enum.QualityLevel.Level01
+            end)
 
             if Terrain then
                 runtime.FPSBoost.TerrainState = {
@@ -5710,50 +5784,50 @@ UIElements.ToggleFPS = Tabs.Graficos:Toggle({
                     WaterTransparency = Terrain.WaterTransparency,
                     Decoration = Terrain.Decoration,
                 }
-                Terrain.WaterWaveSize = 0
-                Terrain.WaterWaveSpeed = 0
-                Terrain.WaterReflectance = 0
-                Terrain.WaterTransparency = 1
-                Terrain.Decoration = false
+                pcall(function() Terrain.WaterWaveSize = 0 end)
+                pcall(function() Terrain.WaterWaveSpeed = 0 end)
+                pcall(function() Terrain.WaterReflectance = 0 end)
+                pcall(function() Terrain.WaterTransparency = 1 end)
+                pcall(function() Terrain.Decoration = false end)
             end
 
-            -- Los shaders/post-effects reales suelen estar en Lighting, no Workspace.
-            -- Bloom, Blur, ColorCorrection, DepthOfField, SunRays y efectos que
-            -- aparezcan después quedan desactivados mientras el boost siga activo.
             for _, v in ipairs(Lighting:GetDescendants()) do
-                pcall(runtime.ApplyLowGraphics, v)
+                pcall(runtime.ApplyLowGraphics, v, true)
             end
 
+            runtime.FPSBoost.PassSerial = (runtime.FPSBoost.PassSerial or 0) + 1
+            local serial = runtime.FPSBoost.PassSerial
             task.spawn(function()
-                local descendants = workspace:GetDescendants()
-                local nextYieldAt = os.clock() + FPS_SCAN_BUDGET
-                local changed = 0
-                for i = 1, #descendants do
-                    local okApply, didApply = pcall(runtime.ApplyLowGraphics, descendants[i])
-                    if okApply and didApply then changed += 1 end
-                    if i % FPS_SCAN_CHECK_EVERY == 0 and os.clock() >= nextYieldAt then
-                        task.wait()
-                        nextYieldAt = os.clock() + FPS_SCAN_BUDGET
-                    end
+                local changed, flatParts, noTextures = runtime.FPSBoostPass(true)
+                if fpsBoostEnabled and serial == runtime.FPSBoost.PassSerial then
+                    showBottomMessage("FPS Boost: " .. tostring(flatParts) .. " partes planas · " .. tostring(noTextures) .. " meshes sin textura.")
                 end
-                runtime.FPSBoost.LastChangedCount = changed
-                table.clear(descendants)
-                if fpsBoostEnabled then
-                    showBottomMessage("FPS Boost: " .. tostring(changed) .. " objetos optimizados.")
-                end
+
+                -- Dos refuerzos baratos para mapas que aplican apariencia justo después
+                -- de cargar. No queda un loop permanente consumiendo CPU.
+                task.delay(0.35, function()
+                    if fpsBoostEnabled and serial == runtime.FPSBoost.PassSerial then runtime.FPSBoostPass(true) end
+                end)
+                task.delay(1.20, function()
+                    if fpsBoostEnabled and serial == runtime.FPSBoost.PassSerial then runtime.FPSBoostPass(true) end
+                end)
             end)
 
             if runtime.FPSBoost.Connection then runtime.FPSBoost.Connection:Disconnect() end
             runtime.FPSBoost.Connection = runtime.Track(workspace.DescendantAdded:Connect(function(v)
-                if fpsBoostEnabled then pcall(runtime.ApplyLowGraphics, v) end
+                if fpsBoostEnabled then
+                    task.defer(function()
+                        if fpsBoostEnabled and v and v.Parent then pcall(runtime.ApplyLowGraphics, v, true) end
+                    end)
+                end
             end))
 
             if runtime.FPSBoost.LightingConnection then runtime.FPSBoost.LightingConnection:Disconnect() end
             runtime.FPSBoost.LightingConnection = runtime.Track(Lighting.DescendantAdded:Connect(function(v)
-                if fpsBoostEnabled then pcall(runtime.ApplyLowGraphics, v) end
+                if fpsBoostEnabled then pcall(runtime.ApplyLowGraphics, v, true) end
             end))
 
-            showBottomMessage("FPS Boost aplicado.")
+            showBottomMessage("FPS Boost aplicado: simplificando mapa completo...")
         else
             runtime.RestoreFPSBoostEnvironment()
             showBottomMessage("Gráficos originales restaurados.")

@@ -5579,7 +5579,7 @@ function runtime.ApplyLowGraphics(v, force)
     end
 
     if v:IsA("BasePart") then
-        runtime.FPSBoostSet(data, v, "Material", Enum.Material.SmoothPlastic)
+        runtime.FPSBoostSet(data, v, "Material", Enum.Material.Plastic)
         runtime.FPSBoostSet(data, v, "MaterialVariant", "")
         runtime.FPSBoostSet(data, v, "Reflectance", 0)
         runtime.FPSBoostSet(data, v, "CastShadow", false)
@@ -5716,7 +5716,7 @@ function runtime.FPSBoostVerify()
             if data.CountedPart and v.Parent then
                 partsChecked += 1
                 local ok, material = pcall(function() return v.Material end)
-                if ok and material == Enum.Material.SmoothPlastic then
+                if ok and material == Enum.Material.Plastic then
                     partsChanged += 1
                 end
             elseif data.CountedVisual then
@@ -5765,7 +5765,7 @@ end
 
 UIElements.ToggleFPS = Tabs.Graficos:Toggle({
     Title = "FPS Boost",
-    Desc = "Simplifica todo el mapa cargado, texturas, PBR, luces y efectos; también procesa lo que entre por streaming.",
+    Desc = "Simplifica todo el mapa cargado, texturas, PBR, luces y efectos.",
     Value = false,
     Callback = function(state)
         if state and runtime.GraphicsCleanup then runtime.GraphicsCleanup() end

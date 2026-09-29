@@ -1,5 +1,5 @@
 {
-  "version": 5,
+  "version": 6,
   "skyboxes": [
     {
       "name": "Black Hole",
@@ -652,6 +652,18 @@
     {
       "name": "Halftone Wings",
       "folder": "halftone-wings",
+      "files": {
+        "bk": "bk.png",
+        "dn": "dn.png",
+        "ft": "ft.png",
+        "lf": "lf.png",
+        "rt": "rt.png",
+        "up": "up.png"
+      }
+    },
+    {
+      "name": "XeroHub Rei Brush",
+      "folder": "xerohub-rei-brush",
       "files": {
         "bk": "bk.png",
         "dn": "dn.png",

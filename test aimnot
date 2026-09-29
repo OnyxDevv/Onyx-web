@@ -1,4 +1,4 @@
--- XeroHub | DUELS MURDERS VS SHERIFF | R62 PERF FACES EFFECTS SOUNDS | R59 SHARED COMBAT SNAPSHOT
+-- XeroHub | DUELS MURDERS VS SHERIFF 
 
 local SoundCatalogCore = {
     TARGET_SOUND_ID = "10209603",
@@ -14894,14 +14894,14 @@ placeAppearanceElement(restoreAppearanceButton, nextAppearanceOrder())
 runtime.RefreshAppearanceControls()
 
 
--- XERO MOBILE SHOOT-ONLY AIM BACKEND
+-- XERO MOBILE SHOOT-ONLY AIM BACKEND · DELTA REPEAT FIX
 -- Pistola: SIEMPRE usa la misma ruta nativa del PC (Shoot() upvalue #5).
 -- NO existe fallback de pistola por __namecall / Raycast / Mouse.Hit.
 -- Si el executor no soporta getgc + setupvalue y la inspección necesaria,
 -- el aim de pistola falla de forma explícita para que la prueba sea concluyente.
 -- Cuchillo mantiene su backend propio porque no usa Shoot().
 local aimHookState = {
-    Version = 7,
+    Version = 8,
     Target = nil,
     LegacyTarget = nil,
     Mouse = mouse,
@@ -15123,6 +15123,9 @@ do
     end
 
     local function mobileScheduleDeepValidate(tool)
+        -- DELTA FIX: conservada sólo por compatibilidad interna; desactivada.
+        return
+        --[[
         local state = aimHookState
         if state.ValidateRunning or not state.ShootFunction or not state.Installed then return end
         local now = os.clock()
@@ -15151,6 +15154,7 @@ do
             end
             state.ValidateRunning = false
         end)
+        ]]
     end
 
     local function wrapLegacyAimHook(fn)
@@ -15228,7 +15232,10 @@ do
 
     function runtime.ClearPCAimTarget()
         local state = aimHookState
-        if state.LastWriteOK then mobileClearFunctionValue(state.ShootFunction) end
+        -- DELTA FIX: NO escribimos nil en Shoot() upvalue #5 por pérdidas
+        -- momentáneas de target/FOV. El LocalScript del arma puede consumir ese
+        -- upvalue entre ticks y dejar de responder si lo encuentra vacío.
+        -- El próximo target válido simplemente sobrescribe la posición anterior.
         state.LastWriteOK = false
         if state.Target and state.Target ~= state.LegacyTarget then state.Target = nil end
     end
@@ -15252,7 +15259,8 @@ do
         local tool = mobileCurrentTool()
 
         if tool ~= state.Tool then
-            if state.LastWriteOK then mobileClearFunctionValue(state.ShootFunction) end
+            -- No tocamos el upvalue de la closure vieja al cambiar de Tool.
+            -- Basta invalidar nuestro caché y resolver la nueva instancia.
             state.ScanSerial = (state.ScanSerial or 0) + 1
             state.ScanRunning = false
             state.ScanTool = nil
@@ -15267,9 +15275,12 @@ do
 
         if not tool or not mobileToolIsGun(tool) then return false end
 
-        -- Ruta caliente: ninguna inspección debug aquí.
+        -- DELTA FIX: una vez resuelta la closure Shoot() NO la volvemos a
+        -- inspeccionar periódicamente. En algunos executors móviles las APIs debug
+        -- devuelven metadata inconsistente después del primer disparo y una
+        -- revalidación falsa terminaba invalidando un backend que seguía siendo válido.
+        -- Sólo se rescanea si cambia la Tool o setupvalue falla de verdad.
         if state.ShootFunction and state.Installed then
-            mobileScheduleDeepValidate(tool)
             return true
         end
 

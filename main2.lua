@@ -2022,7 +2022,7 @@ function Nox:CreateWindow(options)
             end)
             navIcon.Position=UDim2.fromOffset(2,2)
         end
-        local titleLabel=label(navButton,title,10,C.Muted,{Position=UDim2.fromOffset(26,0),Size=UDim2.new(1,-30,1,0),Font=MEDIUM,TextTruncate=Enum.TextTruncate.AtEnd})
+        local titleLabel=label(navButton,title,10,C.Muted,{Position=UDim2.fromOffset(34,0),Size=UDim2.new(1,-38,1,0),Font=MEDIUM,TextTruncate=Enum.TextTruncate.AtEnd})
         tab.Page,tab.Content,tab.Empty=page,list,empty; tab.NavButton,tab.NavTitle=navButton,titleLabel
         tab.Number=numberLabel; tab.NavIcon=navIcon; tab.SelectionBar=selectionBar
         table.insert(self.Tabs,tab)

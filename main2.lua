@@ -1,7 +1,7 @@
 --[[
     XeroHub UI / Obsidian 2.9 — polish + compact sliders + open-button ghost
     Creator: Kev
-    Native Roblox interface. No WindUI runtime, icon downloads or render loops.
+    Native Roblox interface. No WindUI runtime or icon render loops; remote icons use lazy local cache.
     Compatible with the control API used by XeroHub game scripts.
     Usage: local UI = require(module); local Window = UI:CreateWindow({...})
     GuiButton input: https://create.roblox.com/docs/reference/engine/classes/GuiButton
@@ -251,6 +251,152 @@ local function customAssetFunction()
     return type(fn) == "function" and fn or nil
 end
 
+-- XeroHub global icon registry ------------------------------------------------
+-- PNGs live in /icons on GitHub. They are downloaded lazily once, cached locally
+-- and reused by every control/tab that declares Icon = "name".
+local XERO_ICON_BASE_URL = tostring(XeroEnv.XERO_ICON_BASE_URL or
+    "https://raw.githubusercontent.com/OnyxDevv/Onyx-web/refs/heads/main/icons/")
+local XERO_ICON_CACHE_FOLDER = tostring(XeroEnv.XERO_ICON_CACHE_FOLDER or "XeroHub/Icons/v1")
+
+local XERO_ICON_FILES = {
+    settings = "settings.png",
+    copy = "copy.png",
+    shirt = "shirt.png",
+    ["volume-2"] = "volume-2.png",
+    volume = "volume-2.png",
+    palette = "palette.png",
+    monitor = "monitor.png",
+    ["person-standing"] = "person-standing.png",
+    movement = "person-standing.png",
+    skull = "skull.png",
+    ["circle-dot"] = "circle-dot.png",
+    fov = "circle-dot.png",
+    eye = "eye.png",
+    scan = "scan.png",
+    hitbox = "scan.png",
+    ["mouse-pointer-2"] = "mouse-pointer-2.png",
+    triggerbot = "mouse-pointer-2.png",
+    zap = "zap.png",
+    autoshoot = "zap.png",
+    crosshair = "crosshair.png",
+    aim = "crosshair.png",
+    ["rotate-ccw"] = "rotate-ccw.png",
+    reset = "rotate-ccw.png",
+    ["folder-open"] = "folder-open.png",
+    load = "folder-open.png",
+    save = "save.png",
+    ["badge-info"] = "badge-info.png",
+    info = "badge-info.png",
+}
+
+local XERO_ICON_ASSET_CACHE = {}
+local XERO_ICON_PENDING = {}
+
+local function normalizeIconName(name)
+    return string.lower(tostring(name or "")):gsub("%s+", "-")
+end
+
+local function iconFileName(name)
+    local key = normalizeIconName(name)
+    if key == "" then return nil, nil end
+    local fileName = XERO_ICON_FILES[key]
+    -- Future-proof: after uploading another safe-name PNG to /icons, Icon="shield"
+    -- works even before adding an explicit alias to the table above.
+    if not fileName and key:match("^[%w_%-]+$") then fileName = key .. ".png" end
+    return key, fileName
+end
+
+local function isIconPngPayload(data)
+    return type(data) == "string" and #data > 32 and data:sub(1,8) == "\137PNG\r\n\26\n"
+end
+
+local function cachedIconAsset(name)
+    local key, fileName = iconFileName(name)
+    if not key or not fileName then return nil end
+    if XERO_ICON_ASSET_CACHE[key] then return XERO_ICON_ASSET_CACHE[key] end
+
+    local assetFn = customAssetFunction()
+    if not assetFn or type(isfile) ~= "function" then return nil end
+    local path = XERO_ICON_CACHE_FOLDER .. "/" .. fileName
+    if not isfile(path) then return nil end
+
+    if type(readfile) == "function" then
+        local okRead, data = pcall(readfile, path)
+        if not okRead or not isIconPngPayload(data) then return nil end
+    end
+
+    local okAsset, asset = pcall(assetFn, path)
+    if okAsset and type(asset) == "string" and asset ~= "" then
+        XERO_ICON_ASSET_CACHE[key] = asset
+        return asset
+    end
+    return nil
+end
+
+local function downloadIconAsset(name)
+    local key, fileName = iconFileName(name)
+    if not key or not fileName then return nil end
+    local cached = cachedIconAsset(key)
+    if cached then return cached end
+
+    local assetFn = customAssetFunction()
+    if not assetFn or type(writefile) ~= "function" then return nil end
+
+    local url = XERO_ICON_BASE_URL .. fileName
+    local body
+    local req = (syn and syn.request) or (http and http.request) or http_request or request
+    if type(req) == "function" then
+        local okRequest, response = pcall(req, {
+            Url = url, Method = "GET", Headers = { ["User-Agent"] = "XeroHub/3.1 Icons" },
+        })
+        if okRequest and response then
+            local status = tonumber(response.StatusCode or response.Status)
+            if status and status >= 200 and status < 300 and isIconPngPayload(response.Body) then
+                body = response.Body
+            end
+        end
+    end
+
+    if not body then
+        local okHttp, data = pcall(function() return game:HttpGet(url) end)
+        if okHttp and isIconPngPayload(data) then body = data end
+    end
+    if not body then return nil end
+
+    ensureFolderTree(XERO_ICON_CACHE_FOLDER)
+    local path = XERO_ICON_CACHE_FOLDER .. "/" .. fileName
+    if not pcall(writefile, path, body) then return nil end
+
+    local okAsset, asset = pcall(assetFn, path)
+    if okAsset and type(asset) == "string" and asset ~= "" then
+        XERO_ICON_ASSET_CACHE[key] = asset
+        return asset
+    end
+    return nil
+end
+
+local function requestIconAsset(name, callback)
+    if type(callback) ~= "function" then return end
+    local key = normalizeIconName(name)
+    if key == "" then return end
+
+    local cached = cachedIconAsset(key)
+    if cached then callback(cached); return end
+
+    if XERO_ICON_PENDING[key] then
+        table.insert(XERO_ICON_PENDING[key], callback)
+        return
+    end
+    XERO_ICON_PENDING[key] = {callback}
+
+    task.spawn(function()
+        local asset = downloadIconAsset(key)
+        local waiters = XERO_ICON_PENDING[key] or {}
+        XERO_ICON_PENDING[key] = nil
+        for _, fn in ipairs(waiters) do pcall(fn, asset) end
+    end)
+end
+
 local function cachedBackgroundAsset(themeName)
     local assetFn = customAssetFunction()
     local source = backgroundSource(themeName)
@@ -411,6 +557,25 @@ local function label(parent, text, size, color, props)
     for k,v in pairs(props or {}) do p[k] = v end
     return new("TextLabel", p, parent)
 end
+local function remoteIcon(parent, name, size, color, onReady)
+    local px = math.clamp(math.floor(tonumber(size) or 16), 10, 28)
+    local image = new("ImageLabel", {
+        Name = "XeroIcon",
+        BackgroundTransparency = 1,
+        Size = UDim2.fromOffset(px,px),
+        Image = "",
+        ImageColor3 = color or C.Muted,
+        ScaleType = Enum.ScaleType.Fit,
+        Visible = false,
+    }, parent)
+    requestIconAsset(name, function(asset)
+        if not image.Parent or not asset then return end
+        image.Image = asset
+        image.Visible = true
+        if type(onReady) == "function" then pcall(onReady, image) end
+    end)
+    return image
+end
 local function button(parent, text, props)
     local p = {
         Text = text or "",
@@ -424,97 +589,6 @@ end
 local function plain(text)
     return tostring(text or ""):gsub("<[^>]+>", "")
 end
-
--- XeroHub localization -------------------------------------------------------
-local function canonicalLanguageName(value)
-    local key = string.lower(tostring(value or "es"))
-    if key == "en" or key == "eng" or key == "english" or key == "ingles" or key == "inglés" then
-        return "en"
-    end
-    return "es"
-end
-
-local CURRENT_LANGUAGE = canonicalLanguageName(XeroEnv.XERO_LANGUAGE or "es")
-local LANGUAGE_TABLES = {
-    es = {},
-    en = {
-    ["Seleccionar…"] = "Select…",
-    ["Buscar una opción…"] = "Search an option…",
-    ["Sin resultados"] = "No results",
-    ["Escribe aquí…"] = "Type here…",
-    ["Paleta RGB · arrastra para elegir tono e intensidad"] = "RGB palette · drag to choose hue and intensity",
-    ["Tu espacio. Todo bajo control."] = "Your space. Everything under control.",
-    ["Organiza tus ajustes de precisión y selección."] = "Manage your precision and targeting settings.",
-    ["Controles y ajustes de esta función."] = "Controls and settings for this feature.",
-    ["Elige qué información quieres ver."] = "Choose what information you want to see.",
-    ["Personaliza el movimiento y sus controles."] = "Customize movement and its controls.",
-    ["Configura tus acciones automáticas."] = "Configure your automatic actions.",
-    ["Ajusta el ambiente, la iluminación y los efectos."] = "Adjust the environment, lighting, and effects.",
-    ["Combina paquetes y movimientos a tu gusto."] = "Mix animation packs and movements your way.",
-    ["Tu avatar, a tu manera."] = "Your avatar, your way.",
-    ["Tu interfaz y tus configuraciones guardadas."] = "Your interface and saved configurations.",
-    ["Organiza tus opciones de inventario."] = "Manage your inventory options.",
-    ["Conoce al creador y los datos del proyecto."] = "Meet the creator and view project details.",
-    ["Personaliza tus opciones."] = "Customize your options.",
-    ["Sin coincidencias. Prueba otra búsqueda."] = "No matches. Try another search.",
-    ["Buscar ajuste..."] = "Search setting...",
-    ["RSHIFT  /  MOSTRAR U OCULTAR"] = "RSHIFT  /  SHOW / HIDE",
-    ["ABRIR PANEL"] = "OPEN PANEL",
-    ["Pestaña"] = "Tab",
-    ["Aceptar"] = "OK",
-    ["Cerrar XeroHub"] = "Close XeroHub",
-    ["Se cerrará el panel y se limpiará esta sesión. Puedes volver a ejecutar el hub cuando quieras."] = "The panel will close and this session will be cleaned up. You can run the hub again whenever you want.",
-    ["Volver"] = "Back",
-    ["Cerrar"] = "Close",
-    ["Tema"] = "Theme",
-    ["Blanco"] = "White",
-    ["Oscuro"] = "Dark",
-},
-}
-
-local function translateText(value, language)
-    local text = tostring(value or "")
-    local lang = canonicalLanguageName(language or CURRENT_LANGUAGE)
-    if lang == "es" then return text end
-    local dictionary = LANGUAGE_TABLES[lang]
-    return (dictionary and dictionary[text]) or text
-end
-
-local function translatedList(values, language)
-    local result = {}
-    for index, value in ipairs(values or {}) do
-        result[index] = translateText(tostring(value), language)
-    end
-    return result
-end
-
-function Nox:RegisterTranslations(language, translations)
-    local lang = canonicalLanguageName(language)
-    LANGUAGE_TABLES[lang] = LANGUAGE_TABLES[lang] or {}
-    if type(translations) == "table" then
-        for source, translated in pairs(translations) do
-            if type(source) == "string" and type(translated) == "string" then
-                LANGUAGE_TABLES[lang][source] = translated
-            end
-        end
-    end
-    if self.Window and not self.Window.Destroyed and self.Window.RefreshLanguage then
-        self.Window:RefreshLanguage()
-    end
-    return self
-end
-
-function Nox:Translate(value, language)
-    return translateText(value, language or (self.Window and self.Window.Language) or CURRENT_LANGUAGE)
-end
-
-function Nox:GetLanguage()
-    if self.Window and not self.Window.Destroyed and self.Window.GetLanguage then
-        return self.Window:GetLanguage()
-    end
-    return CURRENT_LANGUAGE
-end
-
 local function normalized(text)
     local s = string.lower(plain(text))
     for a,b in pairs({["á"]="a",["é"]="e",["í"]="i",["ó"]="o",["ú"]="u",["ñ"]="n",
@@ -638,6 +712,11 @@ function Control:_resize(width)
     local copyOffsetX=self.CopyOffsetX or 0
     self.Copy.Position=UDim2.fromOffset(copyOffsetX,0)
     self.Copy.Size=UDim2.new(1,-reserve-copyOffsetX,0,copyHeight)
+    if self.ControlIcon then
+        local iconSize=self.ControlIconSize or 16
+        self.ControlIcon.Position=UDim2.fromOffset(0,math.max(0,math.floor((headHeight-iconSize)/2)))
+        self.ControlIcon.Size=UDim2.fromOffset(iconSize,iconSize)
+    end
     self.TitleLabel.Size=UDim2.new(1,0,0,titleHeight)
     self.DescLabel.Position=UDim2.fromOffset(0,titleHeight+4)
     self.DescLabel.Size=UDim2.new(1,0,0,descHeight)
@@ -709,32 +788,20 @@ function Control:ApplyTheme()
     if self.PictureStroke and self.PictureStroke.Parent then
         self.PictureStroke.Color = light and (self.LightImageStrokeColor or C.Border) or (self.DarkImageStrokeColor or C.Text)
     end
+    if self.ControlIcon and self.ControlIcon.Parent then
+        self.ControlIcon.ImageColor3 = light and (self.LightIconColor or C.Muted) or (self.DarkIconColor or C.Muted)
+    end
     if self._applyThemeExtras then self:_applyThemeExtras(light) end
     return self
 end
 
 function Control:SetTitle(value)
-    self.SourceTitle = plain(value)
-    self.Title = translateText(self.SourceTitle, self.Window and self.Window.Language)
-    self.TitleLabel.Text = self.Title
+    self.Title = plain(value); self.TitleLabel.Text = self.Title
     self.Tab:_queueFilter(); return self
 end
 function Control:SetDesc(value)
-    self.SourceDesc = plain(value)
-    self.Desc = translateText(self.SourceDesc, self.Window and self.Window.Language)
-    self.DescLabel.Text = self.Desc
+    self.Desc = plain(value); self.DescLabel.Text = self.Desc
     self.DescLabel.Visible = self.Desc ~= ""; self.Tab:_queueFilter(); return self
-end
-function Control:RefreshLanguage()
-    if self.Destroyed then return self end
-    self.Title = translateText(self.SourceTitle or self.Title, self.Window and self.Window.Language)
-    self.Desc = translateText(self.SourceDesc or self.Desc, self.Window and self.Window.Language)
-    self.TitleLabel.Text = self.Title
-    self.DescLabel.Text = self.Desc
-    self.DescLabel.Visible = self.Desc ~= ""
-    if self._refreshLanguage then self:_refreshLanguage() end
-    self.Tab:_queueFilter()
-    return self
 end
 function Control:SetVisible(value) self.ElementFrame.Visible = value == true; return self end
 function Control:Show() return self:SetVisible(true) end
@@ -758,32 +825,6 @@ function Control:Destroy()
 end
 function Control:SetValue(value, silent) return self:Set(value,silent) end
 function Control:Get() return self.Value end
-
-function Tab:SetTitle(value)
-    self.SourceTitle=plain(value)
-    self.Title=translateText(self.SourceTitle,self.Window.Language)
-    if self.NavTitle then self.NavTitle.Text=self.Title end
-    if self.Window.CurrentTab==self and self.Window.PageTitleLabel then self.Window.PageTitleLabel.Text=self.Title end
-    self:_queueFilter(); return self
-end
-function Tab:SetDesc(value)
-    self.SourceDesc=plain(value)
-    self.Desc=translateText(self.SourceDesc,self.Window.Language)
-    if self.Window.CurrentTab==self and self.Window.PageDescLabel then self.Window.PageDescLabel.Text=self.Desc end
-    return self
-end
-function Tab:RefreshLanguage()
-    self.Title=translateText(self.SourceTitle or self.Title,self.Window.Language)
-    self.Desc=translateText(self.SourceDesc or self.Desc,self.Window.Language)
-    if self.NavTitle then self.NavTitle.Text=self.Title end
-    if self.Empty then self.Empty.Text=translateText("Sin coincidencias. Prueba otra búsqueda.",self.Window.Language) end
-    for _,control in ipairs(self.Elements or {}) do if control.RefreshLanguage then control:RefreshLanguage() end end
-    if self.Window.CurrentTab==self then
-        if self.Window.PageTitleLabel then self.Window.PageTitleLabel.Text=self.Title end
-        if self.Window.PageDescLabel then self.Window.PageDescLabel.Text=self.Desc end
-    end
-    self:_queueFilter(); return self
-end
 
 function Tab:_queueFilter()
     if self._filterQueued or self.Window.Destroyed then return end
@@ -821,7 +862,7 @@ function Tab:_filter()
     end
     self.Empty.Visible = shown == 0
     if self.Window.CurrentTab == self then
-        self.Window.CountLabel.Text = tostring(shown) .. (query ~= "" and " / " .. total or "") .. (self.Window.Language == "en" and " options" or " opciones")
+        self.Window.CountLabel.Text = tostring(shown) .. (query ~= "" and " / " .. total or "") .. " opciones"
     end
     if self._lastQuery~=query then self.Content.CanvasPosition=Vector2.zero; self._lastQuery=query end
     self:_layout()
@@ -843,17 +884,21 @@ function Tab:_control(kind, options)
         Size=UDim2.new(1,0,0,0),LayoutOrder=1},row)
     local copy = new("Frame", {Name="Copy",BackgroundTransparency=1,
         Size=UDim2.new(1,0,0,0)},head)
-    local sourceTitle = plain(o.Title or kind)
-    local sourceDesc = plain(o.Desc)
-    local displayTitle = translateText(sourceTitle, self.Window.Language)
-    local displayDesc = translateText(sourceDesc, self.Window.Language)
-    local title = label(copy,displayTitle,12,C.Text,{Font=MEDIUM,TextWrapped=true,
+    local title = label(copy,plain(o.Title or kind),12,C.Text,{Font=MEDIUM,TextWrapped=true,
         TextYAlignment=Enum.TextYAlignment.Top,Size=UDim2.new(1,0,0,18),LayoutOrder=1})
-    local desc = label(copy,displayDesc,11,C.Muted,{TextWrapped=true,AutomaticSize=Enum.AutomaticSize.Y,
-        Size=UDim2.new(1,0,0,0),LayoutOrder=2,Visible=sourceDesc ~= ""})
-    local control = setmetatable({SourceTitle=sourceTitle,SourceDesc=sourceDesc,Title=displayTitle,Desc=displayDesc,__type=kind,
+    local desc = label(copy,plain(o.Desc),11,C.Muted,{TextWrapped=true,AutomaticSize=Enum.AutomaticSize.Y,
+        Size=UDim2.new(1,0,0,0),LayoutOrder=2,Visible=o.Desc ~= nil and o.Desc ~= ""})
+    local controlIcon, controlIconSize
+    if o.Icon ~= nil and tostring(o.Icon) ~= "" then
+        controlIconSize=math.clamp(math.floor(tonumber(o.IconSize) or 16),10,24)
+        controlIcon=remoteIcon(head,o.Icon,controlIconSize,
+            lightTheme and (o.LightIconColor or C.Muted) or (o.IconColor or C.Muted))
+    end
+    local control = setmetatable({Title=plain(o.Title or kind),Desc=plain(o.Desc),__type=kind,
         Window=self.Window,Tab=self,ElementFrame=row,Slot=slot,Head=head,Copy=copy,RowStroke=rowStroke,
         TitleLabel=title,DescLabel=desc,Callback=o.Callback,GroupTitle=self._groupTitle,Locked=false,
+        ControlIcon=controlIcon,ControlIconSize=controlIconSize,CopyOffsetX=controlIcon and (controlIconSize+9) or 0,
+        DarkIconColor=o.IconColor,LightIconColor=o.LightIconColor,
         DarkColor=darkColor,LightColor=lightColor,DarkStrokeColor=darkStrokeColor,LightStrokeColor=lightStrokeColor,
         DarkTitleColor=o.TitleColor,LightTitleColor=o.LightTitleColor,DarkDescColor=o.DescColor,LightDescColor=o.LightDescColor},Control)
     desc.AutomaticSize=Enum.AutomaticSize.None; desc.TextYAlignment=Enum.TextYAlignment.Top
@@ -1007,10 +1052,8 @@ local function field(parent, placeholder)
 end
 function Tab:Input(options)
     local o=options or {}; local c=self:_control("Input",o)
-    local sourcePlaceholder=plain(o.Placeholder or "Escribe aquí…")
-    local box=field(c.ElementFrame,translateText(sourcePlaceholder,c.Window.Language))
-    c.Interactive=box; c.BodyField=box; c.SourcePlaceholder=sourcePlaceholder
-    c._refreshLanguage=function(self) box.PlaceholderText=translateText(self.SourcePlaceholder,self.Window.Language) end
+    local box=field(c.ElementFrame,o.Placeholder or "Escribe aquí…")
+    c.Interactive=box; c.BodyField=box
     function c:Set(value,silent)
         value=tostring(value or ""); local changed=self.Value ~= value
         self.Value=value; box.Text=value
@@ -1159,15 +1202,10 @@ function Tab:Dropdown(options)
         if self.Multi then
             local arr=type(value)=="table" and table.clone(value) or (value and {value} or {})
             changed=table.concat(arr,"\0") ~= table.concat(type(self.Value)=="table" and self.Value or {},"\0")
-            self.Value=arr
-            if #arr>0 then
-                valueLabel.Text=table.concat(translatedList(arr,self.Window.Language),", ")
-            else
-                valueLabel.Text=translateText("Seleccionar…",self.Window.Language)
-            end
+            self.Value=arr; valueLabel.Text=#arr>0 and table.concat(arr,", ") or "Seleccionar…"
         else
             changed=self.Value~=value; self.Value=value
-            valueLabel.Text=value~=nil and translateText(tostring(value),self.Window.Language) or translateText("Seleccionar…",self.Window.Language)
+            valueLabel.Text=value~=nil and tostring(value) or "Seleccionar…"
         end
         if (changed or force) and not silent then invoke(self.Callback,self.Multi and table.clone(self.Value) or self.Value) end
         self.Tab:_queueFilter()
@@ -1183,7 +1221,7 @@ function Tab:Dropdown(options)
         if self.Locked or self.Destroyed then return end
         local window=self.Window
         local panel=window:_popup(self.Title,360,410,self)
-        local search=field(panel,translateText("Buscar una opción…",window.Language))
+        local search=field(panel,"Buscar una opción…")
         search.Position=UDim2.fromOffset(16,48); search.Size=UDim2.new(1,-32,0,30)
         local list=scroll(panel,{Position=UDim2.fromOffset(16,90),Size=UDim2.new(1,-32,1,-120)})
         vertical(list,5)
@@ -1195,17 +1233,16 @@ function Tab:Dropdown(options)
             for _,child in ipairs(list:GetChildren()) do if child:IsA("GuiObject") then child:Destroy() end end
             local query=normalized(search.Text); local count, matches=0,0
             for _,value in ipairs(self.Values) do
-                local displayValue=translateText(tostring(value),window.Language)
-                if query=="" or string.find(normalized(tostring(value).." "..displayValue),query,1,true) then
+                if query=="" or string.find(normalized(value),query,1,true) then
                     matches+=1
                     if count<120 then
                         count+=1
                         local selected=self.Multi and table.find(self.Value,value)~=nil or (not self.Multi and self.Value==value)
-                        local choiceHeight=math.max(32,textHeight(displayValue,12,FONT,math.max(60,panel.AbsoluteSize.X-78))+12)
+                        local choiceHeight=math.max(32,textHeight(tostring(value),12,FONT,math.max(60,panel.AbsoluteSize.X-78))+12)
                         local choice=button(list,"",{Name="Option",Size=UDim2.new(1,-4,0,choiceHeight),LayoutOrder=count,
                             BackgroundColor3=selected and C.Text or C.Row})
                         round(choice,8)
-                        label(choice,displayValue,13,selected and C.Window or C.Text,{Position=UDim2.fromOffset(12,0),
+                        label(choice,tostring(value),13,selected and C.Window or C.Text,{Position=UDim2.fromOffset(12,0),
                             Size=UDim2.new(1,-38,1,0),TextWrapped=true})
                         label(choice,selected and "✓" or "",12,C.Window,{Position=UDim2.new(1,-28,0,0),Size=UDim2.new(0,20,1,0)})
                         connect(window,choice.Activated,function()
@@ -1223,20 +1260,12 @@ function Tab:Dropdown(options)
                     end
                 end
             end
-            if window.Language=="en" then
-                hint.Text=matches==0 and "No results" or (matches>120 and "120 of "..matches.." · Type to filter" or matches.." options")
-            else
-                hint.Text=matches==0 and "Sin resultados" or (matches>120 and "120 de "..matches.." · Escribe para filtrar" or matches.." opciones")
-            end
+            hint.Text=matches==0 and "Sin resultados" or (matches>120 and "120 de "..matches.." · Escribe para filtrar" or matches.." opciones")
         end
         self._renderOptions=render
         connect(window,search:GetPropertyChangedSignal("Text"),render,window._popupConnections)
         connect(window,panel:GetPropertyChangedSignal("AbsoluteSize"),render,window._popupConnections)
         render()
-    end
-    c._refreshLanguage=function(self)
-        self:Set(self.Value,true,true)
-        if self.Window._popupOwner==self and self._renderOptions then self._renderOptions() end
     end
     connect(c.Window,hit.Activated,function() c:Open() end)
     c:Set(o.Value or o.Default or (c.Multi and {} or nil),true)
@@ -1276,7 +1305,7 @@ function Tab:Colorpicker(options)
         hex.Position=UDim2.fromOffset(54,0); hex.Size=UDim2.new(1,-54,0,34)
         hex.TextSize=11; hex.Font=MEDIUM
 
-        local hint=label(body,translateText("Paleta RGB · arrastra para elegir tono e intensidad",window.Language),9,C.Muted,{
+        local hint=label(body,"Paleta RGB · arrastra para elegir tono e intensidad",9,C.Muted,{
             Position=UDim2.fromOffset(0,39),Size=UDim2.new(1,0,0,16)})
 
         local palette=button(body,"",{Name="RGBPalette",Position=UDim2.fromOffset(0,58),
@@ -1428,7 +1457,7 @@ function Nox:CreateWindow(options)
     local w={_connections={},_popupConnections={},_onDestroy={},_onOpen={},_onClose={},Tabs={},
         Groups={},Opened=true,Destroyed=false,Compact=false,ToggleKey=o.ToggleKey or Enum.KeyCode.RightShift,
         Title=plain(o.Title or "XeroHub"),_brandBaseTitle=plain(o.Title or "XeroHub"),Author=o.Author or "by Kev",UIScale=1,_navOrder=0,
-        Language=canonicalLanguageName(o.Language or CURRENT_LANGUAGE),ThemeName=resolvedTheme,ThemeDef=getThemeDefinition(resolvedTheme),_themeGeneration=0}
+        ThemeName=resolvedTheme,ThemeDef=getThemeDefinition(resolvedTheme),_themeGeneration=0}
     self.Window=w; env.__NOX_UI=w
     local gui=new("ScreenGui",{Name="XeroHubUI",ResetOnSpawn=false,IgnoreGuiInset=true,
         DisplayOrder=2147483000,ZIndexBehavior=Enum.ZIndexBehavior.Sibling},parent)
@@ -1577,29 +1606,27 @@ function Nox:CreateWindow(options)
     local drawerShade=button(root,"",{Name="DrawerBackdrop",BackgroundTransparency=1,
         Position=UDim2.fromOffset(0,70),Size=UDim2.new(1,0,1,-70),Visible=false,Active=false,ZIndex=11})
     local content=new("Frame",{Name="Content",BackgroundTransparency=1,Position=UDim2.fromOffset(182,70),Size=UDim2.new(1,-194,1,-82),ZIndex=4},root)
-    local pageTitle=label(content,translateText("Inicio",w.Language),20,C.Text,{Size=UDim2.new(1,-90,0,26),Font=BOLD})
-    local pageDesc=label(content,translateText(DESCRIPTIONS.Inicio,w.Language),10,C.Muted,{Position=UDim2.fromOffset(0,24),Size=UDim2.new(1,0,0,20),TextWrapped=true,TextYAlignment=Enum.TextYAlignment.Top})
-    local count=label(content,w.Language=="en" and "0 options" or "0 opciones",9,C.Faint,{Position=UDim2.new(1,-96,0,5),Size=UDim2.fromOffset(96,16),TextXAlignment=Enum.TextXAlignment.Right,Font=Enum.Font.Code})
+    local pageTitle=label(content,"Inicio",20,C.Text,{Size=UDim2.new(1,-90,0,26),Font=BOLD})
+    local pageDesc=label(content,DESCRIPTIONS.Inicio,10,C.Muted,{Position=UDim2.fromOffset(0,24),Size=UDim2.new(1,0,0,20),TextWrapped=true,TextYAlignment=Enum.TextYAlignment.Top})
+    local count=label(content,"0 opciones",9,C.Faint,{Position=UDim2.new(1,-96,0,5),Size=UDim2.fromOffset(96,16),TextXAlignment=Enum.TextXAlignment.Right,Font=Enum.Font.Code})
     w.CountLabel=count
     local searchBox=new("Frame",{Name="SearchBox",BackgroundColor3=C.Field,BackgroundTransparency=Glass.Field,ClipsDescendants=true,
         Position=UDim2.new(1,-312,0,8),Size=UDim2.fromOffset(198,30),ZIndex=6},top)
     round(searchBox,9); local searchStroke=stroke(searchBox,w.ThemeDef.Visuals.SearchStroke)
     local search=new("TextBox",{Name="Search",BackgroundTransparency=1,ClearTextOnFocus=false,TextSize=12,TextTruncate=Enum.TextTruncate.AtEnd,
-        PlaceholderText=translateText("Buscar ajuste...",w.Language),PlaceholderColor3=C.Faint,TextXAlignment=Enum.TextXAlignment.Left,TextYAlignment=Enum.TextYAlignment.Center,
+        PlaceholderText="Buscar ajuste...",PlaceholderColor3=C.Faint,TextXAlignment=Enum.TextXAlignment.Left,TextYAlignment=Enum.TextYAlignment.Center,
         Position=UDim2.fromOffset(28,0),Size=UDim2.new(1,-54,1,0)},searchBox)
     icon(searchBox,"search").Position=UDim2.new(0,8,.5,-10)
     local clear=button(searchBox,"×",{Name="Clear",BackgroundTransparency=1,Position=UDim2.new(1,-28,0,0),Size=UDim2.new(0,26,1,0),Visible=false})
     local pages=new("Frame",{Name="Pages",BackgroundTransparency=1,Position=UDim2.fromOffset(0,34),Size=UDim2.new(1,0,1,-34)},content)
     local footer=label(root,"XEROHUB",8,C.Faint,{Position=UDim2.new(0,18,1,-24),Size=UDim2.new(.6,0,0,14),Font=Enum.Font.Code})
-    local shortcut=label(root,translateText("RSHIFT  /  MOSTRAR U OCULTAR",w.Language),8,C.Faint,{Position=UDim2.new(.4,0,1,-24),Size=UDim2.new(.6,-18,0,14),TextXAlignment=Enum.TextXAlignment.Right,Font=Enum.Font.Code})
+    local shortcut=label(root,"RSHIFT  /  MOSTRAR U OCULTAR",8,C.Faint,{Position=UDim2.new(.4,0,1,-24),Size=UDim2.new(.6,-18,0,14),TextXAlignment=Enum.TextXAlignment.Right,Font=Enum.Font.Code})
     local openButton=button(launcherSurface,"",{Name="OpenXeroHub",Position=UDim2.new(.5,-73,0,16),Size=UDim2.fromOffset(146,44),BackgroundColor3=w.ThemeDef.Visuals.OpenButtonBase,BackgroundTransparency=Glass.Button,ZIndex=20})
     round(openButton,12); local openStroke=stroke(openButton,w.ThemeDef.Visuals.OpenStroke)
     local openIcon=mark(openButton,22); openIcon.Position=UDim2.fromOffset(12,11)
     local openLabel=label(openButton,"XEROHUB",11,C.Text,{Position=UDim2.fromOffset(45,5),Size=UDim2.new(1,-55,0,20),Font=MEDIUM})
-    local openHint=label(openButton,translateText("ABRIR PANEL",w.Language),8,C.Muted,{Position=UDim2.fromOffset(45,25),Size=UDim2.new(1,-55,0,12),Font=MEDIUM})
-    w.OpenButton=openButton; w._launcherMoved=false
-    w.PageTitleLabel=pageTitle; w.PageDescLabel=pageDesc; w.SearchInput=search; w.ShortcutLabel=shortcut; w.OpenLabel=openLabel; w.OpenHintLabel=openHint
-    w.UIElements={Main=root,Title=brand,ActiveStatus=statusLabel,SideBar=sidebar,MainBar=content,Pages=pages,Search=searchBox,Topbar=top}
+    local openHint=label(openButton,"ABRIR PANEL",8,C.Muted,{Position=UDim2.fromOffset(45,25),Size=UDim2.new(1,-55,0,12),Font=MEDIUM})
+    w.OpenButton=openButton; w._launcherMoved=false; w.UIElements={Main=root,Title=brand,ActiveStatus=statusLabel,SideBar=sidebar,MainBar=content,Pages=pages,Search=searchBox,Topbar=top}
     local desired=o.Size or UDim2.fromOffset(680,430)
     w._desiredWidth=desired.X.Offset>0 and desired.X.Offset or 680
     w._desiredHeight=desired.Y.Offset>0 and desired.Y.Offset or 430
@@ -1963,6 +1990,7 @@ function Nox:CreateWindow(options)
             tab.NavButton.BackgroundTransparency=selected and Glass.NavActive or Glass.NavIdle
             tab.NavTitle.TextColor3=selected and C.Text or C.Muted
             if tab.Number then tab.Number.TextColor3=selected and C.Text or C.Faint end
+            if tab.NavIcon then tab.NavIcon.ImageColor3=selected and C.Text or C.Faint end
             if tab.SelectionBar then
                 tab.SelectionBar.Visible=selected
                 tab.SelectionBar.BackgroundTransparency=selected and 0 or 1
@@ -1974,24 +2002,29 @@ function Nox:CreateWindow(options)
         return target
     end
     function w:_tab(options,holder)
-        local opt=options or {}; local sourceTitle=plain(opt.Title or "Pestaña")
-        local sourceDesc=plain(opt.Desc or DESCRIPTIONS[sourceTitle] or "Personaliza tus opciones.")
-        local title=translateText(sourceTitle,self.Language)
-        local desc=translateText(sourceDesc,self.Language)
+        local opt=options or {}; local title=plain(opt.Title or "Pestaña")
         local index=#self.Tabs+1
-        local tab=setmetatable({Window=self,SourceTitle=sourceTitle,SourceDesc=sourceDesc,Title=title,Desc=desc,
+        local tab=setmetatable({Window=self,Title=title,Desc=opt.Desc or DESCRIPTIONS[title] or "Personaliza tus opciones.",
             Elements={},_order=0,Query="",Index=index},Tab)
-        local page=new("Frame",{Name=sourceTitle,BackgroundTransparency=1,Size=UDim2.fromScale(1,1),Visible=false},pages)
+        local page=new("Frame",{Name=title,BackgroundTransparency=1,Size=UDim2.fromScale(1,1),Visible=false},pages)
         local list=scroll(page,{Name="Options",AutomaticCanvasSize=Enum.AutomaticSize.None}); vertical(list,5); padding(list,2,4)
-        local empty=label(page,translateText("Sin coincidencias. Prueba otra búsqueda.",self.Language),12,C.Muted,{Position=UDim2.fromOffset(12,18),Size=UDim2.new(1,-24,0,50),TextWrapped=true,Visible=false})
-        local navButton=button(holder or nav,"",{Name=sourceTitle,Size=UDim2.new(1,0,0,28),BackgroundColor3=self.ThemeDef.Visuals.NavButtonIdle,BackgroundTransparency=Glass.NavIdle,LayoutOrder=index})
+        local empty=label(page,"Sin coincidencias. Prueba otra búsqueda.",12,C.Muted,{Position=UDim2.fromOffset(12,18),Size=UDim2.new(1,-24,0,50),TextWrapped=true,Visible=false})
+        local navButton=button(holder or nav,"",{Name=title,Size=UDim2.new(1,0,0,28),BackgroundColor3=self.ThemeDef.Visuals.NavButtonIdle,BackgroundTransparency=Glass.NavIdle,LayoutOrder=index})
         round(navButton,8)
         local selectionBar=new("Frame",{Name="Selected",Position=UDim2.fromOffset(1,5),Size=UDim2.fromOffset(2,18),
             BackgroundColor3=C.Text,BackgroundTransparency=0,Visible=false,ZIndex=3},navButton); round(selectionBar,2)
-        local glyph=icon(navButton,sourceTitle,string.format("%02d",index)); glyph.Position=UDim2.fromOffset(6,4)
+        local glyph=icon(navButton,title,string.format("%02d",index)); glyph.Position=UDim2.fromOffset(6,4)
+        local numberLabel=glyph:FindFirstChildOfClass("TextLabel")
+        local navIcon=nil
+        if opt.Icon ~= nil and tostring(opt.Icon) ~= "" then
+            navIcon=remoteIcon(glyph,opt.Icon,16,C.Faint,function()
+                if numberLabel and numberLabel.Parent then numberLabel.Visible=false end
+            end)
+            navIcon.Position=UDim2.fromOffset(2,2)
+        end
         local titleLabel=label(navButton,title,10,C.Muted,{Position=UDim2.fromOffset(26,0),Size=UDim2.new(1,-30,1,0),Font=MEDIUM,TextTruncate=Enum.TextTruncate.AtEnd})
         tab.Page,tab.Content,tab.Empty=page,list,empty; tab.NavButton,tab.NavTitle=navButton,titleLabel
-        tab.Number=glyph:FindFirstChildOfClass("TextLabel"); tab.SelectionBar=selectionBar
+        tab.Number=numberLabel; tab.NavIcon=navIcon; tab.SelectionBar=selectionBar
         table.insert(self.Tabs,tab)
         connect(self,navButton.Activated,function() self:SelectTab(tab) end)
         connect(self,navButton.MouseEnter,function()
@@ -2013,16 +2046,13 @@ function Nox:CreateWindow(options)
     function w:Tab(options) return self:_tab(options) end
     function w:Section(options)
         local opt=options or {}; self._navOrder+=1
-        local sourceTitle=plain(opt.Title or "GENERAL")
-        local group=new("Frame",{Name=sourceTitle,BackgroundTransparency=1,Size=UDim2.new(1,0,0,0),AutomaticSize=Enum.AutomaticSize.Y,LayoutOrder=self._navOrder},nav)
+        local group=new("Frame",{Name=plain(opt.Title),BackgroundTransparency=1,Size=UDim2.new(1,0,0,0),AutomaticSize=Enum.AutomaticSize.Y,LayoutOrder=self._navOrder},nav)
         vertical(group,6)
-        local heading=label(group,string.upper(translateText(sourceTitle,self.Language)),9,C.Faint,{Size=UDim2.new(1,-8,0,20),Font=BOLD,LayoutOrder=0,TextWrapped=true})
+        local heading=label(group,string.upper(plain(opt.Title or "GENERAL")),9,C.Faint,{Size=UDim2.new(1,-8,0,20),Font=BOLD,LayoutOrder=0,TextWrapped=true})
         padding(heading,8,0)
         local items=new("Frame",{Name="Items",BackgroundTransparency=1,Size=UDim2.new(1,0,0,0),AutomaticSize=Enum.AutomaticSize.Y,LayoutOrder=1},group)
         vertical(items,3)
-        local section={Window=self,ElementFrame=group,SourceTitle=sourceTitle,TitleLabel=heading}
-        function section:SetTitle(value) self.SourceTitle=plain(value); self:RefreshLanguage(); return self end
-        function section:RefreshLanguage() self.TitleLabel.Text=string.upper(translateText(self.SourceTitle,self.Window.Language)); return self end
+        local section={Window=self,ElementFrame=group}
         function section:Tab(config) return self.Window:_tab(config,items) end
         function section:Open() items.Visible=true; return self end
         function section:Close() items.Visible=false; return self end
@@ -2031,22 +2061,21 @@ function Nox:CreateWindow(options)
     end
     function w:SetTitle(title)
         self.Title=plain(title)
-        local active=self.Title:match("(%d+)%s+activos") or self.Title:match("(%d+)%s+active")
-        self._activeUsersCount=active and tonumber(active) or self._activeUsersCount
+        footer.Text=self.Title
+
+        local active=self.Title:match("(%d+)%s+activos")
+        -- Quita primero el contador y después el separador. No metas el punto medio
+        -- UTF-8 dentro de una clase [] de patrones Lua: puede comerse sólo un byte
+        -- y dejar el carácter de reemplazo que se ve como "?" junto al nombre del juego.
         local baseTitle=self.Title:gsub("%s*%d+%s+activos%s*$","")
-        baseTitle=baseTitle:gsub("%s*%d+%s+active%s*$","")
         baseTitle=baseTitle:gsub("%s*·%s*$","")
         baseTitle=baseTitle:gsub("%s*%-%s*$","")
         baseTitle=baseTitle:gsub("%s+$","")
         if baseTitle=="" then baseTitle="XeroHub" end
         self._brandBaseTitle=baseTitle
 
-        if self._activeUsersCount then
-            local countText=tostring(self._activeUsersCount)..(self.Language=="en" and " active" or " activos")
-            statusLabel.Text=countText
-            footer.Text=self._brandBaseTitle.." · "..countText
-        else
-            footer.Text=self.Title
+        if active then
+            statusLabel.Text=active.." activos"
         end
 
         if self._fit then
@@ -2091,37 +2120,8 @@ function Nox:CreateWindow(options)
     function w:EditOpenButton(config)
         if config.Enabled~=nil then self:SetOpenButtonVisible(config.Enabled) end
         if config.Ghosted~=nil then self:SetOpenButtonGhosted(config.Ghosted) end
-        if config.Title then self._openButtonTitleSource=plain(config.Title); openLabel.Text=translateText(self._openButtonTitleSource,self.Language) end
+        if config.Title then openLabel.Text=plain(config.Title) end
         return self
-    end
-    function w:GetLanguage() return self.Language or CURRENT_LANGUAGE end
-    function w:RefreshLanguage()
-        self.Language=canonicalLanguageName(self.Language or CURRENT_LANGUAGE)
-        search.PlaceholderText=translateText("Buscar ajuste...",self.Language)
-        shortcut.Text=translateText("RSHIFT  /  MOSTRAR U OCULTAR",self.Language)
-        openHint.Text=translateText("ABRIR PANEL",self.Language)
-        if self._openButtonTitleSource then openLabel.Text=translateText(self._openButtonTitleSource,self.Language) end
-        for _,section in ipairs(self.Groups or {}) do if section.RefreshLanguage then section:RefreshLanguage() end end
-        for _,tab in ipairs(self.Tabs or {}) do if tab.RefreshLanguage then tab:RefreshLanguage() end end
-        if self.CurrentTab then
-            pageTitle.Text=self.CurrentTab.Title
-            pageDesc.Text=self.CurrentTab.Desc
-            self.CurrentTab:_filter()
-        end
-        if self._activeUsersCount then
-            local countText=tostring(self._activeUsersCount)..(self.Language=="en" and " active" or " activos")
-            statusLabel.Text=countText
-            footer.Text=self._brandBaseTitle.." · "..countText
-        end
-        return self
-    end
-    function w:SetLanguage(language)
-        local resolved=canonicalLanguageName(language)
-        CURRENT_LANGUAGE=resolved
-        XeroEnv.XERO_LANGUAGE=resolved
-        self.Language=resolved
-        self:_closePopup()
-        return self:RefreshLanguage()
     end
     function w:GetTheme()
         return self.ThemeName or CURRENT_THEME_NAME
@@ -2187,8 +2187,7 @@ function Nox:CreateWindow(options)
         end
         refreshBackgroundForTheme(resolved)
         if not silent and Nox.Notify and Nox.Window == self then
-            local themeName = resolved == "Blanco" and translateText("Blanco",self.Language) or translateText("Oscuro",self.Language)
-            Nox:Notify({Title = translateText("Tema",self.Language), Content = self.Language=="en" and ("Interface changed to "..themeName) or ("Interfaz cambiada a "..themeName)})
+            Nox:Notify({Title = "Tema", Content = "Interfaz cambiada a " .. (resolved == "Blanco" and "Blanco" or "Oscuro")})
         end
         return self
     end
@@ -2219,12 +2218,12 @@ function Nox:CreateWindow(options)
         if Nox.Window==self then Nox.Window=nil end
     end
     function w:Dialog(config)
-        local cfg=config or {}; local panel=self:_popup(translateText(plain(cfg.Title or "XeroHub"),self.Language),350,230,nil)
+        local cfg=config or {}; local panel=self:_popup(plain(cfg.Title or "XeroHub"),350,230,nil)
         local body=scroll(panel,{Position=UDim2.fromOffset(18,58),Size=UDim2.new(1,-36,1,-122)})
-        label(body,translateText(plain(cfg.Content or cfg.Desc),self.Language),13,C.Muted,{Size=UDim2.new(1,-6,0,0),AutomaticSize=Enum.AutomaticSize.Y,TextWrapped=true,TextYAlignment=Enum.TextYAlignment.Top})
+        label(body,plain(cfg.Content or cfg.Desc),13,C.Muted,{Size=UDim2.new(1,-6,0,0),AutomaticSize=Enum.AutomaticSize.Y,TextWrapped=true,TextYAlignment=Enum.TextYAlignment.Top})
         local buttons=cfg.Buttons or {{Title="Aceptar"}}
         for i,entry in ipairs(buttons) do
-            local b=button(panel,translateText(entry.Title or "Aceptar",self.Language),{Position=UDim2.new((i-1)/#buttons,16,1,-54),Size=UDim2.new(1/#buttons,-22,0,36)})
+            local b=button(panel,entry.Title or "Aceptar",{Position=UDim2.new((i-1)/#buttons,16,1,-54),Size=UDim2.new(1/#buttons,-22,0,36)})
             round(b,8)
             connect(self,b.Activated,function() self:_closePopup(); invoke(entry.Callback) end,self._popupConnections)
         end
@@ -2324,6 +2323,11 @@ function Nox:CreateWindow(options)
     task.defer(fit)
     return w
 end
+-- Public icon helpers. Game hubs normally only need Icon="name" in control configs.
+Nox.Icons = XERO_ICON_FILES
+function Nox:GetIconAsset(name) return cachedIconAsset(name) end
+function Nox:PreloadIcon(name, callback) requestIconAsset(name, callback); return self end
+
 function Nox:SetTheme(name)
     local resolved = canonicalThemeName(name)
     applyThemeDefinition(resolved)
@@ -2332,13 +2336,6 @@ function Nox:SetTheme(name)
         self.Window:SetTheme(resolved, true)
     end
     return self.Theme
-end
-function Nox:SetLanguage(language)
-    local resolved=canonicalLanguageName(language)
-    CURRENT_LANGUAGE=resolved
-    XeroEnv.XERO_LANGUAGE=resolved
-    if self.Window and not self.Window.Destroyed and self.Window.SetLanguage then self.Window:SetLanguage(resolved) end
-    return resolved
 end
 function Nox:GetCurrentTheme()
     if self.Window and not self.Window.Destroyed and self.Window.GetTheme then
@@ -2364,9 +2361,8 @@ function Nox:Notify(options)
         Position=UDim2.new(1,384,0,64),Size=UDim2.new(1,-24,0,0),AutomaticSize=Enum.AutomaticSize.Y,ZIndex=100},w.ScreenGui)
     new("UISizeConstraint",{MaxSize=Vector2.new(360,math.huge)},holder)
     round(holder,12); stroke(holder); padding(holder,14,12); vertical(holder,6)
-    local language=(w.GetLanguage and w:GetLanguage()) or CURRENT_LANGUAGE
-    label(holder,translateText(plain(o.Title or "XeroHub"),language),13,C.Text,{Font=BOLD,LayoutOrder=1})
-    label(holder,translateText(plain(o.Content or o.Desc),language),12,C.Muted,{Size=UDim2.new(1,0,0,0),AutomaticSize=Enum.AutomaticSize.Y,TextWrapped=true,LayoutOrder=2})
+    label(holder,plain(o.Title or "XeroHub"),13,C.Text,{Font=BOLD,LayoutOrder=1})
+    label(holder,plain(o.Content or o.Desc),12,C.Muted,{Size=UDim2.new(1,0,0,0),AutomaticSize=Enum.AutomaticSize.Y,TextWrapped=true,LayoutOrder=2})
     local tweenService=game:GetService("TweenService")
     tweenService:Create(holder,TweenInfo.new(.18,Enum.EasingStyle.Quint,Enum.EasingDirection.Out),
         {Position=UDim2.new(1,-12,0,64)}):Play()

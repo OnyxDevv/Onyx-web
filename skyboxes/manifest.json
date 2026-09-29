@@ -1,5 +1,5 @@
 {
-  "version": 4,
+  "version": 5,
   "skyboxes": [
     {
       "name": "Black Hole",
@@ -640,6 +640,18 @@
     {
       "name": "Sunny Sky",
       "folder": "sunny-sky",
+      "files": {
+        "bk": "bk.png",
+        "dn": "dn.png",
+        "ft": "ft.png",
+        "lf": "lf.png",
+        "rt": "rt.png",
+        "up": "up.png"
+      }
+    },
+    {
+      "name": "Halftone Wings",
+      "folder": "halftone-wings",
       "files": {
         "bk": "bk.png",
         "dn": "dn.png",

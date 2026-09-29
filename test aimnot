@@ -1,5 +1,4 @@
--- XeroHub | DUELS MURDERS VS SHERIFF | R62 PERF FACES EFFECTS SOUNDS | R59 SHARED COMBAT SNAPSHOT
-
+-- XeroHub | DUELS MURDERS VS SHERI
 local SoundCatalogCore = {
     TARGET_SOUND_ID = "10209603",
     CATALOG_URL = "https://api.github.com/repos/OnyxDevv/Onyx-web/contents/sounds?ref=main",
@@ -5519,9 +5518,17 @@ function runtime.ApplyLowGraphics(v)
         or v:IsA("Atmosphere") or v:IsA("Clouds")
     if not supported then return end
 
-    -- No tocamos avatares: evita ropa/meshes rotos y reduce muchísimo el trabajo.
-    local model = v:FindFirstAncestorOfClass("Model")
-    if model and model:FindFirstChildOfClass("Humanoid") then return end
+    -- Sólo preservamos personajes REALES de jugadores. Antes se omitía cualquier
+    -- Model con Humanoid, lo que dejaba fuera NPCs, dummies y hasta estructuras
+    -- de mapas que usan Humanoid internamente. Todo lo demás en Workspace se
+    -- considera geometría del mapa y sí entra al FPS Boost.
+    local ancestor = v.Parent
+    while ancestor and ancestor ~= workspace do
+        if ancestor:IsA("Model") and Players:GetPlayerFromCharacter(ancestor) then
+            return
+        end
+        ancestor = ancestor.Parent
+    end
 
     local cache = runtime.FPSBoost.Cache
     if cache[v] then return end
@@ -5532,9 +5539,15 @@ function runtime.ApplyLowGraphics(v)
         data.Material = v.Material
         data.Reflectance = v.Reflectance
         data.CastShadow = v.CastShadow
+        pcall(function() data.MaterialVariant = v.MaterialVariant end)
+        pcall(function() data.RenderFidelity = v.RenderFidelity end)
+
         v.Material = Enum.Material.SmoothPlastic
         v.Reflectance = 0
         v.CastShadow = false
+        pcall(function() v.MaterialVariant = "" end)
+        pcall(function() v.RenderFidelity = Enum.RenderFidelity.Performance end)
+
         if v:IsA("MeshPart") then
             data.TextureID = v.TextureID
             v.TextureID = ""
@@ -5575,6 +5588,8 @@ function runtime.RestoreLowGraphics()
                 if data.Material then v.Material = data.Material end
                 if data.Reflectance ~= nil then v.Reflectance = data.Reflectance end
                 if data.CastShadow ~= nil then v.CastShadow = data.CastShadow end
+                if data.MaterialVariant ~= nil then pcall(function() v.MaterialVariant = data.MaterialVariant end) end
+                if data.RenderFidelity ~= nil then pcall(function() v.RenderFidelity = data.RenderFidelity end) end
                 if data.TextureID ~= nil then v.TextureID = data.TextureID end
                 if data.TextureId ~= nil then v.TextureId = data.TextureId end
                 if data.Transparency ~= nil then v.Transparency = data.Transparency end
@@ -5636,7 +5651,7 @@ end
 
 UIElements.ToggleFPS = Tabs.Graficos:Toggle({
     Title = "FPS Boost",
-    Desc = "Reduce texturas, materiales, sombras, shaders y efectos pesados sin tocar los avatares.",
+    Desc = "Simplifica todas las estructuras del mapa, texturas, materiales, sombras, shaders y efectos pesados sin tocar jugadores.",
     Value = false,
     Callback = function(state)
         if state and runtime.GraphicsCleanup then runtime.GraphicsCleanup() end

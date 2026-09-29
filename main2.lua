@@ -1936,8 +1936,8 @@ function Nox:CreateWindow(options)
                 glyph.Visible=sidebarWidth>=76
             end
             if tab.NavTitle then
-                tab.NavTitle.Position=UDim2.fromOffset(phone and 23 or 26,0)
-                tab.NavTitle.Size=UDim2.new(1,phone and -25 or -30,1,0)
+                tab.NavTitle.Position=UDim2.fromOffset(phone and 31 or 34,0)
+                tab.NavTitle.Size=UDim2.new(1,phone and -35 or -38,1,0)
                 tab.NavTitle.TextSize=phone and 9 or 10
             end
         end

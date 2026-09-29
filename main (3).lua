@@ -1,7 +1,7 @@
 --[[
     XeroHub UI / Obsidian 2.9 — polish + compact sliders + open-button ghost
     Creator: Kev
-    Native Roblox interface. No WindUI runtime, icon downloads or render loops.
+    Native Roblox interface. No WindUI runtime or icon render loops; remote icons use lazy local cache.
     Compatible with the control API used by XeroHub game scripts.
     Usage: local UI = require(module); local Window = UI:CreateWindow({...})
     GuiButton input: https://create.roblox.com/docs/reference/engine/classes/GuiButton
@@ -251,6 +251,152 @@ local function customAssetFunction()
     return type(fn) == "function" and fn or nil
 end
 
+-- XeroHub global icon registry ------------------------------------------------
+-- PNGs live in /icons on GitHub. They are downloaded lazily once, cached locally
+-- and reused by every control/tab that declares Icon = "name".
+local XERO_ICON_BASE_URL = tostring(XeroEnv.XERO_ICON_BASE_URL or
+    "https://raw.githubusercontent.com/OnyxDevv/Onyx-web/refs/heads/main/icons/")
+local XERO_ICON_CACHE_FOLDER = tostring(XeroEnv.XERO_ICON_CACHE_FOLDER or "XeroHub/Icons/v1")
+
+local XERO_ICON_FILES = {
+    settings = "settings.png",
+    copy = "copy.png",
+    shirt = "shirt.png",
+    ["volume-2"] = "volume-2.png",
+    volume = "volume-2.png",
+    palette = "palette.png",
+    monitor = "monitor.png",
+    ["person-standing"] = "person-standing.png",
+    movement = "person-standing.png",
+    skull = "skull.png",
+    ["circle-dot"] = "circle-dot.png",
+    fov = "circle-dot.png",
+    eye = "eye.png",
+    scan = "scan.png",
+    hitbox = "scan.png",
+    ["mouse-pointer-2"] = "mouse-pointer-2.png",
+    triggerbot = "mouse-pointer-2.png",
+    zap = "zap.png",
+    autoshoot = "zap.png",
+    crosshair = "crosshair.png",
+    aim = "crosshair.png",
+    ["rotate-ccw"] = "rotate-ccw.png",
+    reset = "rotate-ccw.png",
+    ["folder-open"] = "folder-open.png",
+    load = "folder-open.png",
+    save = "save.png",
+    ["badge-info"] = "badge-info.png",
+    info = "badge-info.png",
+}
+
+local XERO_ICON_ASSET_CACHE = {}
+local XERO_ICON_PENDING = {}
+
+local function normalizeIconName(name)
+    return string.lower(tostring(name or "")):gsub("%s+", "-")
+end
+
+local function iconFileName(name)
+    local key = normalizeIconName(name)
+    if key == "" then return nil, nil end
+    local fileName = XERO_ICON_FILES[key]
+    -- Future-proof: after uploading another safe-name PNG to /icons, Icon="shield"
+    -- works even before adding an explicit alias to the table above.
+    if not fileName and key:match("^[%w_%-]+$") then fileName = key .. ".png" end
+    return key, fileName
+end
+
+local function isIconPngPayload(data)
+    return type(data) == "string" and #data > 32 and data:sub(1,8) == "\137PNG\r\n\26\n"
+end
+
+local function cachedIconAsset(name)
+    local key, fileName = iconFileName(name)
+    if not key or not fileName then return nil end
+    if XERO_ICON_ASSET_CACHE[key] then return XERO_ICON_ASSET_CACHE[key] end
+
+    local assetFn = customAssetFunction()
+    if not assetFn or type(isfile) ~= "function" then return nil end
+    local path = XERO_ICON_CACHE_FOLDER .. "/" .. fileName
+    if not isfile(path) then return nil end
+
+    if type(readfile) == "function" then
+        local okRead, data = pcall(readfile, path)
+        if not okRead or not isIconPngPayload(data) then return nil end
+    end
+
+    local okAsset, asset = pcall(assetFn, path)
+    if okAsset and type(asset) == "string" and asset ~= "" then
+        XERO_ICON_ASSET_CACHE[key] = asset
+        return asset
+    end
+    return nil
+end
+
+local function downloadIconAsset(name)
+    local key, fileName = iconFileName(name)
+    if not key or not fileName then return nil end
+    local cached = cachedIconAsset(key)
+    if cached then return cached end
+
+    local assetFn = customAssetFunction()
+    if not assetFn or type(writefile) ~= "function" then return nil end
+
+    local url = XERO_ICON_BASE_URL .. fileName
+    local body
+    local req = (syn and syn.request) or (http and http.request) or http_request or request
+    if type(req) == "function" then
+        local okRequest, response = pcall(req, {
+            Url = url, Method = "GET", Headers = { ["User-Agent"] = "XeroHub/3.1 Icons" },
+        })
+        if okRequest and response then
+            local status = tonumber(response.StatusCode or response.Status)
+            if status and status >= 200 and status < 300 and isIconPngPayload(response.Body) then
+                body = response.Body
+            end
+        end
+    end
+
+    if not body then
+        local okHttp, data = pcall(function() return game:HttpGet(url) end)
+        if okHttp and isIconPngPayload(data) then body = data end
+    end
+    if not body then return nil end
+
+    ensureFolderTree(XERO_ICON_CACHE_FOLDER)
+    local path = XERO_ICON_CACHE_FOLDER .. "/" .. fileName
+    if not pcall(writefile, path, body) then return nil end
+
+    local okAsset, asset = pcall(assetFn, path)
+    if okAsset and type(asset) == "string" and asset ~= "" then
+        XERO_ICON_ASSET_CACHE[key] = asset
+        return asset
+    end
+    return nil
+end
+
+local function requestIconAsset(name, callback)
+    if type(callback) ~= "function" then return end
+    local key = normalizeIconName(name)
+    if key == "" then return end
+
+    local cached = cachedIconAsset(key)
+    if cached then callback(cached); return end
+
+    if XERO_ICON_PENDING[key] then
+        table.insert(XERO_ICON_PENDING[key], callback)
+        return
+    end
+    XERO_ICON_PENDING[key] = {callback}
+
+    task.spawn(function()
+        local asset = downloadIconAsset(key)
+        local waiters = XERO_ICON_PENDING[key] or {}
+        XERO_ICON_PENDING[key] = nil
+        for _, fn in ipairs(waiters) do pcall(fn, asset) end
+    end)
+end
+
 local function cachedBackgroundAsset(themeName)
     local assetFn = customAssetFunction()
     local source = backgroundSource(themeName)
@@ -411,6 +557,25 @@ local function label(parent, text, size, color, props)
     for k,v in pairs(props or {}) do p[k] = v end
     return new("TextLabel", p, parent)
 end
+local function remoteIcon(parent, name, size, color, onReady)
+    local px = math.clamp(math.floor(tonumber(size) or 16), 10, 28)
+    local image = new("ImageLabel", {
+        Name = "XeroIcon",
+        BackgroundTransparency = 1,
+        Size = UDim2.fromOffset(px,px),
+        Image = "",
+        ImageColor3 = color or C.Muted,
+        ScaleType = Enum.ScaleType.Fit,
+        Visible = false,
+    }, parent)
+    requestIconAsset(name, function(asset)
+        if not image.Parent or not asset then return end
+        image.Image = asset
+        image.Visible = true
+        if type(onReady) == "function" then pcall(onReady, image) end
+    end)
+    return image
+end
 local function button(parent, text, props)
     local p = {
         Text = text or "",
@@ -547,6 +712,11 @@ function Control:_resize(width)
     local copyOffsetX=self.CopyOffsetX or 0
     self.Copy.Position=UDim2.fromOffset(copyOffsetX,0)
     self.Copy.Size=UDim2.new(1,-reserve-copyOffsetX,0,copyHeight)
+    if self.ControlIcon then
+        local iconSize=self.ControlIconSize or 16
+        self.ControlIcon.Position=UDim2.fromOffset(0,math.max(0,math.floor((headHeight-iconSize)/2)))
+        self.ControlIcon.Size=UDim2.fromOffset(iconSize,iconSize)
+    end
     self.TitleLabel.Size=UDim2.new(1,0,0,titleHeight)
     self.DescLabel.Position=UDim2.fromOffset(0,titleHeight+4)
     self.DescLabel.Size=UDim2.new(1,0,0,descHeight)
@@ -617,6 +787,9 @@ function Control:ApplyTheme()
     end
     if self.PictureStroke and self.PictureStroke.Parent then
         self.PictureStroke.Color = light and (self.LightImageStrokeColor or C.Border) or (self.DarkImageStrokeColor or C.Text)
+    end
+    if self.ControlIcon and self.ControlIcon.Parent then
+        self.ControlIcon.ImageColor3 = light and (self.LightIconColor or C.Muted) or (self.DarkIconColor or C.Muted)
     end
     if self._applyThemeExtras then self:_applyThemeExtras(light) end
     return self
@@ -715,9 +888,17 @@ function Tab:_control(kind, options)
         TextYAlignment=Enum.TextYAlignment.Top,Size=UDim2.new(1,0,0,18),LayoutOrder=1})
     local desc = label(copy,plain(o.Desc),11,C.Muted,{TextWrapped=true,AutomaticSize=Enum.AutomaticSize.Y,
         Size=UDim2.new(1,0,0,0),LayoutOrder=2,Visible=o.Desc ~= nil and o.Desc ~= ""})
+    local controlIcon, controlIconSize
+    if o.Icon ~= nil and tostring(o.Icon) ~= "" then
+        controlIconSize=math.clamp(math.floor(tonumber(o.IconSize) or 16),10,24)
+        controlIcon=remoteIcon(head,o.Icon,controlIconSize,
+            lightTheme and (o.LightIconColor or C.Muted) or (o.IconColor or C.Muted))
+    end
     local control = setmetatable({Title=plain(o.Title or kind),Desc=plain(o.Desc),__type=kind,
         Window=self.Window,Tab=self,ElementFrame=row,Slot=slot,Head=head,Copy=copy,RowStroke=rowStroke,
         TitleLabel=title,DescLabel=desc,Callback=o.Callback,GroupTitle=self._groupTitle,Locked=false,
+        ControlIcon=controlIcon,ControlIconSize=controlIconSize,CopyOffsetX=controlIcon and (controlIconSize+9) or 0,
+        DarkIconColor=o.IconColor,LightIconColor=o.LightIconColor,
         DarkColor=darkColor,LightColor=lightColor,DarkStrokeColor=darkStrokeColor,LightStrokeColor=lightStrokeColor,
         DarkTitleColor=o.TitleColor,LightTitleColor=o.LightTitleColor,DarkDescColor=o.DescColor,LightDescColor=o.LightDescColor},Control)
     desc.AutomaticSize=Enum.AutomaticSize.None; desc.TextYAlignment=Enum.TextYAlignment.Top
@@ -1755,8 +1936,8 @@ function Nox:CreateWindow(options)
                 glyph.Visible=sidebarWidth>=76
             end
             if tab.NavTitle then
-                tab.NavTitle.Position=UDim2.fromOffset(phone and 23 or 26,0)
-                tab.NavTitle.Size=UDim2.new(1,phone and -25 or -30,1,0)
+                tab.NavTitle.Position=UDim2.fromOffset(phone and 31 or 34,0)
+                tab.NavTitle.Size=UDim2.new(1,phone and -35 or -38,1,0)
                 tab.NavTitle.TextSize=phone and 9 or 10
             end
         end
@@ -1809,6 +1990,7 @@ function Nox:CreateWindow(options)
             tab.NavButton.BackgroundTransparency=selected and Glass.NavActive or Glass.NavIdle
             tab.NavTitle.TextColor3=selected and C.Text or C.Muted
             if tab.Number then tab.Number.TextColor3=selected and C.Text or C.Faint end
+            if tab.NavIcon then tab.NavIcon.ImageColor3=selected and C.Text or C.Faint end
             if tab.SelectionBar then
                 tab.SelectionBar.Visible=selected
                 tab.SelectionBar.BackgroundTransparency=selected and 0 or 1
@@ -1832,9 +2014,17 @@ function Nox:CreateWindow(options)
         local selectionBar=new("Frame",{Name="Selected",Position=UDim2.fromOffset(1,5),Size=UDim2.fromOffset(2,18),
             BackgroundColor3=C.Text,BackgroundTransparency=0,Visible=false,ZIndex=3},navButton); round(selectionBar,2)
         local glyph=icon(navButton,title,string.format("%02d",index)); glyph.Position=UDim2.fromOffset(6,4)
-        local titleLabel=label(navButton,title,10,C.Muted,{Position=UDim2.fromOffset(26,0),Size=UDim2.new(1,-30,1,0),Font=MEDIUM,TextTruncate=Enum.TextTruncate.AtEnd})
+        local numberLabel=glyph:FindFirstChildOfClass("TextLabel")
+        local navIcon=nil
+        if opt.Icon ~= nil and tostring(opt.Icon) ~= "" then
+            navIcon=remoteIcon(glyph,opt.Icon,16,C.Faint,function()
+                if numberLabel and numberLabel.Parent then numberLabel.Visible=false end
+            end)
+            navIcon.Position=UDim2.fromOffset(2,2)
+        end
+        local titleLabel=label(navButton,title,10,C.Muted,{Position=UDim2.fromOffset(34,0),Size=UDim2.new(1,-38,1,0),Font=MEDIUM,TextTruncate=Enum.TextTruncate.AtEnd})
         tab.Page,tab.Content,tab.Empty=page,list,empty; tab.NavButton,tab.NavTitle=navButton,titleLabel
-        tab.Number=glyph:FindFirstChildOfClass("TextLabel"); tab.SelectionBar=selectionBar
+        tab.Number=numberLabel; tab.NavIcon=navIcon; tab.SelectionBar=selectionBar
         table.insert(self.Tabs,tab)
         connect(self,navButton.Activated,function() self:SelectTab(tab) end)
         connect(self,navButton.MouseEnter,function()
@@ -2133,6 +2323,11 @@ function Nox:CreateWindow(options)
     task.defer(fit)
     return w
 end
+-- Public icon helpers. Game hubs normally only need Icon="name" in control configs.
+Nox.Icons = XERO_ICON_FILES
+function Nox:GetIconAsset(name) return cachedIconAsset(name) end
+function Nox:PreloadIcon(name, callback) requestIconAsset(name, callback); return self end
+
 function Nox:SetTheme(name)
     local resolved = canonicalThemeName(name)
     applyThemeDefinition(resolved)

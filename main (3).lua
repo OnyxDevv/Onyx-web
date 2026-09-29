@@ -27,9 +27,10 @@ end
 
 local THEME_BACKGROUNDS = {
     Xero = {
-        URL = tostring(XeroEnv.XERO_BACKGROUND_URL or
-            "https://raw.githubusercontent.com/OnyxDevv/Onyx-web/refs/heads/main/assets/backgrounds/xero_anime.png"),
-        CACHE = tostring(XeroEnv.XERO_BACKGROUND_CACHE or "XeroHub/Assets/xero_anime_v2.png"),
+    URL = tostring(XeroEnv.XERO_BACKGROUND_URL or
+        "https://raw.githubusercontent.com/OnyxDevv/Onyx-web/refs/heads/main/assets/backgrounds/rei-brush.png"),
+    CACHE = tostring(XeroEnv.XERO_BACKGROUND_CACHE or
+        "XeroHub/Assets/rei_brush_v1.png"),
     },
     Blanco = {
         URL = tostring(XeroEnv.XERO_BACKGROUND_LIGHT_URL or XeroEnv.XERO_BACKGROUND_WHITE_URL or
